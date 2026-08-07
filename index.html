@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0a0b0d" />
+  <title>Notes Gallery</title>
+  <link rel="stylesheet" href="css/styles.css?v=10" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cdefs%3E%3ClinearGradient%20id='g'%20x1='0'%20y1='0'%20x2='1'%20y2='1'%3E%3Cstop%20offset='0'%20stop-color='%234353ff'/%3E%3Cstop%20offset='1'%20stop-color='%23146ef5'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20width='24'%20height='24'%20rx='6'%20fill='url(%23g)'/%3E%3Cg%20fill='none'%20stroke='%23fff'%20stroke-width='1.5'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M12%203.6C14.7%203.6%2016.1%205.8%2015.9%208L12.5%2018.6C12.3%2019.4%2011.7%2019.4%2011.5%2018.6L8.1%208C7.9%205.8%209.3%203.6%2012%203.6Z'/%3E%3Cline%20x1='12'%20y1='10.6'%20x2='12'%20y2='18'/%3E%3Ccircle%20cx='12'%20cy='9'%20r='1.15'/%3E%3C/g%3E%3C/svg%3E" />
+</head>
+<body>
+  <div id="app">
+    <!-- ================= TOP BAR ================= -->
+    <header id="topbar">
+      <div class="bar-group bar-left">
+        <button id="brand" class="brand" title="Back to workspaces">
+          <span class="brand-mark" data-icon="diary"></span>
+          <span class="brand-name">Notes Gallery</span>
+        </button>
+      </div>
+
+      <div class="bar-group bar-center">
+        <div class="navgroup">
+          <button id="btn-home" class="btn icon" title="Workspace home"><span data-icon="home"></span></button>
+          <button id="btn-back" class="btn icon" title="Back"><span data-icon="arrow-left"></span></button>
+          <button id="btn-forward" class="btn icon" title="Forward"><span data-icon="arrow-right"></span></button>
+        </div>
+        <div class="search">
+          <span class="search-ico" data-icon="search"></span>
+          <input id="search" type="search" placeholder="Search notes, blocks, files…" autocomplete="off" />
+          <div id="search-results" class="search-results" hidden></div>
+        </div>
+      </div>
+
+      <div class="bar-group bar-right toolbar">
+        <div class="add-wrap">
+          <button id="btn-add" class="btn primary" title="Add a block or list">
+            <span data-icon="plus"></span><span class="lbl">Add</span>
+          </button>
+        </div>
+        <button id="btn-link" class="btn icon" title="Connect two blocks"><span data-icon="link"></span></button>
+        <label class="switch" id="autosave-wrap" title="Autosave to the workspace file">
+          <input type="checkbox" id="autosave" checked />
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+        </label>
+        <span id="save-status" class="save-status-pill" title="Save state"></span>
+        <span class="divider"></span>
+        <button id="btn-zoom-out" class="btn icon" title="Zoom out"><span data-icon="minus"></span></button>
+        <button id="btn-zoom-reset" class="btn zoom-label" title="Reset zoom">100%</button>
+        <button id="btn-zoom-in" class="btn icon" title="Zoom in"><span data-icon="plus"></span></button>
+        <button id="btn-fit" class="btn icon" title="Fit all blocks"><span data-icon="frame"></span></button>
+        <span class="divider"></span>
+        <button id="btn-help" class="btn icon" title="Help &amp; shortcuts"><span data-icon="help"></span></button>
+        <button id="btn-theme" class="btn icon" title="Toggle light / dark"><span data-icon="moon"></span></button>
+        <button id="btn-menu" class="btn icon" title="More"><span data-icon="more"></span></button>
+      </div>
+    </header>
+
+    <!-- ================= CANVAS ================= -->
+    <main id="stage">
+      <div id="world">
+        <svg id="edge-layer" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z"></path>
+            </marker>
+          </defs>
+        </svg>
+        <!-- block cards are injected here -->
+      </div>
+
+      <div id="list-view" class="list-view" hidden></div>
+
+      <div id="marquee" class="marquee" hidden></div>
+
+      <div id="empty-hint" class="empty-hint" hidden>
+        <div class="empty-card">
+          <span class="empty-mark" data-icon="diary"></span>
+          <h2>Nothing here yet</h2>
+          <p class="desktop-only">Double-click anywhere on the canvas to place your first block.</p>
+          <p class="mobile-only">Tap <strong>Block</strong> to place your first block.</p>
+        </div>
+      </div>
+
+      <div id="link-banner" class="link-banner" hidden>
+        <span data-icon="link"></span>
+        <span>Connect mode — tap a block, then tap another.</span>
+        <button id="link-exit">Done</button>
+      </div>
+    </main>
+
+    <!-- ================= WORKSPACES LANDING ================= -->
+    <section id="home" class="home" hidden>
+      <div class="home-hero">
+        <div id="hero-brand" class="hero-brand">
+          <span class="hero-mark" data-icon="diary"></span>
+          <span class="hero-name">Notes Gallery</span>
+        </div>
+        <p id="hero-tag" class="hero-tag"></p>
+      </div>
+      <div class="home-inner">
+        <div class="home-head">
+          <div>
+            <h1 class="home-title">Your workspaces</h1>
+            <p class="home-sub">Each workspace is its own canvas of notes, lists and files.</p>
+          </div>
+          <div class="home-actions">
+            <button id="home-import" class="btn"><span data-icon="download"></span><span>Import</span></button>
+            <button id="home-new" class="btn primary"><span data-icon="plus"></span><span>New workspace</span></button>
+          </div>
+        </div>
+        <div id="ws-grid" class="ws-grid"></div>
+      </div>
+      <div id="fs-note" class="fs-note"></div>
+    </section>
+
+    <!-- ================= BREADCRUMB BAR (bottom) ================= -->
+    <footer id="bottombar" class="bottombar">
+      <nav id="breadcrumbs" aria-label="Location"></nav>
+    </footer>
+
+    <!-- ================= EDITOR DRAWER ================= -->
+    <aside id="drawer" class="drawer" hidden>
+      <div class="drawer-head">
+        <input id="f-title" class="title-field" placeholder="Untitled block" />
+        <span id="save-state" class="save-state"></span>
+        <button id="drawer-close" class="btn icon ghost" title="Close"><span data-icon="close"></span></button>
+      </div>
+
+      <div class="drawer-body">
+        <label class="field-label">Opens as</label>
+        <div id="layout-seg" class="seg">
+          <button data-layout="canvas"><span data-icon="square"></span><span>Canvas</span></button>
+          <button data-layout="list"><span data-icon="list"></span><span>List</span></button>
+        </div>
+
+        <label class="field-label">Accent</label>
+        <div id="swatches" class="swatches"></div>
+
+        <label class="field-label" for="f-desc">Description</label>
+        <input id="f-desc" class="text-field" placeholder="One line about this block…" />
+
+        <label class="field-label" for="f-notes">Notes</label>
+        <textarea id="f-notes" class="notes-field" placeholder="Write anything — plans, ideas, references…"></textarea>
+
+        <div class="files-head">
+          <label class="field-label">Attachments <span id="file-count" class="muted"></span></label>
+          <button id="f-upload" class="btn small"><span data-icon="upload"></span><span>Upload</span></button>
+        </div>
+        <div id="file-list" class="file-list"></div>
+        <div id="dropzone" class="dropzone">Drop files here — PDFs, images, diagrams</div>
+      </div>
+
+      <div class="drawer-foot">
+        <button id="f-delete" class="btn danger" title="Delete this block and everything inside it">
+          <span data-icon="trash"></span><span>Delete</span>
+        </button>
+        <button id="f-open" class="btn primary wide" title="Open this block's inner canvas">
+          <span>Open inside</span><span data-icon="arrow-right"></span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- ================= TEXT EDITOR DRAWER ================= -->
+    <aside id="text-drawer" class="drawer" hidden>
+      <div class="drawer-head">
+        <span class="title-field" style="flex:1">Text</span>
+        <span id="text-save" class="save-state"></span>
+        <button id="text-close" class="btn icon ghost" title="Close"><span data-icon="close"></span></button>
+      </div>
+      <div class="drawer-body">
+        <label class="field-label" for="t-content">Text</label>
+        <textarea id="t-content" class="notes-field" placeholder="Type your text…"></textarea>
+
+        <label class="field-label">Font</label>
+        <div id="t-font" class="seg">
+          <button data-font="sans">Sans</button>
+          <button data-font="serif">Serif</button>
+          <button data-font="mono">Mono</button>
+        </div>
+
+        <label class="field-label">Size <span id="t-size-val" class="muted"></span></label>
+        <input id="t-size" class="t-size" type="range" min="12" max="80" step="1" />
+
+        <label class="field-label">Style</label>
+        <div class="t-style-row">
+          <button id="t-bold" class="tbtn" title="Bold"><b>B</b></button>
+          <button id="t-italic" class="tbtn" title="Italic"><i>I</i></button>
+          <span class="t-gap"></span>
+          <button class="tbtn talign" data-align="left" title="Align left"><span data-icon="align-left"></span></button>
+          <button class="tbtn talign" data-align="center" title="Align center"><span data-icon="align-center"></span></button>
+          <button class="tbtn talign" data-align="right" title="Align right"><span data-icon="align-right"></span></button>
+        </div>
+
+        <label class="field-label">Orientation</label>
+        <div id="t-orient" class="seg">
+          <button data-orient="h">Horizontal</button>
+          <button data-orient="v">Vertical</button>
+        </div>
+
+        <label class="field-label">Rotation <span id="t-rot-val" class="muted"></span></label>
+        <input id="t-rot" class="t-size" type="range" min="-180" max="180" step="1" />
+
+        <label class="field-label">Colour</label>
+        <div id="t-swatches" class="swatches"></div>
+
+        <label class="switch t-glow-row" title="Glow when hovered">
+          <input type="checkbox" id="t-glow" />
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+          <span class="switch-label">Glow on hover</span>
+        </label>
+        <div id="t-glow-wrap" hidden>
+          <label class="field-label">Glow colour</label>
+          <div id="t-glow-swatches" class="swatches"></div>
+        </div>
+      </div>
+      <div class="drawer-foot">
+        <button id="t-delete" class="btn danger"><span data-icon="trash"></span><span>Delete</span></button>
+        <button id="t-done" class="btn primary wide">Done</button>
+      </div>
+    </aside>
+
+    <!-- ================= SHAPE EDITOR DRAWER ================= -->
+    <aside id="shape-drawer" class="drawer" hidden>
+      <div class="drawer-head">
+        <span class="title-field" style="flex:1">Shape</span>
+        <span id="shape-save" class="save-state"></span>
+        <button id="shape-close" class="btn icon ghost" title="Close"><span data-icon="close"></span></button>
+      </div>
+      <div class="drawer-body">
+        <label class="field-label">Shape</label>
+        <div id="s-type" class="shape-types">
+          <button data-shape="rectangle" title="Rectangle"><span data-icon="rect"></span></button>
+          <button data-shape="square" title="Square"><span data-icon="square"></span></button>
+          <button data-shape="circle" title="Circle"><span data-icon="circle"></span></button>
+          <button data-shape="triangle" title="Triangle"><span data-icon="triangle"></span></button>
+          <button data-shape="polygon" title="Polygon"><span data-icon="star"></span></button>
+        </div>
+
+        <label class="field-label">Width <span id="s-w-val" class="muted"></span></label>
+        <input id="s-w" class="t-size" type="range" min="30" max="600" step="2" />
+        <label class="field-label">Height <span id="s-h-val" class="muted"></span></label>
+        <input id="s-h" class="t-size" type="range" min="30" max="600" step="2" />
+
+        <label class="switch t-glow-row" title="Fill the shape with colour">
+          <input type="checkbox" id="s-fill" />
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+          <span class="switch-label">Solid fill</span>
+        </label>
+        <div id="s-fill-wrap">
+          <label class="field-label">Fill colour</label>
+          <div id="s-swatches" class="swatches"></div>
+        </div>
+
+        <label class="switch t-glow-row" title="Draw an outline">
+          <input type="checkbox" id="s-outline" />
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+          <span class="switch-label">Outline</span>
+        </label>
+        <div id="s-outline-wrap" hidden>
+          <label class="field-label">Outline width <span id="s-ow-val" class="muted"></span></label>
+          <input id="s-ow" class="t-size" type="range" min="1" max="24" step="1" />
+          <label class="field-label">Outline colour</label>
+          <div id="s-outline-swatches" class="swatches"></div>
+        </div>
+      </div>
+      <div class="drawer-foot">
+        <button id="s-delete" class="btn danger"><span data-icon="trash"></span><span>Delete</span></button>
+        <button id="s-done" class="btn primary wide">Done</button>
+      </div>
+    </aside>
+
+    <!-- ============ WORKSPACE SWITCHER (hover the logo) ============ -->
+    <div id="brand-menu" class="menu brand-menu" hidden></div>
+
+    <!-- ============ RIGHT-CLICK / LONG-PRESS CONTEXT MENU ============ -->
+    <div id="ctxmenu" class="menu ctxmenu" hidden></div>
+
+    <!-- ================= ADD POPOVER ================= -->
+    <div id="add-menu" class="add-menu" hidden>
+      <button data-add="block">
+        <span class="am-ico" data-icon="square"></span>
+        <span class="am-text"><b>Block</b><small>A free-drag card on a canvas</small></span>
+      </button>
+      <button data-add="list">
+        <span class="am-ico" data-icon="list"></span>
+        <span class="am-text"><b>List</b><small>Rows that each act as a block</small></span>
+      </button>
+      <button data-add="text">
+        <span class="am-ico" data-icon="type"></span>
+        <span class="am-text"><b>Text</b><small>Free text — pick font, size, colour</small></span>
+      </button>
+      <button data-add="shape">
+        <span class="am-ico" data-icon="shapes"></span>
+        <span class="am-text"><b>Shape</b><small>Rectangle, circle, triangle, custom…</small></span>
+      </button>
+    </div>
+
+    <!-- ================= "MORE" MENU (inside a workspace) ================= -->
+    <div id="menu" class="menu" hidden>
+      <button data-act="add-child"><span data-icon="plus"></span><span>Add block here</span></button>
+      <button data-act="properties"><span data-icon="sliders"></span><span>Workspace properties</span></button>
+      <div class="menu-sep"></div>
+      <button data-act="export"><span data-icon="upload"></span><span>Export workspace</span></button>
+      <div class="menu-sep"></div>
+      <button data-act="about"><span data-icon="info"></span><span>About</span></button>
+      <button data-act="help"><span data-icon="help"></span><span>Help</span></button>
+    </div>
+
+    <div id="toast" class="toast" hidden></div>
+
+    <!-- confirm dialog -->
+    <div id="confirm" class="modal" hidden>
+      <div class="modal-card">
+        <h3 id="confirm-title">Are you sure?</h3>
+        <p id="confirm-msg"></p>
+        <div class="modal-actions">
+          <button id="confirm-cancel" class="btn">Cancel</button>
+          <button id="confirm-ok" class="btn danger">Delete</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- prompt dialog (name / rename) -->
+    <div id="prompt" class="modal" hidden>
+      <div class="modal-card">
+        <h3 id="prompt-title">New Workspace</h3>
+        <label class="field-label" for="prompt-input">Name</label>
+        <input id="prompt-input" class="text-field" autocomplete="off" placeholder="Untitled workspace" />
+        <div id="prompt-color-wrap" hidden>
+          <label class="field-label">Color</label>
+          <div id="prompt-colors" class="swatches"></div>
+        </div>
+        <div class="modal-actions">
+          <button id="prompt-cancel" class="btn">Cancel</button>
+          <button id="prompt-ok" class="btn primary">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- about / help dialog (two tabs) -->
+    <div id="about" class="modal" hidden>
+      <div class="modal-card help-modal">
+        <div class="about-head">
+          <span class="brand-mark" data-icon="diary"></span>
+          <h3 id="about-title">Notes Gallery</h3>
+          <button id="about-x" class="btn icon ghost" title="Close"><span data-icon="close"></span></button>
+        </div>
+
+        <div class="tabs" id="about-tabs">
+          <button class="tab" data-tab="about">About</button>
+          <button class="tab" data-tab="help">Help</button>
+        </div>
+
+        <!-- ABOUT tab: current workspace details (read-only) -->
+        <div id="tab-about" class="tab-panel"></div>
+
+        <!-- HELP tab: instructions -->
+        <div id="tab-help" class="tab-panel">
+          <p>A workspace of blocks on an infinite canvas. Every block holds notes and files, can connect to others, and can open into its own inner canvas — nest as deep as you like.</p>
+
+          <div class="help-section">
+            <h4>Workspaces</h4>
+            <ul class="help-list">
+              <li>The app opens on your <b>workspaces</b>. Each is a separate canvas.</li>
+              <li><b>New / Import</b> from that screen; each card has properties, export, delete.</li>
+              <li>Click the <b>logo</b> to return there; <b>hover the logo</b> inside a workspace to switch quickly.</li>
+              <li><b>Export workspace</b> makes one portable <code>.json</code> (with your files) — import it anywhere to reopen it.</li>
+            </ul>
+          </div>
+
+          <div class="help-section">
+            <h4>Blocks &amp; lists</h4>
+            <ul class="help-list">
+              <li><b>Add</b> — the <b>+ Add</b> button (Block, List, Text or Shape), or double-click empty canvas.</li>
+              <li><b>Block</b> = a card on a free canvas. <b>List</b> = rows that are each blocks; its card previews what's inside.</li>
+              <li><b>Select</b> — single-click. <b>Open inside</b> — double-click, or the → button.</li>
+              <li><b>Edit</b> — the ✎ button (on hover/selection) opens the side editor; it autosaves.</li>
+              <li><b>Connect</b> — the link tool, then tap two blocks; click a line to remove it.</li>
+              <li><b>Attach</b> — upload PDFs, images, diagrams in the editor; view or download them anytime.</li>
+            </ul>
+          </div>
+
+          <div class="help-section">
+            <h4>Selecting &amp; moving</h4>
+            <ul class="help-list">
+              <li><b>Multi-select</b> — Shift+click, or right-drag a box across blocks.</li>
+              <li>Drag any selected block to <b>move the whole group</b>. Copy/paste deep-copies everything inside.</li>
+              <li><b>Pan</b> — drag empty space. <b>Zoom</b> — wheel or pinch. <b>Fit</b> frames everything.</li>
+            </ul>
+          </div>
+
+          <div class="help-section">
+            <h4>Keyboard shortcuts</h4>
+            <div class="kbd-grid">
+              <div><span class="kbd">N</span></div><div>New block</div>
+              <div><span class="kbd">L</span></div><div>Link (connect) mode</div>
+              <div><span class="kbd">F</span></div><div>Fit everything to view</div>
+              <div><span class="kbd">/</span></div><div>Search</div>
+              <div><span class="kbd">Ctrl</span>+<span class="kbd">A</span></div><div>Select all on the canvas</div>
+              <div><span class="kbd">Shift</span>+click</div><div>Add / remove from selection</div>
+              <div>right-drag</div><div>Marquee (box) select</div>
+              <div><span class="kbd">Ctrl</span>+<span class="kbd">C</span> / <span class="kbd">V</span></div><div>Copy / paste (with contents)</div>
+              <div><span class="kbd">Ctrl</span>+<span class="kbd">X</span></div><div>Cut</div>
+              <div><span class="kbd">Ctrl</span>+<span class="kbd">Z</span> / <span class="kbd">Y</span></div><div>Undo / redo</div>
+              <div><span class="kbd">Ctrl</span>+<span class="kbd">S</span></div><div>Save to file</div>
+              <div><span class="kbd">Del</span></div><div>Delete selected</div>
+              <div><span class="kbd">Esc</span></div><div>Close / cancel / clear selection</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-actions"><button id="about-close" class="btn primary">Done</button></div>
+      </div>
+    </div>
+
+    <!-- workspace properties dialog -->
+    <div id="props" class="modal" hidden>
+      <div class="modal-card">
+        <h3>Workspace</h3>
+        <label class="field-label" for="props-name">Name</label>
+        <input id="props-name" class="text-field" autocomplete="off" />
+        <div class="props-gap"><label class="field-label">Color</label>
+          <div id="props-colors" class="swatches"></div>
+        </div>
+        <div class="props-gap"><label class="field-label">File location</label>
+          <div id="props-loc" class="props-loc"></div>
+        </div>
+        <div class="modal-actions">
+          <button id="props-cancel" class="btn">Cancel</button>
+          <button id="props-save" class="btn primary">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <input type="file" id="file-input" hidden multiple />
+    <input type="file" id="import-input" hidden accept="application/json,.json" />
+  </div>
+
+  <script src="js/db.js?v=10"></script>
+  <script src="js/app.js?v=10"></script>
+</body>
+</html>
