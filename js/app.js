@@ -1347,6 +1347,8 @@
       return;
     }
     if (gizmo) {
+      pointers.delete(e.pointerId);       // release the handle's pointer (else next touch looks like a 2nd finger → pinch)
+      if (pointers.size < 2) pinch = null;
       const b = state.blocks.find(x => x.id === gizmo.id);
       if (b) {
         await persistBlock(b);
