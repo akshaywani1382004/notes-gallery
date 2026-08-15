@@ -80,6 +80,7 @@
     circle: '<circle cx="12" cy="12" r="8.5"/>',
     triangle: '<path d="M12 4.5 20.5 19H3.5Z"/>',
     star: '<path d="M12 3.6l2.6 5.2 5.8.9-4.2 4.1 1 5.7-5.2-2.7-5.2 2.7 1-5.7L3.6 9.7l5.8-.9z"/>',
+    image: '<rect x="3.5" y="5" width="17" height="14" rx="2.2"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M4 17l4.5-4.5 3 3L15 12l5 5"/>',
   };
   const FONT_STACK = {
     sans: '"Inter", ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, sans-serif',
@@ -217,15 +218,32 @@
 
   function makeBlockEl(b) {
     const el = document.createElement('div');
-    el.className = 'block' + (b.kind === 'text' ? ' block-text' : '') + (b.kind === 'shape' ? ' block-shape' : '');
+    el.className = 'block'
+      + (b.kind === 'text' ? ' block-text' : '')
+      + (b.kind === 'shape' ? ' block-shape' : '')
+      + (b.kind === 'image' ? ' block-image' : '');
     el.dataset.id = b.id;
     el.style.left = b.x + 'px';
     el.style.top = b.y + 'px';
     if (b.kind === 'text') paintTextNode(el, b);
     else if (b.kind === 'shape') paintShapeNode(el, b);
+    else if (b.kind === 'image') paintImageNode(el, b);
     else { el.style.setProperty('--b-accent', b.color || PALETTE[0]); paintBlock(el, b); }
     state.els[b.id] = el;
     return el;
+  }
+
+  // free image node (kind === 'image'); src is a data URL stored on the block
+  function paintImageNode(el, b) {
+    const w = b.w || 200, h = b.h || 150;
+    el.style.width = w + 'px'; el.style.height = h + 'px';
+    el.style.transform = b.rot ? `rotate(${b.rot}deg)` : '';
+    el.innerHTML =
+      `<img class="img-content" alt="" draggable="false" style="border-radius:${b.round ? 12 : 0}px" />` +
+      `<div class="block-actions"><button class="blk-btn" data-blk="edit" title="Edit image">${ic('pencil')}</button></div>` +
+      `<div class="tnode-rotate" title="Rotate"></div>` +
+      `<div class="tnode-resize" title="Resize"></div>`;
+    el.querySelector('.img-content').src = b.src || '';
   }
 
   // free vector shape node (kind === 'shape'), drawn with inline SVG so fill
@@ -341,6 +359,7 @@
     if (!el || !b) return;
     if (b.kind === 'text') { paintTextNode(el, b); }
     else if (b.kind === 'shape') { paintShapeNode(el, b); }
+    else if (b.kind === 'image') { paintImageNode(el, b); }
     else { paintBlock(el, b); el.style.setProperty('--b-accent', b.color || PALETTE[0]); }
   }
 
@@ -369,6 +388,15 @@
           <div class="lr-main"><div class="lr-title">${esc((b.text || 'Text').slice(0, 80))}</div>
           <div class="lr-sub">Text</div></div>
           <div class="lr-actions"><button class="lr-btn" data-edit="${esc(b.id)}" title="Edit text">${ic('pencil')}</button></div>
+        </div>`;
+    }
+    if (b.kind === 'image' || b.kind === 'shape') {
+      const isImg = b.kind === 'image';
+      return `<div class="list-row" data-id="${esc(b.id)}" style="--b-accent:${esc(b.color || 'var(--accent)')}">
+          <div class="lr-ico">${ic(isImg ? 'image' : 'shapes')}</div>
+          <div class="lr-main"><div class="lr-title">${isImg ? 'Image' : 'Shape'}</div>
+          <div class="lr-sub">${isImg ? 'Picture' : (b.shape || 'shape')}</div></div>
+          <div class="lr-actions"><button class="lr-btn" data-edit="${esc(b.id)}" title="Edit">${ic('pencil')}</button></div>
         </div>`;
     }
     const c = state.childCounts[b.id] || { blocks: 0, files: 0 };
@@ -564,6 +592,42 @@
   async function persistBlock(b) {
     b.updatedAt = Date.now();
     await DB.saveBlock(b);
+  }
+
+  /* ---------------------------- image node ----------------------------- */
+  let pendingImageAt = null;     // world position for the next picked image
+  let replaceImageId = null;     // when set, the picked file replaces this node's src
+  const readAsDataUrl = (file) => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(file); });
+  const loadImageSize = (src) => new Promise((res) => { const im = new Image(); im.onload = () => res({ w: im.naturalWidth || 200, h: im.naturalHeight || 150 }); im.onerror = () => res({ w: 200, h: 150 }); im.src = src; });
+
+  function pickImage(at) {
+    if (state.levelLayout !== 'canvas') { toast('Open a canvas block to add an image here.'); return; }
+    pendingImageAt = at || centerOfView();
+    replaceImageId = null;
+    $('#image-input').click();
+  }
+  async function createImageBlock(file) {
+    const src = await readAsDataUrl(file);
+    const nat = await loadImageSize(src);
+    const maxW = 300;
+    const scale = nat.w > maxW ? maxW / nat.w : 1;
+    const w = Math.round(nat.w * scale), h = Math.round(nat.h * scale);
+    const pos = pendingImageAt || centerOfView();
+    const b = {
+      id: uid(), ws: state.ws, parentId: state.level, kind: 'image',
+      title: '', description: '', notes: '', layout: 'canvas', color: '', icon: '',
+      src, w, h, rot: 0, round: false,
+      x: Math.round(pos.x - w / 2), y: Math.round(pos.y - h / 2),
+      createdAt: Date.now(), updatedAt: Date.now(),
+    };
+    await DB.saveBlock(b);
+    state.blocks.push(b);
+    state.childCounts[b.id] = { blocks: 0, files: 0 };
+    recordChange(emptySet(), { blocks: [b], edges: [], files: [] });
+    world.appendChild(makeBlockEl(b));
+    $('#empty-hint').hidden = true;
+    openImageEditor(b.id);
+    toast('Image added');
   }
 
   /* ---------------------------- undo / redo ---------------------------- */
@@ -799,7 +863,7 @@
   const saveState = $('#save-state');
   let saveTimer = null;
   // superset covering both the block editor and the text editor
-  const EDIT_FIELDS = ['title', 'description', 'notes', 'color', 'layout', 'text', 'font', 'size', 'bold', 'italic', 'align', 'orient', 'rot', 'glow', 'glowColor', 'shape', 'w', 'h', 'fill', 'outline', 'outlineW', 'outlineColor'];
+  const EDIT_FIELDS = ['title', 'description', 'notes', 'color', 'layout', 'text', 'font', 'size', 'bold', 'italic', 'align', 'orient', 'rot', 'glow', 'glowColor', 'shape', 'w', 'h', 'fill', 'outline', 'outlineW', 'outlineColor', 'src', 'round'];
 
   function snapshotFields(b) {
     const o = { id: b.id };
@@ -811,6 +875,7 @@
     const b = state.blocks.find(x => x.id === id);
     if (b && b.kind === 'text') openTextEditor(id);
     else if (b && b.kind === 'shape') openShapeEditor(id);
+    else if (b && b.kind === 'image') openImageEditor(id);
     else openEditor(id);
   }
 
@@ -821,7 +886,8 @@
     const cur = state.blocks.find(x => x.id === base.id) ||
       (drawerBlock && drawerBlock.id === base.id ? drawerBlock : null) ||
       (textBlock && textBlock.id === base.id ? textBlock : null) ||
-      (shapeBlock && shapeBlock.id === base.id ? shapeBlock : null);
+      (shapeBlock && shapeBlock.id === base.id ? shapeBlock : null) ||
+      (imageBlock && imageBlock.id === base.id ? imageBlock : null);
     if (!cur) return;
     if (!EDIT_FIELDS.some(f => (cur[f] ?? '') !== (base[f] ?? ''))) return;
     const before = { ...cur };
@@ -1092,6 +1158,83 @@
     $('#s-delete').addEventListener('click', () => { if (shapeBlock) deleteBlock(shapeBlock.id); });
   }
 
+  /* ---------------------------- image editor --------------------------- */
+  let imageBlock = null;
+  let imageSaveTimer = null;
+  function queueImageSave() {
+    if (!imageBlock) return;
+    $('#image-save').textContent = 'Saving…';
+    clearTimeout(imageSaveTimer);
+    imageSaveTimer = setTimeout(async () => {
+      if (!imageBlock) return;
+      await persistBlock(imageBlock);
+      refreshItem(imageBlock.id);
+      $('#image-save').textContent = 'Saved';
+      setTimeout(() => { if ($('#image-save').textContent === 'Saved') $('#image-save').textContent = ''; }, 1500);
+      markChanged();
+    }, 300);
+  }
+  function openImageEditor(id) {
+    flushEdit();
+    const b = state.blocks.find(x => x.id === id);
+    if (!b) return;
+    selectBlock(id);
+    $('#drawer').hidden = true; drawerBlock = null;
+    $('#text-drawer').hidden = true; textBlock = null;
+    $('#shape-drawer').hidden = true; shapeBlock = null;
+    imageBlock = b;
+    editBaseline = snapshotFields(b);
+    const pv = $('#i-preview'); pv.innerHTML = ''; const im = document.createElement('img'); im.src = b.src || ''; pv.appendChild(im);
+    $('#i-w').value = b.w || 200; $('#i-w-val').textContent = (b.w || 200) + 'px';
+    $('#i-rot').value = b.rot || 0; $('#i-rot-val').textContent = (b.rot || 0) + '°';
+    $('#i-round').checked = !!b.round;
+    $('#image-drawer').hidden = false;
+    $('#image-save').textContent = '';
+  }
+  function closeImageEditor() {
+    if ($('#image-drawer').hidden && !imageBlock) return;
+    flushEdit();
+    $('#image-drawer').hidden = true;
+    imageBlock = null;
+  }
+  function bindImageEditor() {
+    $('#i-w').addEventListener('input', (e) => {
+      if (!imageBlock) return;
+      const newW = parseInt(e.target.value, 10) || 200;
+      const ratio = (imageBlock.h && imageBlock.w) ? imageBlock.h / imageBlock.w : 0.75;
+      imageBlock.w = newW; imageBlock.h = Math.round(newW * ratio);
+      $('#i-w-val').textContent = newW + 'px';
+      refreshItem(imageBlock.id); queueImageSave();
+    });
+    $('#i-rot').addEventListener('input', (e) => { if (!imageBlock) return; imageBlock.rot = parseInt(e.target.value, 10) || 0; $('#i-rot-val').textContent = imageBlock.rot + '°'; refreshItem(imageBlock.id); queueImageSave(); });
+    $('#i-round').addEventListener('change', (e) => { if (!imageBlock) return; imageBlock.round = e.target.checked; refreshItem(imageBlock.id); queueImageSave(); });
+    $('#i-replace').addEventListener('click', () => { if (!imageBlock) return; replaceImageId = imageBlock.id; pendingImageAt = null; $('#image-input').click(); });
+    $('#image-close').addEventListener('click', closeImageEditor);
+    $('#i-done').addEventListener('click', closeImageEditor);
+    $('#i-delete').addEventListener('click', () => { if (imageBlock) deleteBlock(imageBlock.id); });
+    // shared file input for both new images and replacements
+    $('#image-input').addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (!file) { replaceImageId = null; return; }
+      if (replaceImageId) {
+        const b = state.blocks.find(x => x.id === replaceImageId); replaceImageId = null;
+        if (!b) return;
+        const before = { ...b };
+        b.src = await readAsDataUrl(file);
+        const nat = await loadImageSize(b.src);
+        b.h = Math.round((b.w || 200) * (nat.h / (nat.w || 1)));
+        await persistBlock(b);
+        refreshItem(b.id);
+        if (imageBlock && imageBlock.id === b.id) openImageEditor(b.id);
+        recordChange({ blocks: [before], edges: [], files: [] }, { blocks: [{ ...b }], edges: [], files: [] });
+        toast('Image replaced');
+      } else {
+        await createImageBlock(file);
+      }
+    });
+  }
+
   /* ---------------------------- files ---------------------------------- */
   const objectUrls = new Set();
   function makeUrl(blob) { const u = URL.createObjectURL(blob); objectUrls.add(u); return u; }
@@ -1229,7 +1372,7 @@
           startX: e.clientX, startY: e.clientY,
           startSize: b.size || 22, startW: b.w || 150, startH: b.h || 100, startRot: b.rot || 0,
           cx: rect.left + rect.width / 2, cy: rect.top + rect.height / 2,
-          isText: b.kind === 'text', before: { ...b },
+          isText: b.kind === 'text', isImage: b.kind === 'image', before: { ...b },
         };
         gizmo.startAngle = Math.atan2(e.clientY - gizmo.cy, e.clientX - gizmo.cx);
         return;
@@ -1281,6 +1424,11 @@
           const d = ((e.clientX - gizmo.startX) + (e.clientY - gizmo.startY)) / 2 / s;
           b.size = clamp(Math.round(gizmo.startSize + d * 0.7), 8, 240);
           if (textBlock && textBlock.id === b.id) { $('#t-size').value = b.size; $('#t-size-val').textContent = b.size + 'px'; }
+        } else if (gizmo.isImage) {
+          const ratio = gizmo.startH / (gizmo.startW || 1);
+          b.w = clamp(Math.round(gizmo.startW + (e.clientX - gizmo.startX) / s), 20, 2000);
+          b.h = Math.max(20, Math.round(b.w * ratio));   // keep aspect ratio
+          if (imageBlock && imageBlock.id === b.id) { const W = $('#i-w'); if (W) { W.value = b.w; $('#i-w-val').textContent = b.w + 'px'; } }
         } else {
           b.w = clamp(Math.round(gizmo.startW + (e.clientX - gizmo.startX) / s), 20, 1400);
           b.h = clamp(Math.round(gizmo.startH + (e.clientY - gizmo.startY) / s), 20, 1400);
@@ -1292,6 +1440,7 @@
         deg = (((deg + 180) % 360) + 360) % 360 - 180;
         b.rot = deg;
         if (textBlock && textBlock.id === b.id) { $('#t-rot').value = deg; $('#t-rot-val').textContent = deg + '°'; }
+        if (imageBlock && imageBlock.id === b.id) { $('#i-rot').value = deg; $('#i-rot-val').textContent = deg + '°'; }
       }
       refreshBlockCard(b.id);
       drawEdges();
@@ -1425,6 +1574,7 @@
     if (!$('#drawer').hidden) closeDrawer();
     if (!$('#text-drawer').hidden) closeTextEditor();
     if (!$('#shape-drawer').hidden) closeShapeEditor();
+    if (!$('#image-drawer').hidden) closeImageEditor();
     hideSearchResults();
     $('#menu').hidden = true;
   }
@@ -1441,7 +1591,7 @@
       if (!state.selectedIds.has(targetId)) selectBlock(targetId);
       const b = state.blocks.find(x => x.id === targetId);
       const many = state.selectedIds.size > 1;
-      const openable = b && b.kind !== 'text' && b.kind !== 'shape';
+      const openable = b && b.kind !== 'text' && b.kind !== 'shape' && b.kind !== 'image';
       items = [{ icon: 'pencil', label: 'Edit', fn: () => openAnyEditor(targetId), disabled: many }];
       if (openable) items.push({ icon: 'arrow-right', label: 'Open inside', fn: () => navigateTo(targetId), disabled: many });
       items.push(
@@ -1457,6 +1607,7 @@
         { icon: 'list', label: 'Add list', fn: () => createBlock('list', at) },
         { icon: 'type', label: 'Add text', fn: () => createBlock('text', at) },
         { icon: 'shapes', label: 'Add shape', fn: () => createBlock('shape', at) },
+        { icon: 'image', label: 'Add image', fn: () => pickImage(at) },
         { sep: true },
         { icon: 'download', label: 'Paste', fn: () => pasteClipboard(), disabled: !clipboard },
         { icon: 'frame', label: 'Fit to view', fn: () => fitToView() },
@@ -1508,6 +1659,7 @@
       const b = state.blocks.find(x => x.id === blockEl.dataset.id);
       if (b && b.kind === 'text') openTextEditor(b.id);
       else if (b && b.kind === 'shape') openShapeEditor(b.id);
+      else if (b && b.kind === 'image') openImageEditor(b.id);
       else navigateTo(blockEl.dataset.id);
       return;
     }
@@ -1687,10 +1839,9 @@
     for (const f of files) {
       outFiles.push({ blockId: f.blockId, name: f.name, type: f.type, size: f.size, kind: f.kind, createdAt: f.createdAt, data: await blobToDataUrl(f.blob) });
     }
-    const outBlocks = blocks.map(b => ({
-      id: b.id, parentId: b.parentId, title: b.title, description: b.description, notes: b.notes,
-      layout: b.layout, color: b.color, icon: b.icon, x: b.x, y: b.y, createdAt: b.createdAt, updatedAt: b.updatedAt,
-    }));
+    // Preserve every field (kind, text/shape/image props, src, etc.); only drop `ws`
+    // which is re-assigned on import.
+    const outBlocks = blocks.map(b => { const o = { ...b }; delete o.ws; return o; });
     const outEdges = edges.map(e => ({ id: e.id, parentId: e.parentId, from: e.from, to: e.to, createdAt: e.createdAt }));
     return {
       app: 'NotesGallery', kind: 'workspace', version: 2, exportedAt: new Date().toISOString(),
@@ -2310,6 +2461,7 @@
         else if (state.linkMode) setLinkMode(false);
         else if (!$('#text-drawer').hidden) closeTextEditor();
         else if (!$('#shape-drawer').hidden) closeShapeEditor();
+        else if (!$('#image-drawer').hidden) closeImageEditor();
         else if (!$('#drawer').hidden) closeDrawer();
         else if (state.selectedIds.size) clearSelection();
         else hideSearchResults();
@@ -2373,7 +2525,8 @@
     menu.addEventListener('click', (e) => {
       const item = e.target.closest('[data-add]'); if (!item) return;
       hideAddMenu();
-      createBlock(item.dataset.add);
+      if (item.dataset.add === 'image') pickImage();
+      else createBlock(item.dataset.add);
     });
     document.addEventListener('click', (e) => {
       if (menu.hidden) return;
@@ -2447,7 +2600,7 @@
     bindToolbar(); bindStage(); bindDrawerFields(); bindFileInputs();
     bindSearch(); bindMenu(); bindConfirm(); bindKeys();
     bindAddMenu(); bindListView(); bindHome(); bindPrompt(); bindBrandMenu(); bindAutosave(); bindProps(); bindAbout(); bindContextMenu();
-    bindTextEditor(); bindShapeEditor();
+    bindTextEditor(); bindShapeEditor(); bindImageEditor();
     try {
       await DB.open();
     } catch (err) {
