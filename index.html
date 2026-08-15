@@ -9,7 +9,7 @@
   <link rel="apple-touch-icon" href="icon.svg" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Notes Gallery" />
-  <link rel="stylesheet" href="css/styles.css?v=19" />
+  <link rel="stylesheet" href="css/styles.css?v=20" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cdefs%3E%3ClinearGradient%20id='g'%20x1='0'%20y1='0'%20x2='1'%20y2='1'%3E%3Cstop%20offset='0'%20stop-color='%234353ff'/%3E%3Cstop%20offset='1'%20stop-color='%23146ef5'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20width='24'%20height='24'%20rx='6'%20fill='url(%23g)'/%3E%3Cg%20fill='none'%20stroke='%23fff'%20stroke-width='1.5'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M12%203.6C14.7%203.6%2016.1%205.8%2015.9%208L12.5%2018.6C12.3%2019.4%2011.7%2019.4%2011.5%2018.6L8.1%208C7.9%205.8%209.3%203.6%2012%203.6Z'/%3E%3Cline%20x1='12'%20y1='10.6'%20x2='12'%20y2='18'/%3E%3Ccircle%20cx='12'%20cy='9'%20r='1.15'/%3E%3C/g%3E%3C/svg%3E" />
 </head>
 <body>
@@ -43,6 +43,8 @@
           </button>
         </div>
         <button id="btn-link" class="btn icon" title="Connect two blocks"><span data-icon="link"></span></button>
+        <button id="btn-pen" class="btn icon" title="Freehand pen (draw)"><span data-icon="pen"></span></button>
+        <button id="btn-map" class="btn icon" title="Toggle mini-map"><span data-icon="map"></span></button>
         <label class="switch" id="autosave-wrap" title="Autosave to the workspace file">
           <input type="checkbox" id="autosave" checked />
           <span class="switch-track"><span class="switch-thumb"></span></span>
@@ -96,6 +98,16 @@
         <span>Filtering <b id="tag-filter-name"></b></span>
         <button id="tag-filter-clear">Clear</button>
       </div>
+
+      <div id="pen-bar" class="link-banner" hidden>
+        <span data-icon="pen"></span>
+        <span>Draw</span>
+        <span id="pen-colors" class="pen-colors"></span>
+        <input id="pen-size" type="range" min="1" max="16" step="1" title="Pen size" />
+        <button id="pen-exit">Done</button>
+      </div>
+
+      <canvas id="minimap" class="minimap" hidden></canvas>
     </main>
 
     <!-- ================= WORKSPACES LANDING ================= -->
@@ -461,6 +473,8 @@
             <div class="kbd-grid">
               <div><span class="kbd">N</span></div><div>New block</div>
               <div><span class="kbd">L</span></div><div>Link (connect) mode</div>
+              <div><span class="kbd">P</span></div><div>Freehand pen (draw)</div>
+              <div><span class="kbd">M</span></div><div>Toggle mini-map</div>
               <div><span class="kbd">F</span></div><div>Fit everything to view</div>
               <div><span class="kbd">/</span></div><div>Search (all workspaces)</div>
               <div><span class="kbd">Ctrl</span>+<span class="kbd">K</span></div><div>Command palette</div>
@@ -509,7 +523,7 @@
     <input type="file" id="image-input" hidden accept="image/*" />
   </div>
 
-  <script src="js/db.js?v=19"></script>
-  <script src="js/app.js?v=19"></script>
+  <script src="js/db.js?v=20"></script>
+  <script src="js/app.js?v=20"></script>
 </body>
 </html>
