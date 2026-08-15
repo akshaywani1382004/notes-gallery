@@ -635,6 +635,25 @@
     return b;
   }
 
+  // Paste an image from the clipboard (Ctrl+V of a copied picture / screenshot).
+  function bindImagePaste() {
+    window.addEventListener('paste', async (e) => {
+      if (state.ws == null || state.levelLayout !== 'canvas') return;
+      const t = document.activeElement;
+      if (t && /^(INPUT|TEXTAREA)$/.test(t.tagName)) return;   // let text fields paste normally
+      const items = e.clipboardData && e.clipboardData.items;
+      if (!items) return;
+      const imgs = [];
+      for (const it of items) { if (it.kind === 'file' && /^image\//.test(it.type)) { const f = it.getAsFile(); if (f) imgs.push(f); } }
+      if (!imgs.length) return;               // no image on the clipboard → let block-paste handle it
+      e.preventDefault();
+      const c = centerOfView();
+      let i = 0;
+      for (const f of imgs) { await createImageBlock(f, { at: { x: c.x + i * 24, y: c.y + i * 24 }, openAfter: false }); i++; }
+      toast(imgs.length > 1 ? `${imgs.length} images pasted` : 'Image pasted');
+    });
+  }
+
   // Drop image files onto the canvas (from the OS or another app).
   async function dropImageFiles(fileList, clientX, clientY) {
     const imgs = Array.from(fileList).filter(f => /^image\//.test(f.type));
@@ -2660,7 +2679,7 @@
     bindToolbar(); bindStage(); bindDrawerFields(); bindFileInputs();
     bindSearch(); bindMenu(); bindConfirm(); bindKeys();
     bindAddMenu(); bindListView(); bindHome(); bindPrompt(); bindBrandMenu(); bindAutosave(); bindProps(); bindAbout(); bindContextMenu();
-    bindTextEditor(); bindShapeEditor(); bindImageEditor();
+    bindTextEditor(); bindShapeEditor(); bindImageEditor(); bindImagePaste();
     try {
       await DB.open();
     } catch (err) {
