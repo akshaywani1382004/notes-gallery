@@ -83,6 +83,8 @@
     image: '<rect x="3.5" y="5" width="17" height="14" rx="2.2"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M4 17l4.5-4.5 3 3L15 12l5 5"/>',
     front: '<rect x="8" y="8" width="12" height="12" rx="2" fill="currentColor" stroke="none"/><path d="M4 14V5.5A1.5 1.5 0 0 1 5.5 4H14"/>',
     back: '<rect x="4" y="4" width="12" height="12" rx="2"/><path d="M10 16h8.5A1.5 1.5 0 0 0 20 14.5V6" fill="none"/><rect x="10" y="10" width="10" height="10" rx="2" fill="currentColor" stroke="none"/>',
+    lock: '<rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>',
+    unlock: '<rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 7.7-1.5"/>',
     forward: '<rect x="8" y="8" width="12" height="12" rx="2" fill="currentColor" stroke="none"/><polyline points="6.5 6 10 9.5 6.5 13" fill="none"/>',
     backward: '<rect x="4" y="4" width="12" height="12" rx="2"/><polyline points="17.5 11 14 14.5 17.5 18" fill="none"/><rect x="10" y="10" width="10" height="10" rx="2" fill="currentColor" stroke="none"/>',
   };
@@ -238,6 +240,7 @@
     else if (b.kind === 'shape') paintShapeNode(el, b);
     else if (b.kind === 'image') paintImageNode(el, b);
     else { el.style.setProperty('--b-accent', b.color || PALETTE[0]); paintBlock(el, b); }
+    el.classList.toggle('locked', !!b.locked);
     state.els[b.id] = el;
     return el;
   }
@@ -370,6 +373,7 @@
     else if (b.kind === 'shape') { paintShapeNode(el, b); }
     else if (b.kind === 'image') { paintImageNode(el, b); }
     else { paintBlock(el, b); el.style.setProperty('--b-accent', b.color || PALETTE[0]); }
+    el.classList.toggle('locked', !!b.locked);
   }
 
   // Update whichever representation (canvas card or list row) exists for a block.
@@ -816,6 +820,18 @@
   }
   const bringForward = (ids) => stepZ(ids, true);
   const sendBackward = (ids) => stepZ(ids, false);
+
+  // Lock / unlock the given blocks (prevents move/resize/rotate). Undoable.
+  async function toggleLock(ids) {
+    if (!ids || !ids.length) return;
+    const blocks = ids.map(id => state.blocks.find(b => b.id === id)).filter(Boolean);
+    if (!blocks.length) return;
+    const makeLocked = !blocks.every(b => b.locked);   // if any unlocked → lock all
+    const before = { blocks: blocks.map(b => ({ ...b })), edges: [], files: [] };
+    for (const b of blocks) { b.locked = makeLocked; await persistBlock(b); refreshBlockCard(b.id); }
+    recordChange(before, { blocks: blocks.map(b => ({ ...b })), edges: [], files: [] });
+    toast(makeLocked ? 'Locked' : 'Unlocked');
+  }
 
   /* ---------------------------- arrow-key nudge ------------------------ */
   let nudge = null;   // { before:Map<id,{x,y}>, timer }
@@ -1538,6 +1554,7 @@
       const handle = e.target.closest('.tnode-rotate, .tnode-resize');
       if (handle) {
         const b = state.blocks.find(x => x.id === id);
+        if (b && b.locked) { selectBlock(id); return; }   // locked: no resize/rotate
         selectBlock(id);
         const rect = blockEl.getBoundingClientRect();
         gizmo = {
@@ -1554,12 +1571,18 @@
       if (state.linkMode) { handleLinkTap(id); return; }
       // if it's an unselected block and no shift, select just it (so drag moves it)
       if (!e.shiftKey && !state.selectedIds.has(id)) selectBlock(id);
-      // move the whole current selection if this block is part of it; else just this one
-      const ids = (!e.shiftKey && state.selectedIds.has(id)) ? [...state.selectedIds] : [id];
-      const starts = {};
-      ids.forEach(bid => { const bb = state.blocks.find(x => x.id === bid); if (bb) starts[bid] = { x: bb.x, y: bb.y }; });
-      dragging = { primary: id, ids, starts, startX: e.clientX, startY: e.clientY, moved: false, shift: e.shiftKey };
-      blockEl.classList.add('dragging');
+      const primaryBlock = state.blocks.find(x => x.id === id);
+      // locked blocks: select (and shift-toggle) but never drag-move
+      if (primaryBlock && primaryBlock.locked && !e.shiftKey) {
+        // fall through to long-press handling below, but don't start a drag
+      } else {
+        // move the whole current selection if this block is part of it; else just this one
+        const ids = (!e.shiftKey && state.selectedIds.has(id)) ? [...state.selectedIds] : [id];
+        const starts = {};
+        ids.forEach(bid => { const bb = state.blocks.find(x => x.id === bid); if (bb && !bb.locked) starts[bid] = { x: bb.x, y: bb.y }; });
+        dragging = { primary: id, ids: Object.keys(starts), starts, startX: e.clientX, startY: e.clientY, moved: false, shift: e.shiftKey };
+        blockEl.classList.add('dragging');
+      }
     } else {
       const r = stage.getBoundingClientRect();
       panning = { startX: e.clientX, startY: e.clientY, tx: state.view.tx, ty: state.view.ty, r };
@@ -1777,6 +1800,9 @@
         { icon: 'backward', label: 'Send backward', fn: () => sendBackward([...state.selectedIds]) },
         { icon: 'back', label: 'Send to back', fn: () => sendToBack([...state.selectedIds]) },
         { sep: true },
+        { icon: b && b.locked ? 'unlock' : 'lock', label: (b && b.locked) ? 'Unlock' : 'Lock', fn: () => toggleLock([...state.selectedIds]) },
+        { icon: 'copy', label: 'Duplicate', fn: () => duplicateSelection() },
+        { sep: true },
         { icon: 'trash', label: many ? `Delete ${state.selectedIds.size}` : 'Delete', fn: () => deleteSelected(), danger: true },
       );
     } else {
@@ -1820,6 +1846,103 @@
       if (!$('#ctxmenu').hidden && !e.target.closest('#ctxmenu')) hideCtxMenu();
     }, true);
     window.addEventListener('wheel', () => hideCtxMenu(), { passive: true });
+  }
+
+  /* ---------------------------- command palette (Ctrl+K) --------------- */
+  let cmdItems = [], cmdActive = 0;
+  function cmdCommands() {
+    const inWs = state.ws != null;
+    const list = [];
+    if (inWs) {
+      list.push(
+        { g: 'Create', icon: 'plus', title: 'Add block', fn: () => createBlock('block') },
+        { g: 'Create', icon: 'list', title: 'Add list', fn: () => createBlock('list') },
+        { g: 'Create', icon: 'type', title: 'Add text', fn: () => createBlock('text') },
+        { g: 'Create', icon: 'shapes', title: 'Add shape', fn: () => createBlock('shape') },
+        { g: 'Create', icon: 'image', title: 'Add image', fn: () => pickImage() },
+        { g: 'View', icon: 'frame', title: 'Fit to view', fn: () => fitToView() },
+        { g: 'View', icon: 'home', title: 'Workspace home (root)', fn: () => navigateTo(DB.ROOT) },
+        { g: 'Edit', icon: 'arrow-left', title: 'Undo', fn: () => undo() },
+        { g: 'Edit', icon: 'arrow-right', title: 'Redo', fn: () => redo() },
+        { g: 'Workspace', icon: 'upload', title: 'Export workspace', fn: () => exportWorkspaceFlow(state.ws) },
+        { g: 'Workspace', icon: 'sliders', title: 'Workspace properties', fn: () => openProperties(state.ws) },
+        { g: 'Workspace', icon: 'frame', title: 'Snap to grid: ' + (snapOn ? 'on → turn off' : 'off → turn on'), fn: () => { snapOn = !snapOn; try { localStorage.setItem('ng-snap', snapOn ? '1' : '0'); } catch (_) {} updateSnapLabel(); toast(snapOn ? 'Snap on' : 'Snap off'); } },
+      );
+    }
+    list.push(
+      { g: 'Workspace', icon: 'plus', title: 'New workspace', fn: () => newWorkspaceFlow() },
+      { g: 'Workspace', icon: 'download', title: 'Import workspace', fn: () => importViaPicker() },
+      { g: 'Workspace', icon: 'diary', title: 'All workspaces', fn: () => goHome() },
+      { g: 'App', icon: 'moon', title: 'Toggle light / dark', fn: () => setTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark') },
+      { g: 'App', icon: 'help', title: 'Help', fn: () => openAbout('help') },
+      { g: 'App', icon: 'info', title: 'About', fn: () => openAbout('about') },
+    );
+    return list;
+  }
+  async function cmdRender(q) {
+    const ql = (q || '').toLowerCase().trim();
+    const cmds = cmdCommands().filter(c => !ql || c.title.toLowerCase().includes(ql));
+    let blockHits = [];
+    if (ql && state.ws != null) {
+      const blocks = await DB.allByWs('blocks', state.ws);
+      blockHits = blocks.filter(b => {
+        const label = b.kind === 'text' ? (b.text || '') : (b.title || '');
+        return label.toLowerCase().includes(ql) || (b.notes || '').toLowerCase().includes(ql) || (b.tags || '').toLowerCase().includes(ql);
+      }).slice(0, 8).map(b => ({
+        g: 'Jump to block', mono: monogram(b.kind === 'text' ? (b.text || 'T') : b.title),
+        color: b.color || PALETTE[0], title: (b.kind === 'text' ? (b.text || 'Text') : (b.title || 'Untitled')).slice(0, 60),
+        sub: b.tags ? '# ' + b.tags : '', fn: () => goToBlock(b),
+      }));
+    }
+    cmdItems = [...cmds, ...blockHits];
+    cmdActive = 0;
+    const listEl = $('#cmdk-list');
+    if (!cmdItems.length) { listEl.innerHTML = '<div class="cmdk-empty">No matches</div>'; return; }
+    let html = '', lastG = null;
+    cmdItems.forEach((it, i) => {
+      if (it.g !== lastG) { html += `<div class="cmdk-group">${esc(it.g)}</div>`; lastG = it.g; }
+      const ico = it.mono
+        ? `<span class="cmdk-mono" style="background:${esc(it.color)}">${esc(it.mono)}</span>`
+        : `<span>${ic(it.icon || 'plus')}</span>`;
+      html += `<div class="cmdk-item${i === 0 ? ' active' : ''}" data-i="${i}">${ico}` +
+        `<span class="cmdk-main"><div class="cmdk-title">${esc(it.title)}</div>${it.sub ? `<div class="cmdk-sub">${esc(it.sub)}</div>` : ''}</span></div>`;
+    });
+    listEl.innerHTML = html;
+  }
+  function cmdSetActive(i) {
+    const items = $$('#cmdk-list .cmdk-item');
+    if (!items.length) return;
+    cmdActive = (i + items.length) % items.length;
+    items.forEach((el, j) => el.classList.toggle('active', j === cmdActive));
+    items[cmdActive].scrollIntoView({ block: 'nearest' });
+  }
+  function cmdRun(i) {
+    const it = cmdItems[i]; if (!it) return;
+    closeCmdk();
+    setTimeout(() => it.fn(), 0);
+  }
+  function openCmdk() {
+    $('#menu').hidden = true; $('#add-menu').hidden = true; hideCtxMenu();
+    $('#cmdk').hidden = false;
+    const inp = $('#cmdk-input'); inp.value = '';
+    cmdRender('');
+    setTimeout(() => inp.focus(), 30);
+  }
+  function closeCmdk() { $('#cmdk').hidden = true; }
+  function bindCmdk() {
+    const inp = $('#cmdk-input');
+    inp.addEventListener('input', () => cmdRender(inp.value));
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); cmdSetActive(cmdActive + 1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); cmdSetActive(cmdActive - 1); }
+      else if (e.key === 'Enter') { e.preventDefault(); cmdRun(cmdActive); }
+      else if (e.key === 'Escape') { e.preventDefault(); closeCmdk(); }
+    });
+    $('#cmdk-list').addEventListener('click', (e) => {
+      const item = e.target.closest('.cmdk-item'); if (!item) return;
+      cmdRun(parseInt(item.dataset.i, 10));
+    });
+    $('#cmdk').addEventListener('mousedown', (e) => { if (e.target.id === 'cmdk') closeCmdk(); });
   }
 
   function onWheel(e) {
@@ -1935,7 +2058,9 @@
     const box = $('#search-results');
     if (!q) { hideSearchResults(); return; }
     const ql = q.toLowerCase();
-    const [blocks, files] = await Promise.all([DB.allByWs('blocks', state.ws), DB.allByWs('files', state.ws)]);
+    // search ALL workspaces so you can jump anywhere; current workspace ranks higher
+    const [blocks, files, wss] = await Promise.all([DB.getAll('blocks'), DB.getAll('files'), DB.listWorkspaces()]);
+    const wsName = {}; wss.forEach(w => { wsName[w.id] = w.name; });
     const fileByBlock = {};
     files.forEach(f => { (fileByBlock[f.blockId] ||= []).push(f); });
 
@@ -1945,15 +2070,19 @@
       const inDesc  = (b.description || '').toLowerCase().includes(ql);
       const inNotes = (b.notes || '').toLowerCase().includes(ql);
       const inText  = (b.text || '').toLowerCase().includes(ql);
+      const inTags  = (b.tags || '').toLowerCase().includes(ql);
       const fileHit = (fileByBlock[b.id] || []).find(f => f.name.toLowerCase().includes(ql));
-      if (inTitle || inDesc || inNotes || inText || fileHit) {
+      if (inTitle || inDesc || inNotes || inText || inTags || fileHit) {
         let sub = '';
         if (inTitle) sub = b.description || (b.kind === 'text' ? 'text' : 'block');
         else if (inDesc) sub = b.description;
         else if (inText) sub = b.text.slice(0, 80);
+        else if (inTags) sub = '# ' + b.tags;
         else if (inNotes) { const i = b.notes.toLowerCase().indexOf(ql); sub = '…' + b.notes.slice(Math.max(0, i - 20), i + 40) + '…'; }
         else if (fileHit) sub = fileHit.name;
-        hits.push({ b, sub, score: inTitle ? 3 : inDesc ? 2 : inText ? 2 : fileHit ? 1.5 : 1 });
+        let score = inTitle ? 3 : inDesc ? 2 : inText ? 2 : inTags ? 2 : fileHit ? 1.5 : 1;
+        if (b.ws === state.ws) score += 0.5;   // prefer current workspace
+        hits.push({ b, sub, score });
       }
     }
     hits.sort((a, b) => b.score - a.score);
@@ -1963,20 +2092,23 @@
     hits.slice(0, 40).forEach(h => {
       const row = document.createElement('div');
       row.className = 'result';
+      const elsewhere = h.b.ws !== state.ws;
+      const label = h.b.kind === 'text' ? (h.b.text || 'Text').slice(0, 40) : (h.b.title || 'Untitled');
       row.innerHTML = `
-        <div class="r-ico">${esc(monogram(h.b.title))}</div>
+        <div class="r-ico">${esc(monogram(label))}</div>
         <div class="r-main">
-          <div class="r-title">${esc(h.b.title || 'Untitled')}</div>
+          <div class="r-title">${esc(label)}</div>
           <div class="r-sub">${esc(h.sub || '')}</div>
         </div>
-        <div class="r-tag">open</div>`;
+        <div class="r-tag">${elsewhere ? esc(wsName[h.b.ws] || 'other') : 'open'}</div>`;
       row.addEventListener('click', () => { hideSearchResults(); $('#search').value = ''; goToBlock(h.b); });
       box.appendChild(row);
     });
   }
 
-  // Navigate to a block's PARENT level, then select/open it.
+  // Navigate to a block's PARENT level, then select/open it. Switches workspace if needed.
   async function goToBlock(b) {
+    if (b.ws && b.ws !== state.ws) { await openWorkspace(b.ws); }
     await goToLevel(b.parentId || DB.ROOT, { push: true });
     setTimeout(() => {
       if (state.levelLayout === 'list') {
@@ -2636,7 +2768,14 @@
   function bindKeys() {
     document.addEventListener('keydown', (e) => {
       const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
+      // Command palette — works everywhere, even while typing
+      if ((e.key === 'k' || e.key === 'K') && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        if ($('#cmdk').hidden) openCmdk(); else closeCmdk();
+        return;
+      }
       if (e.key === 'Escape') {
+        if (!$('#cmdk').hidden) { closeCmdk(); return; }
         if (!$('#ctxmenu').hidden) { hideCtxMenu(); }
         else if (!$('#prompt').hidden) { $('#prompt').hidden = true; promptCb = null; }
         else if (!$('#props').hidden) { $('#props').hidden = true; propsWs = null; }
@@ -2818,7 +2957,7 @@
     bindToolbar(); bindStage(); bindDrawerFields(); bindFileInputs();
     bindSearch(); bindMenu(); bindConfirm(); bindKeys();
     bindAddMenu(); bindListView(); bindHome(); bindPrompt(); bindBrandMenu(); bindAutosave(); bindProps(); bindAbout(); bindContextMenu();
-    bindTextEditor(); bindShapeEditor(); bindImageEditor(); bindImagePaste();
+    bindTextEditor(); bindShapeEditor(); bindImageEditor(); bindImagePaste(); bindCmdk();
     try {
       await DB.open();
     } catch (err) {
