@@ -83,6 +83,8 @@
     image: '<rect x="3.5" y="5" width="17" height="14" rx="2.2"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M4 17l4.5-4.5 3 3L15 12l5 5"/>',
     front: '<rect x="8" y="8" width="12" height="12" rx="2" fill="currentColor" stroke="none"/><path d="M4 14V5.5A1.5 1.5 0 0 1 5.5 4H14"/>',
     back: '<rect x="4" y="4" width="12" height="12" rx="2"/><path d="M10 16h8.5A1.5 1.5 0 0 0 20 14.5V6" fill="none"/><rect x="10" y="10" width="10" height="10" rx="2" fill="currentColor" stroke="none"/>',
+    forward: '<rect x="8" y="8" width="12" height="12" rx="2" fill="currentColor" stroke="none"/><polyline points="6.5 6 10 9.5 6.5 13" fill="none"/>',
+    backward: '<rect x="4" y="4" width="12" height="12" rx="2"/><polyline points="17.5 11 14 14.5 17.5 18" fill="none"/><rect x="10" y="10" width="10" height="10" rx="2" fill="currentColor" stroke="none"/>',
   };
   const FONT_STACK = {
     sans: '"Inter", ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, sans-serif',
@@ -776,6 +778,40 @@
   }
   const bringToFront = (ids) => reorderZ(ids, true);
   const sendToBack = (ids) => reorderZ(ids, false);
+
+  // Move the given ids ONE step forward/backward in the stack (swap with the
+  // neighbour just above/below). Normalizes z to a contiguous order first.
+  async function stepZ(ids, toFront) {
+    if (!ids || !ids.length) return;
+    const dir = toFront ? 1 : -1;
+    const origZ = new Map(state.blocks.map(b => [b.id, b.z || 0]));
+    const sorted = [...state.blocks].sort((a, b) => ((a.z || 0) - (b.z || 0)) || ((a.createdAt || 0) - (b.createdAt || 0)));
+    sorted.forEach((b, i) => { b.z = i; });                 // contiguous 0..n-1
+    const idset = new Set(ids);
+    const n = sorted.length;
+    const orderIdx = dir > 0 ? [...Array(n).keys()].reverse() : [...Array(n).keys()];
+    for (const i of orderIdx) {
+      const b = sorted[i]; if (!idset.has(b.id)) continue;
+      const j = i + dir; if (j < 0 || j >= n) continue;
+      const other = sorted[j]; if (idset.has(other.id)) continue;   // don't swap within the group
+      const tz = b.z; b.z = other.z; other.z = tz;
+      sorted[i] = other; sorted[j] = b;
+    }
+    const before = { blocks: [], edges: [], files: [] }, after = { blocks: [], edges: [], files: [] };
+    for (const b of state.blocks) {
+      if ((b.z || 0) !== (origZ.get(b.id) || 0)) {
+        before.blocks.push({ ...b, z: origZ.get(b.id) || 0 });
+        after.blocks.push({ ...b });
+        const el = state.els[b.id]; if (el) el.style.zIndex = b.z;
+        await persistBlock(b);
+      }
+    }
+    if (!after.blocks.length) return;
+    recordChange(before, after);
+    drawEdges();
+  }
+  const bringForward = (ids) => stepZ(ids, true);
+  const sendBackward = (ids) => stepZ(ids, false);
 
   function deleteBlock(id) {
     const b = state.blocks.find(x => x.id === id);
@@ -1668,6 +1704,8 @@
         { icon: 'scissors', label: 'Cut', fn: () => cutSelection() },
         { sep: true },
         { icon: 'front', label: 'Bring to front', fn: () => bringToFront([...state.selectedIds]) },
+        { icon: 'forward', label: 'Bring forward', fn: () => bringForward([...state.selectedIds]) },
+        { icon: 'backward', label: 'Send backward', fn: () => sendBackward([...state.selectedIds]) },
         { icon: 'back', label: 'Send to back', fn: () => sendToBack([...state.selectedIds]) },
         { sep: true },
         { icon: 'trash', label: many ? `Delete ${state.selectedIds.size}` : 'Delete', fn: () => deleteSelected(), danger: true },
@@ -2557,8 +2595,8 @@
       if ((e.key === 'v' || e.key === 'V') && (e.ctrlKey || e.metaKey)) {
         if (clipboard) { e.preventDefault(); pasteClipboard(); } return;
       }
-      if (e.key === ']' && (e.ctrlKey || e.metaKey)) { if (state.selectedIds.size) { e.preventDefault(); bringToFront([...state.selectedIds]); } return; }
-      if (e.key === '[' && (e.ctrlKey || e.metaKey)) { if (state.selectedIds.size) { e.preventDefault(); sendToBack([...state.selectedIds]); } return; }
+      if (e.key === ']' && (e.ctrlKey || e.metaKey)) { if (state.selectedIds.size) { e.preventDefault(); (e.shiftKey ? bringToFront : bringForward)([...state.selectedIds]); } return; }
+      if (e.key === '[' && (e.ctrlKey || e.metaKey)) { if (state.selectedIds.size) { e.preventDefault(); (e.shiftKey ? sendToBack : sendBackward)([...state.selectedIds]); } return; }
       if (e.key === 'n' || e.key === 'N') { e.preventDefault(); createBlock('block'); }
       if (e.key === 'l' || e.key === 'L') setLinkMode(!state.linkMode);
       if (e.key === 'f' || e.key === 'F') fitToView();
