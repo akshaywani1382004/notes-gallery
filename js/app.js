@@ -424,6 +424,15 @@
     s.fontStyle = b.italic ? 'italic' : 'normal';
     s.textAlign = b.align || 'left';
     s.color = b.color ? b.color : 'var(--text)';
+    // Justify only distributes words when the box has a real width and lines can
+    // reflow — give it a fixed width and reflow whitespace; otherwise size to content.
+    if (b.align === 'justify') {
+      el.style.width = (b.w ? b.w : 320) + 'px';
+      s.width = '100%'; s.whiteSpace = 'pre-line'; s.textAlignLast = 'left';
+    } else {
+      el.style.width = b.w ? (b.w + 'px') : '';
+      s.width = ''; s.whiteSpace = ''; s.textAlignLast = '';
+    }
     if (b.orient === 'v') { s.writingMode = 'vertical-rl'; s.textOrientation = 'mixed'; }
     else { s.writingMode = ''; s.textOrientation = ''; }
   }
@@ -718,7 +727,7 @@
     const now = Date.now();
     const b = {
       id: uid(), ws: state.ws, parentId: state.level, kind: 'text',
-      text: content, font: 'sans', size: 16, bold: false, italic: false, align: 'left',
+      text: content, font: 'mono', size: 14, bold: false, italic: false, align: 'left',
       orient: 'h', rot: 0, glow: false, glowColor: '', color: '',
       title: '', description: '', notes: '', tags: '', layout: 'canvas', icon: '',
       x: Math.round(pos.x - 150), y: Math.round(pos.y - 20), z: 0, createdAt: now, updatedAt: now,
@@ -1349,29 +1358,33 @@
     $('#f-open').addEventListener('click', () => drawerBlock && navigateTo(drawerBlock.id));
     $('#f-upload').addEventListener('click', () => $('#file-input').click());
     $('#f-desc-import').addEventListener('click', importDescriptionAsText);
+    $('#f-notes-import').addEventListener('click', importNotesAsText);
   }
 
   // Create a text node INSIDE the current block containing its description.
-  async function importDescriptionAsText() {
+  // Create a text node INSIDE the current block from one of its fields.
+  async function importFieldAsText(field) {
     if (!drawerBlock) return;
-    const desc = (drawerBlock.description || '').trim();
-    if (!desc) { toast('This block has no description yet.'); return; }
+    const content = (drawerBlock[field] || '').trim();
+    if (!content) { toast(`This block has no ${field} yet.`); return; }
     const parent = drawerBlock;
     if (parent.layout === 'list') { parent.layout = 'canvas'; await persistBlock(parent); renderLayoutSeg('canvas'); refreshItem(parent.id); }
     const now = Date.now();
     const t = {
       id: uid(), ws: state.ws, parentId: parent.id, kind: 'text',
-      text: desc, font: 'sans', size: 22, bold: false, italic: false, align: 'left',
+      text: content, font: 'sans', size: field === 'notes' ? 16 : 22,
+      bold: false, italic: false, align: 'left',
       orient: 'h', rot: 0, glow: false, glowColor: '', color: '',
       title: '', description: '', notes: '', tags: '', layout: 'canvas', icon: '',
       x: 60, y: 60, z: 0, createdAt: now, updatedAt: now,
     };
     await DB.saveBlock(t);
-    // count for the parent card preview
     await recount(parent.id);
     recordChange(emptySet(), { blocks: [t], edges: [], files: [] });
-    toast('Description added as text inside — open the block to see it');
+    toast(`${field[0].toUpperCase() + field.slice(1)} added as text inside — open the block to see it`);
   }
+  const importDescriptionAsText = () => importFieldAsText('description');
+  const importNotesAsText = () => importFieldAsText('notes');
 
   /* ---------------------------- text editor ---------------------------- */
   let textBlock = null;
@@ -2491,11 +2504,19 @@
       if (im) { try { ctx.drawImage(im, x, y, w, h); } catch (_) { ctx.fillStyle = col.lineC; ctx.fillRect(x, y, w, h); } }
       else { ctx.fillStyle = col.lineC; ctx.fillRect(x, y, w, h); }
     } else if (b.kind === 'text') {
-      ctx.fillStyle = b.color && b.color !== '' ? b.color : (getComputedStyle(document.documentElement).getPropertyValue('--text') || '#e7eaee').trim();
-      const fs = Math.max(4, (b.size || 20) * scale);
-      ctx.font = `${b.bold ? '700 ' : ''}${fs}px ${FONT_STACK[b.font] || FONT_STACK.sans}`;
-      ctx.textBaseline = 'top';
-      ctx.fillText((b.text || 'Text').split('\n')[0].slice(0, 24), x, y);
+      // Text is unreadable at mini scale, so draw representative line-bars that are always visible.
+      const color = b.color && b.color !== '' ? b.color : (getComputedStyle(document.documentElement).getPropertyValue('--text') || '#e7eaee').trim();
+      const lines = (b.text || 'Text').split('\n').filter(l => l.trim().length).slice(0, 6);
+      const lh = Math.max(2.5, (b.size || 20) * 1.35 * scale);
+      const maxLen = Math.max(1, ...lines.map(l => l.length));
+      ctx.fillStyle = color; ctx.globalAlpha = 0.9;
+      const bh = Math.max(1.5, lh * 0.55);
+      for (let li = 0; li < lines.length; li++) {
+        const ly = y + li * lh;
+        if (ly > y + h + lh) break;
+        const bw = Math.max(3, w * Math.min(1, lines[li].length / maxLen));
+        roundRectPath(ctx, x, ly, bw, bh, Math.min(1.2, bh / 2)); ctx.fill();
+      }
     } else {
       // block / list card: rounded card with accent top strip
       roundRectPath(ctx, x, y, w, h, Math.min(3, w / 5));
