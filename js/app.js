@@ -81,6 +81,8 @@
     triangle: '<path d="M12 4.5 20.5 19H3.5Z"/>',
     star: '<path d="M12 3.6l2.6 5.2 5.8.9-4.2 4.1 1 5.7-5.2-2.7-5.2 2.7 1-5.7L3.6 9.7l5.8-.9z"/>',
     image: '<rect x="3.5" y="5" width="17" height="14" rx="2.2"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M4 17l4.5-4.5 3 3L15 12l5 5"/>',
+    front: '<rect x="8" y="8" width="12" height="12" rx="2" fill="currentColor" stroke="none"/><path d="M4 14V5.5A1.5 1.5 0 0 1 5.5 4H14"/>',
+    back: '<rect x="4" y="4" width="12" height="12" rx="2"/><path d="M10 16h8.5A1.5 1.5 0 0 0 20 14.5V6" fill="none"/><rect x="10" y="10" width="10" height="10" rx="2" fill="currentColor" stroke="none"/>',
   };
   const FONT_STACK = {
     sans: '"Inter", ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, sans-serif',
@@ -225,6 +227,7 @@
     el.dataset.id = b.id;
     el.style.left = b.x + 'px';
     el.style.top = b.y + 'px';
+    if (b.z) el.style.zIndex = b.z;
     if (b.kind === 'text') paintTextNode(el, b);
     else if (b.kind === 'shape') paintShapeNode(el, b);
     else if (b.kind === 'image') paintImageNode(el, b);
@@ -606,13 +609,14 @@
     replaceImageId = null;
     $('#image-input').click();
   }
-  async function createImageBlock(file) {
+  async function createImageBlock(file, opts = {}) {
+    if (!file || !/^image\//.test(file.type)) { toast('That file is not an image.'); return null; }
     const src = await readAsDataUrl(file);
     const nat = await loadImageSize(src);
     const maxW = 300;
     const scale = nat.w > maxW ? maxW / nat.w : 1;
     const w = Math.round(nat.w * scale), h = Math.round(nat.h * scale);
-    const pos = pendingImageAt || centerOfView();
+    const pos = opts.at || pendingImageAt || centerOfView();
     const b = {
       id: uid(), ws: state.ws, parentId: state.level, kind: 'image',
       title: '', description: '', notes: '', layout: 'canvas', color: '', icon: '',
@@ -626,8 +630,24 @@
     recordChange(emptySet(), { blocks: [b], edges: [], files: [] });
     world.appendChild(makeBlockEl(b));
     $('#empty-hint').hidden = true;
-    openImageEditor(b.id);
-    toast('Image added');
+    if (opts.openAfter !== false) openImageEditor(b.id);
+    else selectBlock(b.id);
+    return b;
+  }
+
+  // Drop image files onto the canvas (from the OS or another app).
+  async function dropImageFiles(fileList, clientX, clientY) {
+    const imgs = Array.from(fileList).filter(f => /^image\//.test(f.type));
+    if (!imgs.length) return;
+    if (state.ws == null || state.levelLayout !== 'canvas') { toast('Open a canvas to drop images.'); return; }
+    const r = stage.getBoundingClientRect();
+    const base = screenToWorld(clientX - r.left, clientY - r.top);
+    let i = 0;
+    for (const f of imgs) {
+      await createImageBlock(f, { at: { x: base.x + i * 24, y: base.y + i * 24 }, openAfter: false });
+      i++;
+    }
+    toast(imgs.length > 1 ? `${imgs.length} images added` : 'Image added');
   }
 
   /* ---------------------------- undo / redo ---------------------------- */
@@ -709,6 +729,30 @@
     const edges = allEdges.filter(e => set.has(e.from) || set.has(e.to));
     return { blocks, edges, files };
   }
+
+  /* ---------------------------- z-order -------------------------------- */
+  // Bring the given ids to the front (or back) by rewriting their `z` above
+  // (below) every sibling on this level. Records one undo entry.
+  async function reorderZ(ids, toFront) {
+    if (!ids || !ids.length) return;
+    const zs = state.blocks.map(b => b.z || 0);
+    const top = zs.length ? Math.max(...zs) : 0;
+    const bottom = zs.length ? Math.min(...zs) : 0;
+    const idset = new Set(ids);
+    // keep the selected group's relative order stable
+    const moving = state.blocks.filter(b => idset.has(b.id));
+    const before = { blocks: moving.map(b => ({ ...b })), edges: [], files: [] };
+    let base = toFront ? top + 1 : bottom - moving.length;
+    moving.forEach((b, i) => {
+      b.z = toFront ? base + i : base + i;
+      const el = state.els[b.id]; if (el) el.style.zIndex = b.z;
+    });
+    for (const b of moving) await persistBlock(b);
+    recordChange(before, { blocks: moving.map(b => ({ ...b })), edges: [], files: [] });
+    drawEdges();
+  }
+  const bringToFront = (ids) => reorderZ(ids, true);
+  const sendToBack = (ids) => reorderZ(ids, false);
 
   function deleteBlock(id) {
     const b = state.blocks.find(x => x.id === id);
@@ -1598,6 +1642,9 @@
         { icon: 'copy', label: many ? `Copy ${state.selectedIds.size}` : 'Copy', fn: () => copySelection() },
         { icon: 'scissors', label: 'Cut', fn: () => cutSelection() },
         { sep: true },
+        { icon: 'front', label: 'Bring to front', fn: () => bringToFront([...state.selectedIds]) },
+        { icon: 'back', label: 'Send to back', fn: () => sendToBack([...state.selectedIds]) },
+        { sep: true },
         { icon: 'trash', label: many ? `Delete ${state.selectedIds.size}` : 'Delete', fn: () => deleteSelected(), danger: true },
       );
     } else {
@@ -2485,6 +2532,8 @@
       if ((e.key === 'v' || e.key === 'V') && (e.ctrlKey || e.metaKey)) {
         if (clipboard) { e.preventDefault(); pasteClipboard(); } return;
       }
+      if (e.key === ']' && (e.ctrlKey || e.metaKey)) { if (state.selectedIds.size) { e.preventDefault(); bringToFront([...state.selectedIds]); } return; }
+      if (e.key === '[' && (e.ctrlKey || e.metaKey)) { if (state.selectedIds.size) { e.preventDefault(); sendToBack([...state.selectedIds]); } return; }
       if (e.key === 'n' || e.key === 'N') { e.preventDefault(); createBlock('block'); }
       if (e.key === 'l' || e.key === 'L') setLinkMode(!state.linkMode);
       if (e.key === 'f' || e.key === 'F') fitToView();
@@ -2586,6 +2635,17 @@
     stage.addEventListener('click', onStageClick);
     stage.addEventListener('dblclick', onDblClick);
     stage.addEventListener('contextmenu', (e) => e.preventDefault());
+    // drag-and-drop images from the OS onto the canvas
+    stage.addEventListener('dragover', (e) => {
+      if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+        e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; stage.classList.add('drop-active');
+      }
+    });
+    stage.addEventListener('dragleave', (e) => { if (e.target === stage) stage.classList.remove('drop-active'); });
+    stage.addEventListener('drop', (e) => {
+      const files = e.dataTransfer && e.dataTransfer.files;
+      if (files && files.length) { e.preventDefault(); stage.classList.remove('drop-active'); dropImageFiles(files, e.clientX, e.clientY); }
+    });
     window.addEventListener('beforeunload', (e) => {
       objectUrls.forEach(u => URL.revokeObjectURL(u));
       if (state.ws != null && !state.autosave && state.dirty) { e.preventDefault(); e.returnValue = ''; }
