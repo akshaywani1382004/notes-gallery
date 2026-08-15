@@ -267,8 +267,8 @@
       renderBlocks();
       if (opts.fit) fitToView(); else applyView();
       drawEdges();
-      applyTagFilter();
     }
+    applyTagFilter();   // also hides the filter banner in list mode
     saveLoc();
     updateNavButtons();
   }
@@ -479,12 +479,14 @@
           <div class="lr-actions"><button class="lr-btn" data-edit="${esc(b.id)}" title="Edit text">${ic('pencil')}</button></div>
         </div>`;
     }
-    if (b.kind === 'image' || b.kind === 'shape') {
-      const isImg = b.kind === 'image';
+    if (b.kind === 'image' || b.kind === 'shape' || b.kind === 'ink') {
+      const kindLabel = b.kind === 'image' ? 'Image' : b.kind === 'ink' ? 'Ink drawing' : 'Shape';
+      const kindIco = b.kind === 'image' ? 'image' : b.kind === 'ink' ? 'pen' : 'shapes';
+      const kindSub = b.kind === 'image' ? 'Picture' : b.kind === 'ink' ? 'Freehand' : (b.shape || 'shape');
       return `<div class="list-row" data-id="${esc(b.id)}" style="--b-accent:${esc(b.color || 'var(--accent)')}">
-          <div class="lr-ico">${ic(isImg ? 'image' : 'shapes')}</div>
-          <div class="lr-main"><div class="lr-title">${isImg ? 'Image' : 'Shape'}</div>
-          <div class="lr-sub">${isImg ? 'Picture' : (b.shape || 'shape')}</div></div>
+          <div class="lr-ico">${ic(kindIco)}</div>
+          <div class="lr-main"><div class="lr-title">${kindLabel}</div>
+          <div class="lr-sub">${esc(kindSub)}</div></div>
           <div class="lr-actions"><button class="lr-btn" data-edit="${esc(b.id)}" title="Edit">${ic('pencil')}</button></div>
         </div>`;
     }
@@ -913,7 +915,7 @@
   /* ---------------------------- arrow-key nudge ------------------------ */
   let nudge = null;   // { before:Map<id,{x,y}>, timer }
   function nudgeSelection(dx, dy) {
-    const ids = [...state.selectedIds];
+    const ids = [...state.selectedIds].filter(id => { const b = state.blocks.find(x => x.id === id); return b && !b.locked; });
     if (!ids.length) return;
     if (!nudge) {
       const before = new Map();
@@ -1635,8 +1637,8 @@
     if (e.button === 2) { startMarquee(e); return; }
     if (e.button !== 0) return;
 
-    // freehand pen: start a stroke on empty canvas
-    if (state.penMode && !e.target.closest('.block') && !e.target.closest('[data-blk]')) {
+    // freehand pen: start a stroke on empty canvas (ignore extra fingers mid-stroke)
+    if (state.penMode && !inking && !e.target.closest('.block') && !e.target.closest('[data-blk]')) {
       const r = stage.getBoundingClientRect();
       const p = screenToWorld(e.clientX - r.left, e.clientY - r.top);
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
