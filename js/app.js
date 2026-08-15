@@ -126,6 +126,7 @@
     pen: '<path d="M4 20l1-4L16 5a2 2 0 0 1 3 3L8 19l-4 1Z"/><line x1="14" y1="7" x2="17" y2="10"/>',
     eraser: '<path d="M9 20H20"/><path d="M15.5 5.5l3 3a2 2 0 0 1 0 2.8L11 19l-4.5-4.5a2 2 0 0 1 0-2.8l6.2-6.2a2 2 0 0 1 2.8 0Z"/><line x1="8" y1="9" x2="14" y2="15"/>',
     map: '<path d="M9 4 4 6v14l5-2 6 2 5-2V4l-5 2-6-2Z"/><line x1="9" y1="4" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="20"/>',
+    undo: '<path d="M4 8h9.5a5.5 5.5 0 0 1 0 11H8"/><polyline points="7.5 4 4 8 7.5 12"/>',
     front: '<rect x="8" y="8" width="12" height="12" rx="2" fill="currentColor" stroke="none"/><path d="M4 14V5.5A1.5 1.5 0 0 1 5.5 4H14"/>',
     back: '<rect x="4" y="4" width="12" height="12" rx="2"/><path d="M10 16h8.5A1.5 1.5 0 0 0 20 14.5V6" fill="none"/><rect x="10" y="10" width="10" height="10" rx="2" fill="currentColor" stroke="none"/>',
     lock: '<rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>',
@@ -1257,6 +1258,39 @@
     EDIT_FIELDS.forEach(f => { o[f] = b[f]; });
     return o;
   }
+
+  // Link an editable number field to its range slider. `apply(value)` writes the
+  // value to the active block (and refreshes/saves). Typed values are NOT clamped
+  // to the slider's min/max — you can enter any angle/size; the slider just mirrors
+  // it (pinned at its own range). Dragging the on-canvas handles is likewise free.
+  function wireParam(numId, sliderId, apply) {
+    const num = $('#' + numId), sl = $('#' + sliderId);
+    if (!num || !sl) return;
+    sl.addEventListener('input', () => {
+      const v = parseFloat(sl.value); if (isNaN(v)) return;
+      apply(v); num.value = v;
+    });
+    num.addEventListener('input', () => {
+      if (num.value === '') return;
+      const v = parseFloat(num.value); if (isNaN(v)) return;
+      apply(v); sl.value = v;                       // slider clamps its own display only
+    });
+  }
+
+  // Reset the currently-open editor's block to how it was when the editor opened
+  // (the editBaseline snapshot). Reverts every editable field; position is left as-is.
+  function resetActiveEditor() {
+    const base = editBaseline; if (!base) return;
+    const b = state.blocks.find(x => x.id === base.id); if (!b) return;
+    EDIT_FIELDS.forEach(f => { b[f] = base[f]; });
+    refreshItem(b.id); persistBlock(b); markChanged();
+    // repopulate the open drawer's fields (re-open snapshots the same baseline)
+    if (b.kind === 'text') openTextEditor(b.id);
+    else if (b.kind === 'shape') openShapeEditor(b.id);
+    else if (b.kind === 'image') openImageEditor(b.id);
+    else if (b.kind === 'ink') openInkEditor(b.id);
+    toast('Reset to original');
+  }
   // open the right editor for a block (text vs normal)
   function openAnyEditor(id) {
     const b = state.blocks.find(x => x.id === id);
@@ -1463,13 +1497,13 @@
     editBaseline = snapshotFields(b);
     $('#t-content').value = b.text || '';
     renderTFont(b.font || 'sans');
-    $('#t-size').value = b.size || 22; $('#t-size-val').textContent = (b.size || 22) + 'px';
+    $('#t-size').value = b.size || 22; $('#t-size-val').value = (b.size || 22);
     $('#t-bold').classList.toggle('on', !!b.bold);
     $('#t-italic').classList.toggle('on', !!b.italic);
     renderTAlign(b.align || 'left');
     renderTSwatches(b.color || '');
     renderTOrient(b.orient || 'h');
-    $('#t-rot').value = b.rot || 0; $('#t-rot-val').textContent = (b.rot || 0) + '°';
+    $('#t-rot').value = b.rot || 0; $('#t-rot-val').value = (b.rot || 0);
     $('#t-glow').checked = !!b.glow;
     $('#t-glow-wrap').hidden = !b.glow;
     renderTGlowSwatches(b.glowColor || PALETTE[0]);
@@ -1486,15 +1520,16 @@
   function bindTextEditor() {
     $('#t-content').addEventListener('input', (e) => { if (!textBlock) return; textBlock.text = e.target.value; refreshItem(textBlock.id); queueTextSave(); });
     $$('#t-font button').forEach(btn => btn.addEventListener('click', () => { if (!textBlock) return; textBlock.font = btn.dataset.font; renderTFont(btn.dataset.font); refreshItem(textBlock.id); queueTextSave(); }));
-    $('#t-size').addEventListener('input', (e) => { if (!textBlock) return; textBlock.size = parseInt(e.target.value, 10) || 22; $('#t-size-val').textContent = textBlock.size + 'px'; refreshItem(textBlock.id); queueTextSave(); });
+    wireParam('t-size-val', 't-size', (v) => { if (!textBlock) return; textBlock.size = Math.max(1, Math.round(v)); refreshItem(textBlock.id); queueTextSave(); });
     $('#t-bold').addEventListener('click', () => { if (!textBlock) return; textBlock.bold = !textBlock.bold; $('#t-bold').classList.toggle('on', textBlock.bold); refreshItem(textBlock.id); queueTextSave(); });
     $('#t-italic').addEventListener('click', () => { if (!textBlock) return; textBlock.italic = !textBlock.italic; $('#t-italic').classList.toggle('on', textBlock.italic); refreshItem(textBlock.id); queueTextSave(); });
     $$('#text-drawer .talign').forEach(btn => btn.addEventListener('click', () => { if (!textBlock) return; textBlock.align = btn.dataset.align; renderTAlign(btn.dataset.align); refreshItem(textBlock.id); queueTextSave(); }));
     $$('#t-orient button').forEach(btn => btn.addEventListener('click', () => { if (!textBlock) return; textBlock.orient = btn.dataset.orient; renderTOrient(btn.dataset.orient); refreshItem(textBlock.id); queueTextSave(); }));
-    $('#t-rot').addEventListener('input', (e) => { if (!textBlock) return; textBlock.rot = parseInt(e.target.value, 10) || 0; $('#t-rot-val').textContent = textBlock.rot + '°'; refreshItem(textBlock.id); queueTextSave(); });
+    wireParam('t-rot-val', 't-rot', (v) => { if (!textBlock) return; textBlock.rot = Math.round(v); refreshItem(textBlock.id); queueTextSave(); });
     $('#t-glow').addEventListener('change', (e) => { if (!textBlock) return; textBlock.glow = e.target.checked; $('#t-glow-wrap').hidden = !e.target.checked; refreshItem(textBlock.id); queueTextSave(); });
     $('#text-close').addEventListener('click', closeTextEditor);
     $('#t-done').addEventListener('click', closeTextEditor);
+    $('#t-reset').addEventListener('click', resetActiveEditor);
     $('#t-delete').addEventListener('click', () => { if (textBlock) deleteBlock(textBlock.id); });
   }
 
@@ -1545,14 +1580,14 @@
     shapeBlock = b;
     editBaseline = snapshotFields(b);
     renderSType(b.shape || 'rectangle');
-    $('#s-w').value = b.w || 150; $('#s-w-val').textContent = (b.w || 150) + 'px';
-    $('#s-h').value = b.h || 100; $('#s-h-val').textContent = (b.h || 100) + 'px';
+    $('#s-w').value = b.w || 150; $('#s-w-val').value = (b.w || 150);
+    $('#s-h').value = b.h || 100; $('#s-h-val').value = (b.h || 100);
     $('#s-fill').checked = b.fill !== false;
     $('#s-fill-wrap').hidden = b.fill === false;
     renderSFill(b.color);
     $('#s-outline').checked = !!b.outline;
     $('#s-outline-wrap').hidden = !b.outline;
-    $('#s-ow').value = b.outlineW || 3; $('#s-ow-val').textContent = (b.outlineW || 3) + 'px';
+    $('#s-ow').value = b.outlineW || 3; $('#s-ow-val').value = (b.outlineW || 3);
     renderSOutline(b.outlineColor);
     $('#shape-drawer').hidden = false;
     $('#shape-save').textContent = '';
@@ -1565,13 +1600,14 @@
   }
   function bindShapeEditor() {
     $$('#s-type button').forEach(btn => btn.addEventListener('click', () => { if (!shapeBlock) return; shapeBlock.shape = btn.dataset.shape; if (btn.dataset.shape !== 'polygon') shapeBlock.points = null; renderSType(btn.dataset.shape); refreshItem(shapeBlock.id); queueShapeSave(); }));
-    $('#s-w').addEventListener('input', (e) => { if (!shapeBlock) return; shapeBlock.w = parseInt(e.target.value, 10) || 150; $('#s-w-val').textContent = shapeBlock.w + 'px'; refreshItem(shapeBlock.id); queueShapeSave(); });
-    $('#s-h').addEventListener('input', (e) => { if (!shapeBlock) return; shapeBlock.h = parseInt(e.target.value, 10) || 100; $('#s-h-val').textContent = shapeBlock.h + 'px'; refreshItem(shapeBlock.id); queueShapeSave(); });
+    wireParam('s-w-val', 's-w', (v) => { if (!shapeBlock) return; shapeBlock.w = Math.max(1, Math.round(v)); refreshItem(shapeBlock.id); queueShapeSave(); });
+    wireParam('s-h-val', 's-h', (v) => { if (!shapeBlock) return; shapeBlock.h = Math.max(1, Math.round(v)); refreshItem(shapeBlock.id); queueShapeSave(); });
     $('#s-fill').addEventListener('change', (e) => { if (!shapeBlock) return; shapeBlock.fill = e.target.checked; $('#s-fill-wrap').hidden = !e.target.checked; refreshItem(shapeBlock.id); queueShapeSave(); });
     $('#s-outline').addEventListener('change', (e) => { if (!shapeBlock) return; shapeBlock.outline = e.target.checked; $('#s-outline-wrap').hidden = !e.target.checked; refreshItem(shapeBlock.id); queueShapeSave(); });
-    $('#s-ow').addEventListener('input', (e) => { if (!shapeBlock) return; shapeBlock.outlineW = parseInt(e.target.value, 10) || 2; $('#s-ow-val').textContent = shapeBlock.outlineW + 'px'; refreshItem(shapeBlock.id); queueShapeSave(); });
+    wireParam('s-ow-val', 's-ow', (v) => { if (!shapeBlock) return; shapeBlock.outlineW = Math.max(0, Math.round(v)); refreshItem(shapeBlock.id); queueShapeSave(); });
     $('#shape-close').addEventListener('click', closeShapeEditor);
     $('#s-done').addEventListener('click', closeShapeEditor);
+    $('#s-reset').addEventListener('click', resetActiveEditor);
     $('#s-delete').addEventListener('click', () => { if (shapeBlock) deleteBlock(shapeBlock.id); });
   }
 
@@ -1602,8 +1638,8 @@
     imageBlock = b;
     editBaseline = snapshotFields(b);
     const pv = $('#i-preview'); pv.innerHTML = ''; const im = document.createElement('img'); im.src = b.src || ''; pv.appendChild(im);
-    $('#i-w').value = b.w || 200; $('#i-w-val').textContent = (b.w || 200) + 'px';
-    $('#i-rot').value = b.rot || 0; $('#i-rot-val').textContent = (b.rot || 0) + '°';
+    $('#i-w').value = b.w || 200; $('#i-w-val').value = (b.w || 200);
+    $('#i-rot').value = b.rot || 0; $('#i-rot-val').value = (b.rot || 0);
     $('#i-round').checked = !!b.round;
     $('#image-drawer').hidden = false;
     $('#image-save').textContent = '';
@@ -1615,19 +1651,19 @@
     imageBlock = null;
   }
   function bindImageEditor() {
-    $('#i-w').addEventListener('input', (e) => {
+    wireParam('i-w-val', 'i-w', (v) => {
       if (!imageBlock) return;
-      const newW = parseInt(e.target.value, 10) || 200;
+      const newW = Math.max(1, Math.round(v));
       const ratio = (imageBlock.h && imageBlock.w) ? imageBlock.h / imageBlock.w : 0.75;
       imageBlock.w = newW; imageBlock.h = Math.round(newW * ratio);
-      $('#i-w-val').textContent = newW + 'px';
       refreshItem(imageBlock.id); queueImageSave();
     });
-    $('#i-rot').addEventListener('input', (e) => { if (!imageBlock) return; imageBlock.rot = parseInt(e.target.value, 10) || 0; $('#i-rot-val').textContent = imageBlock.rot + '°'; refreshItem(imageBlock.id); queueImageSave(); });
+    wireParam('i-rot-val', 'i-rot', (v) => { if (!imageBlock) return; imageBlock.rot = Math.round(v); refreshItem(imageBlock.id); queueImageSave(); });
     $('#i-round').addEventListener('change', (e) => { if (!imageBlock) return; imageBlock.round = e.target.checked; refreshItem(imageBlock.id); queueImageSave(); });
     $('#i-replace').addEventListener('click', () => { if (!imageBlock) return; replaceImageId = imageBlock.id; pendingImageAt = null; $('#image-input').click(); });
     $('#image-close').addEventListener('click', closeImageEditor);
     $('#i-done').addEventListener('click', closeImageEditor);
+    $('#i-reset').addEventListener('click', resetActiveEditor);
     $('#i-delete').addEventListener('click', () => { if (imageBlock) deleteBlock(imageBlock.id); });
     // shared file input for both new images and replacements
     $('#image-input').addEventListener('change', async (e) => {
@@ -1688,7 +1724,7 @@
     inkBlock = b;
     editBaseline = snapshotFields(b);
     renderKSwatches(b.color);
-    $('#k-width').value = b.width || 3; $('#k-width-val').textContent = (b.width || 3) + 'px';
+    $('#k-width').value = b.width || 3; $('#k-width-val').value = (b.width || 3);
     $('#ink-drawer').hidden = false;
     $('#ink-save').textContent = '';
   }
@@ -1699,9 +1735,10 @@
     inkBlock = null;
   }
   function bindInkEditor() {
-    $('#k-width').addEventListener('input', (e) => { if (!inkBlock) return; inkBlock.width = parseInt(e.target.value, 10) || 3; $('#k-width-val').textContent = inkBlock.width + 'px'; refreshItem(inkBlock.id); queueInkSave(); });
+    wireParam('k-width-val', 'k-width', (v) => { if (!inkBlock) return; inkBlock.width = Math.max(1, Math.round(v)); refreshItem(inkBlock.id); queueInkSave(); });
     $('#ink-close').addEventListener('click', closeInkEditor);
     $('#k-done').addEventListener('click', closeInkEditor);
+    $('#k-reset').addEventListener('click', resetActiveEditor);
     $('#k-delete').addEventListener('click', () => { if (inkBlock) deleteBlock(inkBlock.id); });
   }
 
@@ -1960,24 +1997,24 @@
           b.size = clamp(Math.round(gizmo.startSize + d * 0.7), 8, 240);
           // scale the wrap width by the same ratio so proportions stay constant
           if (gizmo.startWrapW) b.w = Math.max(40, Math.round(gizmo.startWrapW * (b.size / (gizmo.startSize || 1))));
-          if (textBlock && textBlock.id === b.id) { $('#t-size').value = b.size; $('#t-size-val').textContent = b.size + 'px'; }
+          if (textBlock && textBlock.id === b.id) { $('#t-size').value = b.size; $('#t-size-val').value = b.size; }
         } else if (gizmo.isImage) {
           const ratio = gizmo.startH / (gizmo.startW || 1);
           b.w = clamp(Math.round(gizmo.startW + (e.clientX - gizmo.startX) / s), 20, 2000);
           b.h = Math.max(20, Math.round(b.w * ratio));   // keep aspect ratio
-          if (imageBlock && imageBlock.id === b.id) { const W = $('#i-w'); if (W) { W.value = b.w; $('#i-w-val').textContent = b.w + 'px'; } }
+          if (imageBlock && imageBlock.id === b.id) { const W = $('#i-w'); if (W) { W.value = b.w; $('#i-w-val').value = b.w; } }
         } else {
           b.w = clamp(Math.round(gizmo.startW + (e.clientX - gizmo.startX) / s), 20, 1400);
           b.h = clamp(Math.round(gizmo.startH + (e.clientY - gizmo.startY) / s), 20, 1400);
-          if (shapeBlock && shapeBlock.id === b.id) { const W = $('#s-w'), H = $('#s-h'); if (W) { W.value = b.w; $('#s-w-val').textContent = b.w + 'px'; } if (H) { H.value = b.h; $('#s-h-val').textContent = b.h + 'px'; } }
+          if (shapeBlock && shapeBlock.id === b.id) { const W = $('#s-w'), H = $('#s-h'); if (W) { W.value = b.w; $('#s-w-val').value = b.w; } if (H) { H.value = b.h; $('#s-h-val').value = b.h; } }
         }
       } else {
         const ang = Math.atan2(e.clientY - gizmo.cy, e.clientX - gizmo.cx);
         let deg = Math.round(gizmo.startRot + (ang - gizmo.startAngle) * 180 / Math.PI);
         deg = (((deg + 180) % 360) + 360) % 360 - 180;
         b.rot = deg;
-        if (textBlock && textBlock.id === b.id) { $('#t-rot').value = deg; $('#t-rot-val').textContent = deg + '°'; }
-        if (imageBlock && imageBlock.id === b.id) { $('#i-rot').value = deg; $('#i-rot-val').textContent = deg + '°'; }
+        if (textBlock && textBlock.id === b.id) { $('#t-rot').value = deg; $('#t-rot-val').value = deg; }
+        if (imageBlock && imageBlock.id === b.id) { $('#i-rot').value = deg; $('#i-rot-val').value = deg; }
       }
       refreshBlockCard(b.id);
       drawEdges();

@@ -9,7 +9,7 @@
   <link rel="apple-touch-icon" href="icon.svg" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Notes Gallery" />
-  <link rel="stylesheet" href="css/styles.css?v=38" />
+  <link rel="stylesheet" href="css/styles.css?v=39" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cdefs%3E%3ClinearGradient%20id='g'%20x1='0'%20y1='0'%20x2='1'%20y2='1'%3E%3Cstop%20offset='0'%20stop-color='%234353ff'/%3E%3Cstop%20offset='1'%20stop-color='%23146ef5'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20width='24'%20height='24'%20rx='6'%20fill='url(%23g)'/%3E%3Cg%20fill='none'%20stroke='%23fff'%20stroke-width='1.5'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M12%203.6C14.7%203.6%2016.1%205.8%2015.9%208L12.5%2018.6C12.3%2019.4%2011.7%2019.4%2011.5%2018.6L8.1%208C7.9%205.8%209.3%203.6%2012%203.6Z'/%3E%3Cline%20x1='12'%20y1='10.6'%20x2='12'%20y2='18'/%3E%3Ccircle%20cx='12'%20cy='9'%20r='1.15'/%3E%3C/g%3E%3C/svg%3E" />
 </head>
 <body>
@@ -208,7 +208,7 @@
           <button data-font="mono">Mono</button>
         </div>
 
-        <label class="field-label">Size <span id="t-size-val" class="muted"></span></label>
+        <div class="field-label param-head"><span>Size</span><span class="param-edit"><input id="t-size-val" class="param-num" type="number" step="1" /><span class="param-unit">px</span></span></div>
         <input id="t-size" class="t-size" type="range" min="12" max="80" step="1" />
 
         <label class="field-label">Style</label>
@@ -228,7 +228,7 @@
           <button data-orient="v">Vertical</button>
         </div>
 
-        <label class="field-label">Rotation <span id="t-rot-val" class="muted"></span></label>
+        <div class="field-label param-head"><span>Rotation</span><span class="param-edit"><input id="t-rot-val" class="param-num" type="number" step="1" /><span class="param-unit">°</span></span></div>
         <input id="t-rot" class="t-size" type="range" min="-180" max="180" step="1" />
 
         <label class="field-label">Colour</label>
@@ -246,6 +246,7 @@
       </div>
       <div class="drawer-foot">
         <button id="t-delete" class="btn danger"><span data-icon="trash"></span><span>Delete</span></button>
+        <button id="t-reset" class="btn" title="Undo all changes since you opened this"><span data-icon="undo"></span><span>Reset</span></button>
         <button id="t-done" class="btn primary wide">Done</button>
       </div>
     </aside>
@@ -267,9 +268,9 @@
           <button data-shape="polygon" title="Polygon"><span data-icon="star"></span></button>
         </div>
 
-        <label class="field-label">Width <span id="s-w-val" class="muted"></span></label>
+        <div class="field-label param-head"><span>Width</span><span class="param-edit"><input id="s-w-val" class="param-num" type="number" step="1" /><span class="param-unit">px</span></span></div>
         <input id="s-w" class="t-size" type="range" min="30" max="600" step="2" />
-        <label class="field-label">Height <span id="s-h-val" class="muted"></span></label>
+        <div class="field-label param-head"><span>Height</span><span class="param-edit"><input id="s-h-val" class="param-num" type="number" step="1" /><span class="param-unit">px</span></span></div>
         <input id="s-h" class="t-size" type="range" min="30" max="600" step="2" />
 
         <label class="switch t-glow-row" title="Fill the shape with colour">
@@ -288,7 +289,7 @@
           <span class="switch-label">Outline</span>
         </label>
         <div id="s-outline-wrap" hidden>
-          <label class="field-label">Outline width <span id="s-ow-val" class="muted"></span></label>
+          <div class="field-label param-head"><span>Outline width</span><span class="param-edit"><input id="s-ow-val" class="param-num" type="number" step="1" /><span class="param-unit">px</span></span></div>
           <input id="s-ow" class="t-size" type="range" min="1" max="24" step="1" />
           <label class="field-label">Outline colour</label>
           <div id="s-outline-swatches" class="swatches"></div>
@@ -296,6 +297,7 @@
       </div>
       <div class="drawer-foot">
         <button id="s-delete" class="btn danger"><span data-icon="trash"></span><span>Delete</span></button>
+        <button id="s-reset" class="btn" title="Undo all changes since you opened this"><span data-icon="undo"></span><span>Reset</span></button>
         <button id="s-done" class="btn primary wide">Done</button>
       </div>
     </aside>
@@ -309,9 +311,9 @@
       </div>
       <div class="drawer-body">
         <div id="i-preview" class="i-preview"></div>
-        <label class="field-label">Width <span id="i-w-val" class="muted"></span></label>
+        <div class="field-label param-head"><span>Width</span><span class="param-edit"><input id="i-w-val" class="param-num" type="number" step="1" /><span class="param-unit">px</span></span></div>
         <input id="i-w" class="t-size" type="range" min="30" max="900" step="2" />
-        <label class="field-label">Rotation <span id="i-rot-val" class="muted"></span></label>
+        <div class="field-label param-head"><span>Rotation</span><span class="param-edit"><input id="i-rot-val" class="param-num" type="number" step="1" /><span class="param-unit">°</span></span></div>
         <input id="i-rot" class="t-size" type="range" min="-180" max="180" step="1" />
         <label class="switch t-glow-row" title="Round the corners">
           <input type="checkbox" id="i-round" />
@@ -323,6 +325,7 @@
       </div>
       <div class="drawer-foot">
         <button id="i-delete" class="btn danger"><span data-icon="trash"></span><span>Delete</span></button>
+        <button id="i-reset" class="btn" title="Undo all changes since you opened this"><span data-icon="undo"></span><span>Reset</span></button>
         <button id="i-done" class="btn primary wide">Done</button>
       </div>
     </aside>
@@ -337,11 +340,12 @@
       <div class="drawer-body">
         <label class="field-label">Colour</label>
         <div id="k-swatches" class="swatches"></div>
-        <label class="field-label">Stroke width <span id="k-width-val" class="muted"></span></label>
+        <div class="field-label param-head"><span>Stroke width</span><span class="param-edit"><input id="k-width-val" class="param-num" type="number" step="1" /><span class="param-unit">px</span></span></div>
         <input id="k-width" class="t-size" type="range" min="1" max="24" step="1" />
       </div>
       <div class="drawer-foot">
         <button id="k-delete" class="btn danger"><span data-icon="trash"></span><span>Delete</span></button>
+        <button id="k-reset" class="btn" title="Undo all changes since you opened this"><span data-icon="undo"></span><span>Reset</span></button>
         <button id="k-done" class="btn primary wide">Done</button>
       </div>
     </aside>
@@ -553,7 +557,7 @@
     <input type="file" id="txt-input" hidden accept=".txt,.md,.markdown,.csv,text/plain,text/markdown,text/csv" />
   </div>
 
-  <script src="js/db.js?v=38"></script>
-  <script src="js/app.js?v=38"></script>
+  <script src="js/db.js?v=39"></script>
+  <script src="js/app.js?v=39"></script>
 </body>
 </html>
