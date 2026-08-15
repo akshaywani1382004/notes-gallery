@@ -1,7 +1,7 @@
 /* Notes Gallery service worker — offline app shell.
    Network-first for same-origin GETs (so updates land immediately when online),
    with a cache fallback so the app works offline. Bump CACHE on each release. */
-const CACHE = 'notes-gallery-v21';
+const CACHE = 'notes-gallery-v22';
 
 self.addEventListener('install', (e) => {
   self.skipWaiting();
