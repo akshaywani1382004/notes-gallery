@@ -319,8 +319,8 @@ input, textarea { font-size: 15px; }
 
 /* mini-map */
 .minimap { position: absolute; right: 14px; bottom: 58px; width: 190px; height: 130px; z-index: 12;
-  background: color-mix(in srgb, var(--panel) 78%, transparent); border: 1px solid var(--line);
-  border-radius: 10px; box-shadow: var(--shadow); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); cursor: pointer; }
+  background: color-mix(in srgb, var(--panel) 45%, transparent); border: 1px solid var(--line);
+  border-radius: 10px; box-shadow: var(--shadow-lg); -webkit-backdrop-filter: blur(16px) saturate(1.4); backdrop-filter: blur(16px) saturate(1.4); cursor: pointer; }
 .pen-colors { display: inline-flex; gap: 5px; align-items: center; }
 .pen-colors .pen-dot { width: 16px; height: 16px; border-radius: 999px; cursor: pointer; border: 2px solid transparent; }
 .pen-colors .pen-dot.active { border-color: var(--text); }

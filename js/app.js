@@ -1247,6 +1247,29 @@
     $('#f-delete').addEventListener('click', () => drawerBlock && deleteBlock(drawerBlock.id));
     $('#f-open').addEventListener('click', () => drawerBlock && navigateTo(drawerBlock.id));
     $('#f-upload').addEventListener('click', () => $('#file-input').click());
+    $('#f-desc-import').addEventListener('click', importDescriptionAsText);
+  }
+
+  // Create a text node INSIDE the current block containing its description.
+  async function importDescriptionAsText() {
+    if (!drawerBlock) return;
+    const desc = (drawerBlock.description || '').trim();
+    if (!desc) { toast('This block has no description yet.'); return; }
+    const parent = drawerBlock;
+    if (parent.layout === 'list') { parent.layout = 'canvas'; await persistBlock(parent); renderLayoutSeg('canvas'); refreshItem(parent.id); }
+    const now = Date.now();
+    const t = {
+      id: uid(), ws: state.ws, parentId: parent.id, kind: 'text',
+      text: desc, font: 'sans', size: 22, bold: false, italic: false, align: 'left',
+      orient: 'h', rot: 0, glow: false, glowColor: '', color: '',
+      title: '', description: '', notes: '', tags: '', layout: 'canvas', icon: '',
+      x: 60, y: 60, z: 0, createdAt: now, updatedAt: now,
+    };
+    await DB.saveBlock(t);
+    // count for the parent card preview
+    await recount(parent.id);
+    recordChange(emptySet(), { blocks: [t], edges: [], files: [] });
+    toast('Description added as text inside — open the block to see it');
   }
 
   /* ---------------------------- text editor ---------------------------- */
