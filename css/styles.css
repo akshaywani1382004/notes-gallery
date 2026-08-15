@@ -306,6 +306,24 @@ input, textarea { font-size: 15px; }
   filter: drop-shadow(0 1px 2px rgba(0,0,0,.6));
 }
 .block.locked { cursor: default; }
+.block.dim { opacity: .28; filter: saturate(.6); transition: opacity .15s; }
+
+/* tag chips on cards */
+.block-tags { display: flex; flex-wrap: wrap; gap: 5px; padding: 2px 15px 4px; }
+.tag-chip { border: 1px solid var(--card-line); background: color-mix(in srgb, var(--b-accent, var(--accent)) 12%, transparent);
+  color: var(--text-dim); font-size: 11px; padding: 2px 8px; border-radius: 999px; cursor: pointer; }
+.tag-chip:hover { color: var(--accent); border-color: var(--accent); }
+
+/* markdown in the card notes preview */
+.block-notes-peek.md { -webkit-line-clamp: unset; display: block; max-height: 160px; overflow: hidden; }
+.block-notes-peek.md p { margin: 2px 0; }
+.block-notes-peek.md .md-h { margin: 3px 0 2px; font-size: 13px; font-weight: 700; color: var(--text); font-family: var(--serif); }
+.block-notes-peek.md ul, .block-notes-peek.md ol { margin: 2px 0; padding-left: 16px; }
+.block-notes-peek.md ul.md-todo { list-style: none; padding-left: 2px; }
+.block-notes-peek.md ul.md-todo li.done { color: var(--text-mute); text-decoration: line-through; }
+.block-notes-peek.md .md-box { color: var(--accent); }
+.block-notes-peek.md code { background: var(--panel-2); padding: 0 4px; border-radius: 4px; font-size: 11.5px; }
+.block-notes-peek.md .md-link { color: var(--accent); text-decoration: underline; cursor: pointer; }
 #stage.drop-active::after { content: "Drop image to place it"; position: absolute; inset: 10px; z-index: 8; pointer-events: none;
   border: 2.5px dashed var(--accent); border-radius: 16px; display: grid; place-items: center;
   color: var(--accent); font-size: 15px; font-weight: 600; background: color-mix(in srgb, var(--accent) 8%, transparent); }
@@ -675,6 +693,11 @@ input, textarea { font-size: 15px; }
 #app.home-mode .toolbar .divider { display: none; }
 
 #prompt .text-field { margin-top: 6px; }
+.seg-wrap { flex-wrap: wrap; }
+.seg-wrap button { flex: 1 1 40%; }
+#prompt-template-wrap { margin-top: 18px; }
+#prompt-template-wrap .field-label { margin-top: 0; }
+#prompt-templates { margin-top: 12px; }
 #prompt-color-wrap { margin-top: 20px; }
 #prompt-color-wrap .field-label { margin-top: 0; }
 #prompt-colors { margin-top: 14px; margin-bottom: 8px; }

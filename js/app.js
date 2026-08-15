@@ -41,6 +41,47 @@
   };
   const monogram = (t) => { const s = (t || '').trim(); return s ? s.charAt(0).toUpperCase() : 'N'; };
 
+  // ---- tiny, safe Markdown renderer (escape first, then limited inline/block rules)
+  function mdInline(s) {
+    s = esc(s);
+    s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+    s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+    s = s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$1" data-href="$2" class="md-link">$1</a>');
+    return s;
+  }
+  function mdToHtml(src) {
+    const lines = String(src || '').split(/\r?\n/);
+    let html = '', list = null;   // list: 'ul' | 'ol' | 'todo'
+    const closeList = () => { if (list) { html += list === 'ol' ? '</ol>' : '</ul>'; list = null; } };
+    for (let raw of lines) {
+      const line = raw.replace(/\s+$/, '');
+      if (!line.trim()) { closeList(); continue; }
+      let m;
+      if ((m = line.match(/^(#{1,3})\s+(.*)$/))) { closeList(); const n = m[1].length; html += `<h${n + 2} class="md-h">${mdInline(m[2])}</h${n + 2}>`; continue; }
+      if ((m = line.match(/^\s*[-*]\s+\[( |x|X)\]\s+(.*)$/))) {
+        if (list !== 'todo') { closeList(); html += '<ul class="md-todo">'; list = 'todo'; }
+        const done = m[1].toLowerCase() === 'x';
+        html += `<li class="${done ? 'done' : ''}"><span class="md-box">${done ? '☑' : '☐'}</span> ${mdInline(m[2])}</li>`;
+        continue;
+      }
+      if ((m = line.match(/^\s*[-*]\s+(.*)$/))) { if (list !== 'ul') { closeList(); html += '<ul>'; list = 'ul'; } html += `<li>${mdInline(m[1])}</li>`; continue; }
+      if ((m = line.match(/^\s*\d+\.\s+(.*)$/))) { if (list !== 'ol') { closeList(); html += '<ol>'; list = 'ol'; } html += `<li>${mdInline(m[1])}</li>`; continue; }
+      closeList(); html += `<p>${mdInline(line)}</p>`;
+    }
+    closeList();
+    return html;
+  }
+  // checklist progress from notes markdown → {done,total} or null
+  function todoProgress(src) {
+    const items = String(src || '').match(/^\s*[-*]\s+\[( |x|X)\]/gm);
+    if (!items || !items.length) return null;
+    const done = (String(src).match(/^\s*[-*]\s+\[(x|X)\]/gm) || []).length;
+    return { done, total: items.length };
+  }
+  // parse comma/space separated tags string → array
+  const parseTags = (s) => String(s || '').split(/[,\n]/).map(t => t.trim().replace(/^#/, '')).filter(Boolean);
+
   /* ---- line-icon set (stroke SVGs, sized via CSS .ic) ------------------ */
   const ICON = {
     diary: '<path d="M12 3.4C15 3.4 16.4 5.6 16.2 8L12.6 18.8C12.4 19.6 11.6 19.6 11.4 18.8L7.8 8C7.6 5.6 9 3.4 12 3.4Z"/><line x1="12" y1="10.6" x2="12" y2="18.2"/><circle cx="12" cy="9" r="1.2"/>',
@@ -142,6 +183,7 @@
     childCounts: {},         // blockId -> {blocks, files}
     childPeek: {},           // blockId -> [{title,color}] first few children (for list previews)
     selectedIds: new Set(),  // multi-selection (canvas)
+    tagFilter: null,         // active #tag filter (dims non-matching)
     view: { scale: 1, tx: 60, ty: 40 },
     linkMode: false,
     linkSrc: null,
@@ -204,6 +246,7 @@
     $('#list-view').hidden = !listMode;
     if (state.linkMode && listMode) setLinkMode(false);
 
+    state.tagFilter = null;   // filters are per-level
     renderBreadcrumbs();
     if (listMode) {
       $('#empty-hint').hidden = true;
@@ -212,6 +255,7 @@
       renderBlocks();
       if (opts.fit) fitToView(); else applyView();
       drawEdges();
+      applyTagFilter();
     }
     saveLoc();
     updateNavButtons();
@@ -301,12 +345,16 @@
     const meta = [];
     if (!isList && c.blocks) meta.push(`<span class="chip">${ic('layers')}${c.blocks}</span>`);
     if (c.files) meta.push(`<span class="chip">${ic('clip')}${c.files}</span>`);
-    if (b.notes && b.notes.trim()) meta.push(`<span class="chip">${ic('pencil')}</span>`);
+    const prog = todoProgress(b.notes);
+    if (prog) meta.push(`<span class="chip">☑ ${prog.done}/${prog.total}</span>`);
+    else if (b.notes && b.notes.trim()) meta.push(`<span class="chip">${ic('pencil')}</span>`);
     const iconInner = isList ? ic('list') : esc(monogram(b.title));
     const body = isList
       ? peekHtml(b.id)
       : `${b.description ? `<div class="block-desc">${esc(b.description)}</div>` : ''}
-         ${(!b.description && b.notes) ? `<div class="block-notes-peek">${esc(b.notes.slice(0,140))}</div>` : ''}`;
+         ${(!b.description && b.notes) ? `<div class="block-notes-peek md">${mdToHtml(b.notes.slice(0, 240))}</div>` : ''}`;
+    const tags = parseTags(b.tags);
+    const tagHtml = tags.length ? `<div class="block-tags">${tags.map(t => `<button class="tag-chip" data-tag="${esc(t)}">#${esc(t)}</button>`).join('')}</div>` : '';
     const metaHtml = meta.length ? meta.join('') : (isList ? '' : '<span class="chip muted">empty</span>');
     el.innerHTML = `
       <div class="block-actions">
@@ -318,6 +366,7 @@
         <div class="block-title">${esc(b.title || 'Untitled block')}</div>
       </div>
       ${body}
+      ${tagHtml}
       ${metaHtml ? `<div class="block-meta">${metaHtml}</div>` : ''}`;
   }
 
@@ -1051,7 +1100,7 @@
   const saveState = $('#save-state');
   let saveTimer = null;
   // superset covering both the block editor and the text editor
-  const EDIT_FIELDS = ['title', 'description', 'notes', 'color', 'layout', 'text', 'font', 'size', 'bold', 'italic', 'align', 'orient', 'rot', 'glow', 'glowColor', 'shape', 'w', 'h', 'fill', 'outline', 'outlineW', 'outlineColor', 'src', 'round'];
+  const EDIT_FIELDS = ['title', 'description', 'notes', 'tags', 'color', 'layout', 'text', 'font', 'size', 'bold', 'italic', 'align', 'orient', 'rot', 'glow', 'glowColor', 'shape', 'w', 'h', 'fill', 'outline', 'outlineW', 'outlineColor', 'src', 'round'];
 
   function snapshotFields(b) {
     const o = { id: b.id };
@@ -1093,6 +1142,7 @@
     $('#f-title').value = b.title || '';
     $('#f-desc').value  = b.description || '';
     $('#f-notes').value = b.notes || '';
+    $('#f-tags').value  = b.tags || '';
     renderSwatches(b.color);
     renderLayoutSeg(b.layout === 'list' ? 'list' : 'canvas');
     await renderFiles(b.id);
@@ -1147,7 +1197,7 @@
   }
 
   function bindDrawerFields() {
-    const map = { '#f-title': 'title', '#f-desc': 'description', '#f-notes': 'notes' };
+    const map = { '#f-title': 'title', '#f-desc': 'description', '#f-notes': 'notes', '#f-tags': 'tags' };
     Object.entries(map).forEach(([sel, key]) => {
       $(sel).addEventListener('input', (e) => {
         if (!drawerBlock) return;
@@ -1972,12 +2022,32 @@
 
   // canvas hover-action buttons (edit / open) fire as native clicks
   function onStageClick(e) {
+    const link = e.target.closest('.md-link');
+    if (link && link.dataset.href) { e.preventDefault(); e.stopPropagation(); window.open(link.dataset.href, '_blank', 'noopener'); return; }
+    const tag = e.target.closest('.tag-chip');
+    if (tag) { e.stopPropagation(); setTagFilter(tag.dataset.tag); return; }
     const btn = e.target.closest('[data-blk]');
     if (!btn) return;
     const blk = btn.closest('.block');
     if (!blk) return;
     if (btn.dataset.blk === 'edit') openAnyEditor(blk.dataset.id);
     else navigateTo(blk.dataset.id);
+  }
+
+  /* ---------------------------- tag filter ----------------------------- */
+  function setTagFilter(tag) {
+    state.tagFilter = (state.tagFilter === tag) ? null : tag;
+    applyTagFilter();
+  }
+  function applyTagFilter() {
+    const tag = state.tagFilter;
+    $('#tag-filter').hidden = !tag;
+    if (tag) $('#tag-filter-name').textContent = '#' + tag;
+    for (const b of state.blocks) {
+      const el = state.els[b.id]; if (!el) continue;
+      const match = !tag || parseTags(b.tags).includes(tag);
+      el.classList.toggle('dim', !!tag && !match);
+    }
   }
 
   /* ---------------------------- link mode ------------------------------ */
@@ -2466,7 +2536,7 @@
 
   async function newWorkspaceFlow() {
     const count = (await DB.listWorkspaces()).length;
-    promptDialog('New Workspace', '', async (name, color) => {
+    promptDialog('New Workspace', '', async (name, color, template) => {
       name = (name || '').trim() || 'Untitled workspace';
       const chosen = color || pickWsColor(count);
       let handle = null;
@@ -2488,9 +2558,43 @@
       const now = Date.now();
       await DB.saveWorkspace({ id, name, color: chosen, createdAt: now, updatedAt: now });
       if (handle) await DB.saveHandleRec(id, handle);
+      if (template && template !== 'blank') await seedTemplate(id, template);
       await openWorkspace(id);              // jump straight into the new workspace
       if (handle) await saveCurrentWorkspace(false);   // write the initial file now
-    }, { colors: true, color: pickWsColor(count), okLabel: 'Create' });
+    }, { colors: true, color: pickWsColor(count), okLabel: 'Create', templates: true });
+  }
+
+  // Seed a new workspace with a starter layout.
+  async function seedTemplate(wsId, tpl) {
+    const now = Date.now();
+    const mk = (o) => ({
+      id: uid(), ws: wsId, parentId: DB.ROOT, title: '', description: '', notes: '', tags: '',
+      layout: 'canvas', color: PALETTE[0], icon: '', x: 0, y: 0, createdAt: now, updatedAt: now, ...o,
+    });
+    let blocks = [];
+    if (tpl === 'kanban') {
+      blocks = [
+        mk({ title: 'To do', layout: 'list', color: PALETTE[5], x: 40, y: 60 }),
+        mk({ title: 'In progress', layout: 'list', color: PALETTE[8], x: 300, y: 60 }),
+        mk({ title: 'Done', layout: 'list', color: PALETTE[10], x: 560, y: 60 }),
+      ];
+    } else if (tpl === 'mindmap') {
+      const c = mk({ title: 'Central idea', color: PALETTE[2], x: 320, y: 220 });
+      const spokes = ['Topic 1', 'Topic 2', 'Topic 3', 'Topic 4'].map((t, i) =>
+        mk({ title: t, color: PALETTE[(i + 3) % PALETTE.length], x: 120 + (i % 2) * 440, y: 60 + Math.floor(i / 2) * 340 }));
+      blocks = [c, ...spokes];
+      for (const b of blocks) await DB.saveBlock(b);
+      for (const s of spokes) await DB.saveEdge({ id: uid(), ws: wsId, parentId: DB.ROOT, from: c.id, to: s.id, createdAt: now });
+      return;
+    } else if (tpl === 'project') {
+      blocks = [
+        mk({ title: 'Goals', color: PALETTE[1], x: 40, y: 60, notes: '# Goals\n- [ ] Define scope\n- [ ] Success metric' }),
+        mk({ title: 'Tasks', layout: 'list', color: PALETTE[0], x: 300, y: 60 }),
+        mk({ title: 'Resources', color: PALETTE[11], x: 560, y: 60, notes: '- Link 1\n- Link 2' }),
+        mk({ title: 'Notes', color: PALETTE[7], x: 300, y: 300 }),
+      ];
+    }
+    for (const b of blocks) await DB.saveBlock(b);
   }
 
   /* ---- workspace Properties dialog (name, colour, file location) ------ */
@@ -2625,6 +2729,7 @@
   /* ---------------------------- prompt dialog -------------------------- */
   let promptCb = null;
   let promptColor = null;
+  let promptTemplate = 'blank';
   function renderPromptColors(active) {
     const wrap = $('#prompt-colors');
     wrap.innerHTML = '';
@@ -2636,7 +2741,7 @@
       wrap.appendChild(s);
     });
   }
-  // opts: { colors: true, color: '#..', okLabel: 'Create' }. cb receives (name, color).
+  // opts: { colors, color, okLabel, templates }. cb receives (name, color, template).
   function promptDialog(title, value, cb, opts = {}) {
     $('#prompt-title').textContent = title;
     const inp = $('#prompt-input');
@@ -2646,6 +2751,9 @@
     $('#prompt-color-wrap').hidden = !wantColors;
     if (wantColors) { promptColor = opts.color || PALETTE[0]; renderPromptColors(promptColor); }
     else promptColor = null;
+    const wantTpl = !!opts.templates;
+    $('#prompt-template-wrap').hidden = !wantTpl;
+    if (wantTpl) { promptTemplate = 'blank'; $$('#prompt-templates button').forEach(b => b.classList.toggle('active', b.dataset.tpl === 'blank')); }
     $('#prompt-ok').textContent = opts.okLabel || 'Save';
     $('#prompt').hidden = false;
     setTimeout(() => { inp.focus(); inp.select(); }, 50);
@@ -2656,7 +2764,12 @@
       const v = $('#prompt-input').value;
       $('#prompt').hidden = true;
       const cb = promptCb; promptCb = null;
-      if (cb) cb(v, promptColor);
+      if (cb) cb(v, promptColor, promptTemplate);
+    });
+    $('#prompt-templates').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-tpl]'); if (!b) return;
+      promptTemplate = b.dataset.tpl;
+      $$('#prompt-templates button').forEach(x => x.classList.toggle('active', x === b));
     });
     $('#prompt-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#prompt-ok').click(); } });
   }
@@ -2898,6 +3011,7 @@
     $('#btn-home').addEventListener('click', () => navigateTo(DB.ROOT));
     $('#btn-link').addEventListener('click', () => setLinkMode(!state.linkMode));
     $('#link-exit').addEventListener('click', () => setLinkMode(false));
+    $('#tag-filter-clear').addEventListener('click', () => setTagFilter(state.tagFilter));
     $('#btn-fit').addEventListener('click', fitToView);
     $('#btn-help').addEventListener('click', () => openAbout('help'));
     $('#btn-theme').addEventListener('click', () =>
