@@ -124,6 +124,7 @@
     star: '<path d="M12 3.6l2.6 5.2 5.8.9-4.2 4.1 1 5.7-5.2-2.7-5.2 2.7 1-5.7L3.6 9.7l5.8-.9z"/>',
     image: '<rect x="3.5" y="5" width="17" height="14" rx="2.2"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M4 17l4.5-4.5 3 3L15 12l5 5"/>',
     pen: '<path d="M4 20l1-4L16 5a2 2 0 0 1 3 3L8 19l-4 1Z"/><line x1="14" y1="7" x2="17" y2="10"/>',
+    eraser: '<path d="M9 20H20"/><path d="M15.5 5.5l3 3a2 2 0 0 1 0 2.8L11 19l-4.5-4.5a2 2 0 0 1 0-2.8l6.2-6.2a2 2 0 0 1 2.8 0Z"/><line x1="8" y1="9" x2="14" y2="15"/>',
     map: '<path d="M9 4 4 6v14l5-2 6 2 5-2V4l-5 2-6-2Z"/><line x1="9" y1="4" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="20"/>',
     front: '<rect x="8" y="8" width="12" height="12" rx="2" fill="currentColor" stroke="none"/><path d="M4 14V5.5A1.5 1.5 0 0 1 5.5 4H14"/>',
     back: '<rect x="4" y="4" width="12" height="12" rx="2"/><path d="M10 16h8.5A1.5 1.5 0 0 0 20 14.5V6" fill="none"/><rect x="10" y="10" width="10" height="10" rx="2" fill="currentColor" stroke="none"/>',
@@ -192,6 +193,7 @@
     selectedIds: new Set(),  // multi-selection (canvas)
     tagFilter: null,         // active #tag filter (dims non-matching)
     penMode: false,          // freehand ink drawing mode
+    penEraser: false,        // eraser sub-tool within pen mode (removes ink strokes)
     view: { scale: 1, tx: 60, ty: 40 },
     linkMode: false,
     linkSrc: null,
@@ -1812,6 +1814,7 @@
   let gizmo = null;                    // rotate/resize handle drag {id, mode, ...}
   let lastPointer = null;              // last pointer position (screen coords) for paste-at-cursor
   let inking = null;                   // active freehand stroke {pts:[[x,y]], path}
+  let erasing = false;                 // pen eraser drag in progress
 
   function onPointerDown(e) {
     if (state.levelLayout === 'list') return;   // list view handles its own clicks/scroll
@@ -1819,6 +1822,13 @@
     // RIGHT-button drag = marquee (rubber-band) selection
     if (e.button === 2) { startMarquee(e); return; }
     if (e.button !== 0) return;
+
+    // pen eraser: wipe any ink stroke touched (drag continues in onPointerMove)
+    if (state.penMode && state.penEraser && !inking) {
+      erasing = true;
+      eraseInkAt(e.clientX, e.clientY);
+      return;
+    }
 
     // freehand pen: start a stroke on empty canvas (ignore extra fingers mid-stroke)
     if (state.penMode && !inking && !e.target.closest('.block') && !e.target.closest('[data-blk]')) {
@@ -1911,6 +1921,7 @@
 
   function onPointerMove(e) {
     lastPointer = { x: e.clientX, y: e.clientY };   // for paste-at-cursor
+    if (erasing) { eraseInkAt(e.clientX, e.clientY); return; }
     if (inking) {
       const r = stage.getBoundingClientRect();
       const p = screenToWorld(e.clientX - r.left, e.clientY - r.top);
@@ -2008,6 +2019,7 @@
   }
 
   async function onPointerUp(e) {
+    if (erasing) { erasing = false; pointers.delete(e.pointerId); return; }
     if (inking) {
       const stroke = inking; inking = null;
       stroke.path.remove();
@@ -2348,6 +2360,28 @@
     stage.classList.toggle('penning', on);
     $('#pen-bar').hidden = !on;
     if (on) { setLinkMode(false); closeDrawerIfOpen(); renderPenColors(); $('#pen-size').value = penWidth; }
+    else setEraser(false);
+  }
+  function setEraser(on) {
+    state.penEraser = !!on;
+    const btn = $('#pen-eraser'); if (btn) btn.classList.toggle('active', state.penEraser);
+    stage.classList.toggle('erasing', state.penEraser);
+  }
+  // Remove any ink stroke under the pointer (whole-stroke eraser). Undoable.
+  async function eraseInkAt(clientX, clientY) {
+    const el = document.elementFromPoint(clientX, clientY);
+    const node = el && el.closest ? el.closest('.block-ink') : null;
+    if (!node || node.dataset.erasing) return;
+    const id = node.dataset.id;
+    const b = state.blocks.find(x => x.id === id);
+    if (!b || b.kind !== 'ink') return;
+    node.dataset.erasing = '1';               // guard against re-entry during async delete
+    const removal = await gatherRemoval([id]);
+    await DB.deleteBlockDeep(id);
+    recordChange(removal, emptySet());
+    state.blocks = state.blocks.filter(x => x.id !== id);
+    delete state.els[id];
+    node.remove();
   }
   function renderPenColors() {
     const wrap = $('#pen-colors'); if (!wrap) return;
@@ -3440,6 +3474,7 @@
       if (e.key === 'n' || e.key === 'N') { e.preventDefault(); createBlock('block'); }
       if (e.key === 'l' || e.key === 'L') setLinkMode(!state.linkMode);
       if (e.key === 'p' || e.key === 'P') setPenMode(!state.penMode);
+      if (e.key === 'e' || e.key === 'E') { if (!state.penMode) setPenMode(true); if (state.penMode) setEraser(!state.penEraser); }
       if (e.key === 'm' || e.key === 'M') { minimapOn = !minimapOn; try { localStorage.setItem('ng-minimap', minimapOn ? '1' : '0'); } catch (_) {} $('#btn-map').classList.toggle('active', minimapOn); drawMinimap(); }
       if (e.key === 'f' || e.key === 'F') fitToView();
       if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedIds.size) deleteSelected();
@@ -3519,6 +3554,7 @@
     $('#tag-filter-clear').addEventListener('click', () => setTagFilter(state.tagFilter));
     $('#btn-pen').addEventListener('click', () => setPenMode(!state.penMode));
     $('#pen-exit').addEventListener('click', () => setPenMode(false));
+    $('#pen-eraser').addEventListener('click', () => setEraser(!state.penEraser));
     $('#pen-size').addEventListener('input', (e) => { penWidth = parseInt(e.target.value, 10) || 3; try { localStorage.setItem('ng-pen-width', penWidth); } catch (_) {} });
     $('#btn-fit').addEventListener('click', fitToView);
     $('#btn-help').addEventListener('click', () => openAbout('help'));

@@ -324,6 +324,11 @@ input, textarea { font-size: 15px; }
 .ink-svg { display: block; overflow: visible; pointer-events: none; }
 .ink-svg path { pointer-events: stroke; }
 #stage.penning { cursor: crosshair; }
+#stage.penning.erasing { cursor: cell; }
+.pen-tool { display: inline-flex; align-items: center; justify-content: center; padding: 6px !important; width: 30px; height: 30px;
+  background: transparent !important; color: var(--text-mute) !important; border: 1px solid var(--line) !important; }
+.pen-tool span[data-icon] { display: inline-flex; }
+.pen-tool.active { background: var(--grad) !important; color: #fff !important; border-color: transparent !important; }
 
 /* mini-map */
 .minimap { position: absolute; right: 14px; bottom: 58px; width: 190px; height: 130px; z-index: 12;
@@ -651,6 +656,15 @@ input, textarea { font-size: 15px; }
     radial-gradient(900px 520px at 12% -8%, var(--glow), transparent 60%),
     radial-gradient(760px 460px at 100% 108%, color-mix(in srgb, var(--accent-2) 14%, transparent), transparent 62%);
 }
+/* faint dot-grid over the intro — the "infinite page", fading out toward the edges */
+.home::after {
+  content: ""; position: fixed; inset: var(--bar-h) 0 0 0; pointer-events: none; z-index: 0;
+  background-image: radial-gradient(color-mix(in srgb, var(--text) 9%, transparent) 1px, transparent 1.6px);
+  background-size: 30px 30px; background-position: -8px -8px;
+  -webkit-mask-image: radial-gradient(118% 82% at 50% 2%, #000 28%, transparent 76%);
+  mask-image: radial-gradient(118% 82% at 50% 2%, #000 28%, transparent 76%);
+}
+
 /* hero (intro) — the big centered brand + typing tagline */
 .home-hero { position: relative; z-index: 1; text-align: center; padding: 64px 20px 26px; }
 .hero-brand { display: inline-flex; align-items: center; gap: 16px; transform-origin: 0 0; will-change: transform; }
@@ -716,7 +730,7 @@ input, textarea { font-size: 15px; }
 #app.home-mode #topbar { background: transparent; border-bottom: none; -webkit-backdrop-filter: none; backdrop-filter: none; padding: 10px 22px; }
 #app.home-mode .bar-right { margin-left: auto; }   /* push Help + theme to the top-right corner */
 #app.home-mode .toolbar { gap: 10px; }
-#app.home-mode .home::before { inset: 0; }
+#app.home-mode .home::before, #app.home-mode .home::after { inset: 0; }
 #app.home-mode #bottombar,
 #app.home-mode .bar-center,
 #app.home-mode .add-wrap,
