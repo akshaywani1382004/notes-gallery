@@ -2247,17 +2247,87 @@
     const offY = (cssH - bh * scale) / 2 - (minY - pad) * scale;
     mmMap = { scale, offX, offY };
     const wx = (x) => x * scale + offX, wy = (y) => y * scale + offY;
-    for (const blk of state.blocks) {
-      const rect = blockRect(blk.id);
-      ctx.fillStyle = blk.color || getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#2b7fff';
-      ctx.globalAlpha = 0.85;
-      ctx.fillRect(wx(rect.x), wy(rect.y), Math.max(2, rect.w * scale), Math.max(2, rect.h * scale));
-    }
-    ctx.globalAlpha = 1;
+    const cs = getComputedStyle(document.documentElement);
+    const accent = (cs.getPropertyValue('--accent') || '#2b7fff').trim();
+    const cardBg = (cs.getPropertyValue('--card') || '#161b21').trim();
+    const lineC = (cs.getPropertyValue('--card-line') || '#23262d').trim();
+    // draw nodes back-to-front (respect z-order)
+    const ordered = [...state.blocks].sort((a, b) => (a.z || 0) - (b.z || 0));
+    for (const blk of ordered) drawNodeMini(ctx, blk, wx, wy, scale, { accent, cardBg, lineC });
     // viewport rectangle
-    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#2b7fff';
-    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = accent; ctx.lineWidth = 1.5;
     ctx.strokeRect(wx(vw0.x), wy(vw0.y), (vw1.x - vw0.x) * scale, (vw1.y - vw0.y) * scale);
+  }
+
+  const _mmImgCache = new Map();   // src → HTMLImageElement (for image thumbnails)
+  function mmImage(src) {
+    if (!src) return null;
+    let im = _mmImgCache.get(src);
+    if (!im) { im = new Image(); im.onload = () => scheduleMinimap(); im.src = src; _mmImgCache.set(src, im); }
+    return im.complete ? im : null;
+  }
+  // Draw a single node into the mini-map as a faithful little preview.
+  function drawNodeMini(ctx, b, wx, wy, scale, col) {
+    const rect = blockRect(b.id);
+    const x = wx(rect.x), y = wy(rect.y), w = Math.max(1, rect.w * scale), h = Math.max(1, rect.h * scale);
+    const cx = x + w / 2, cy = y + h / 2;
+    ctx.save();
+    if (b.rot) { ctx.translate(cx, cy); ctx.rotate(b.rot * Math.PI / 180); ctx.translate(-cx, -cy); }
+    ctx.globalAlpha = 0.95;
+
+    if (b.kind === 'ink') {
+      const pad = (b.width || 3) + 2;
+      const pts = b.pts || [];
+      ctx.strokeStyle = b.color || col.accent;
+      ctx.lineWidth = Math.max(0.6, (b.width || 3) * scale);
+      ctx.lineJoin = ctx.lineCap = 'round';
+      ctx.beginPath();
+      pts.forEach((p, i) => { const px = wx(b.x + pad + p[0]), py = wy(b.y + pad + p[1]); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+      ctx.stroke();
+    } else if (b.kind === 'shape') {
+      const fill = b.fill ? (b.color || col.accent) : null;
+      const stroke = b.outline ? (b.outlineColor || col.accent) : null;
+      ctx.lineWidth = Math.max(0.5, (b.outlineW || 2) * scale);
+      ctx.beginPath();
+      if (b.shape === 'circle') { ctx.ellipse(cx, cy, w / 2, h / 2, 0, 0, Math.PI * 2); }
+      else {
+        const pts = shapePoints(b);
+        if (pts) pts.forEach((p, i) => { const px = x + p[0] * w, py = y + p[1] * h; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }), ctx.closePath();
+        else roundRectPath(ctx, x, y, w, h, Math.min(4, w / 4));
+      }
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.strokeStyle = stroke; ctx.stroke(); }
+      if (!fill && !stroke) { ctx.strokeStyle = col.accent; ctx.stroke(); }
+    } else if (b.kind === 'image') {
+      const im = mmImage(b.src);
+      if (im) { try { ctx.drawImage(im, x, y, w, h); } catch (_) { ctx.fillStyle = col.lineC; ctx.fillRect(x, y, w, h); } }
+      else { ctx.fillStyle = col.lineC; ctx.fillRect(x, y, w, h); }
+    } else if (b.kind === 'text') {
+      ctx.fillStyle = b.color && b.color !== '' ? b.color : (getComputedStyle(document.documentElement).getPropertyValue('--text') || '#e7eaee').trim();
+      const fs = Math.max(4, (b.size || 20) * scale);
+      ctx.font = `${b.bold ? '700 ' : ''}${fs}px ${FONT_STACK[b.font] || FONT_STACK.sans}`;
+      ctx.textBaseline = 'top';
+      ctx.fillText((b.text || 'Text').split('\n')[0].slice(0, 24), x, y);
+    } else {
+      // block / list card: rounded card with accent top strip
+      roundRectPath(ctx, x, y, w, h, Math.min(3, w / 5));
+      ctx.fillStyle = col.cardBg; ctx.fill();
+      ctx.strokeStyle = col.lineC; ctx.lineWidth = 0.7; ctx.stroke();
+      ctx.fillStyle = b.color || col.accent;
+      roundRectPath(ctx, x, y, w, Math.max(1.5, 3 * scale), 1); ctx.fill();
+    }
+    ctx.restore();
+  }
+  function roundRectPath(ctx, x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
   }
   function minimapPan(clientX, clientY) {
     if (!mmMap) return;
