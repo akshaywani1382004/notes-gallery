@@ -2532,17 +2532,24 @@
       if (im) { try { ctx.drawImage(im, x, y, w, h); } catch (_) { ctx.fillStyle = col.lineC; ctx.fillRect(x, y, w, h); } }
       else { ctx.fillStyle = col.lineC; ctx.fillRect(x, y, w, h); }
     } else if (b.kind === 'text') {
-      // Text is unreadable at mini scale, so draw representative line-bars that are always visible.
+      // Text is unreadable at mini scale — draw a clearly visible tinted marker
+      // (a small chip) plus a few line-bars, with hard minimum sizes.
       const color = b.color && b.color !== '' ? b.color : (getComputedStyle(document.documentElement).getPropertyValue('--text') || '#e7eaee').trim();
-      const lines = (b.text || 'Text').split('\n').filter(l => l.trim().length).slice(0, 6);
-      const lh = Math.max(2.5, (b.size || 20) * 1.35 * scale);
+      const lines = (b.text || 'Text').split('\n').filter(l => l.trim().length);
       const maxLen = Math.max(1, ...lines.map(l => l.length));
-      ctx.fillStyle = color; ctx.globalAlpha = 0.9;
-      const bh = Math.max(1.5, lh * 0.55);
-      for (let li = 0; li < lines.length; li++) {
-        const ly = y + li * lh;
-        if (ly > y + h + lh) break;
-        const bw = Math.max(3, w * Math.min(1, lines[li].length / maxLen));
+      const bw0 = Math.max(10, w), bh0 = Math.max(8, h);   // guaranteed footprint
+      // faint background chip so the text node is always locatable
+      ctx.globalAlpha = 0.18; ctx.fillStyle = color;
+      roundRectPath(ctx, x, y, bw0, bh0, 2); ctx.fill();
+      // line bars
+      ctx.globalAlpha = 0.95;
+      const nLines = Math.min(lines.length || 1, Math.max(1, Math.floor(bh0 / 3)));
+      const gap = bh0 / nLines;
+      const bh = Math.max(1.5, Math.min(2.5, gap * 0.55));
+      for (let li = 0; li < nLines; li++) {
+        const ly = y + li * gap + (gap - bh) / 2;
+        const frac = lines.length ? Math.min(1, (lines[li] || '').length / maxLen) : 0.7;
+        const bw = Math.max(4, bw0 * Math.max(0.35, frac));
         roundRectPath(ctx, x, ly, bw, bh, Math.min(1.2, bh / 2)); ctx.fill();
       }
     } else {
