@@ -546,12 +546,21 @@ input, textarea { font-size: 15px; }
 .field-label { font-size: 11px; font-weight: 700; color: var(--text-mute); text-transform: uppercase; letter-spacing: .9px; margin-top: 8px; }
 /* editable parameter row: label on the left, a typeable number + unit on the right */
 .param-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.param-edit { display: inline-flex; align-items: center; gap: 3px; text-transform: none; letter-spacing: 0; }
+.param-edit { display: inline-flex; align-items: center; gap: 5px; text-transform: none; letter-spacing: 0; }
 .param-num { width: 62px; padding: 3px 7px; font-size: 13px; font-weight: 600; text-align: right; color: var(--text);
-  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; outline: none; transition: border-color .15s, box-shadow .15s; }
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; outline: none; transition: border-color .15s, box-shadow .15s;
+  color-scheme: dark; }   /* render the native up/down spinner in the theme's dark palette */
+:root[data-theme="light"] .param-num { color-scheme: light; }
 .param-num:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--glow); }
-.param-num::-webkit-outer-spin-button, .param-num::-webkit-inner-spin-button { opacity: .5; }
+.param-num::-webkit-outer-spin-button, .param-num::-webkit-inner-spin-button { opacity: .55; }
 .param-unit { color: var(--text-mute); font-size: 12px; font-weight: 600; min-width: 12px; }
+/* small per-field reset (to the left of the number) — reverts just this value */
+.param-reset { display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0; cursor: pointer;
+  color: var(--text-mute); background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px;
+  transition: color .15s, border-color .15s, background .15s; }
+.param-reset:hover { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); background: var(--panel); }
+.param-reset:active { transform: translateY(1px); }
+.param-reset .ic { width: 14px; height: 14px; }
 .text-field { width: 100%; padding: 11px 13px; border: 1px solid var(--line); background: var(--panel-2); border-radius: 11px; outline: none; transition: border-color .15s, box-shadow .15s; }
 .text-field:focus, .notes-field:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); }
 .notes-field { width: 100%; min-height: 200px; resize: vertical; padding: 13px; border: 1px solid var(--line); background: var(--panel-2); border-radius: 11px; outline: none; line-height: 1.6; font-size: 14px; transition: border-color .15s, box-shadow .15s; }

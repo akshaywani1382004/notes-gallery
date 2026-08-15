@@ -1291,6 +1291,20 @@
     else if (b.kind === 'ink') openInkEditor(b.id);
     toast('Reset to original');
   }
+
+  // Reset a single parameter (the reset button beside a number field) to its
+  // value when the editor opened. `data-fields` lists the block props to revert.
+  function resetParamField(btn) {
+    const base = editBaseline; if (!base) return;
+    const b = state.blocks.find(x => x.id === base.id); if (!b) return;
+    const fields = (btn.dataset.fields || '').split(',').filter(Boolean);
+    if (!fields.length) return;
+    fields.forEach(f => { b[f] = base[f]; });
+    refreshItem(b.id); persistBlock(b); markChanged();
+    const num = $('#' + btn.dataset.num), sl = $('#' + btn.dataset.slider), primary = fields[0];
+    if (num) num.value = b[primary];
+    if (sl) sl.value = b[primary];
+  }
   // open the right editor for a block (text vs normal)
   function openAnyEditor(id) {
     const b = state.blocks.find(x => x.id === id);
@@ -3653,6 +3667,7 @@
     bindSearch(); bindMenu(); bindConfirm(); bindKeys();
     bindAddMenu(); bindListView(); bindHome(); bindPrompt(); bindBrandMenu(); bindAutosave(); bindProps(); bindAbout(); bindContextMenu();
     bindTextEditor(); bindShapeEditor(); bindImageEditor(); bindInkEditor(); bindImagePaste(); bindCmdk(); bindMinimap();
+    document.addEventListener('click', (e) => { const rb = e.target.closest && e.target.closest('.param-reset'); if (rb) { e.preventDefault(); resetParamField(rb); } });
     try {
       await DB.open();
     } catch (err) {
