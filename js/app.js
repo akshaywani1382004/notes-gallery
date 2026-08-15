@@ -1073,7 +1073,7 @@
     const extra = (c.blocks || c.files)
       ? ` It contains ${c.blocks || 0} inner block(s) and ${c.files || 0} file(s) — all will be removed.`
       : '';
-    confirmDialog(`Delete ${label}?`, 'You can undo this with Ctrl+Z.' + extra, 'Delete', async () => {
+    confirmDialog(`Delete ${label}?`, 'Are you sure you want to delete this?' + extra, 'Delete', async () => {
       const removal = await gatherRemoval([id]);
       await DB.deleteBlockDeep(id);
       recordChange(removal, emptySet());
@@ -1117,7 +1117,7 @@
     if (!ids.length) return;
     if (ids.length === 1) { deleteBlock(ids[0]); return; }
     confirmDialog(`Delete ${ids.length} blocks?`,
-      'This removes them and everything inside them. You can undo with Ctrl+Z.', 'Delete', async () => {
+      'Are you sure you want to delete these? Everything inside them is removed too.', 'Delete', async () => {
         const removal = await gatherRemoval(ids);
         for (const id of ids) await DB.deleteBlockDeep(id);
         recordChange(removal, emptySet());
