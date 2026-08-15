@@ -431,11 +431,14 @@
     // Box sizing: an explicit width (from side handles) makes text wrap/reflow to
     // fit; justify also needs a real width. Height (from top/bottom handles) sets a
     // min box height. The bottom-right corner handle scales font size instead.
+    // `nowrap` (imported text) preserves the source's exact line breaks — one
+    // source line stays one line — until you drag a side handle to give it a width.
     if (b.w) { el.style.width = b.w + 'px'; el.style.maxWidth = 'none'; s.width = '100%'; }
     else if (b.align === 'justify') { el.style.width = '320px'; el.style.maxWidth = 'none'; s.width = '100%'; }
-    else { el.style.width = ''; el.style.maxWidth = ''; s.width = ''; }
+    else { el.style.width = ''; el.style.maxWidth = (b.nowrap ? 'none' : ''); s.width = ''; }
     el.style.minHeight = b.h ? (b.h + 'px') : '';
     if (b.align === 'justify') { s.whiteSpace = 'pre-line'; s.textAlignLast = 'left'; }
+    else if (!b.w && b.nowrap) { s.whiteSpace = 'pre'; s.textAlignLast = ''; }   // exact lines, no soft wrap
     else { s.whiteSpace = ''; s.textAlignLast = ''; }
     if (b.orient === 'v') { s.writingMode = 'vertical-rl'; s.textOrientation = 'mixed'; }
     else { s.writingMode = ''; s.textOrientation = ''; }
@@ -731,7 +734,7 @@
     const now = Date.now();
     const b = {
       id: uid(), ws: state.ws, parentId: state.level, kind: 'text',
-      text: content, font: 'mono', size: 14, bold: false, italic: false, align: 'left',
+      text: content, font: 'mono', size: 14, bold: false, italic: false, align: 'left', nowrap: true,
       orient: 'h', rot: 0, glow: false, glowColor: '', color: '',
       title: '', description: '', notes: '', tags: '', layout: 'canvas', icon: '',
       x: Math.round(pos.x - 150), y: Math.round(pos.y - 20), z: 0, createdAt: now, updatedAt: now,
@@ -1240,7 +1243,7 @@
   const saveState = $('#save-state');
   let saveTimer = null;
   // superset covering both the block editor and the text editor
-  const EDIT_FIELDS = ['title', 'description', 'notes', 'tags', 'color', 'layout', 'text', 'font', 'size', 'bold', 'italic', 'align', 'orient', 'rot', 'glow', 'glowColor', 'shape', 'w', 'h', 'fill', 'outline', 'outlineW', 'outlineColor', 'src', 'round', 'width'];
+  const EDIT_FIELDS = ['title', 'description', 'notes', 'tags', 'color', 'layout', 'text', 'font', 'size', 'bold', 'italic', 'align', 'orient', 'rot', 'glow', 'glowColor', 'shape', 'w', 'h', 'fill', 'outline', 'outlineW', 'outlineColor', 'src', 'round', 'width', 'nowrap'];
 
   function snapshotFields(b) {
     const o = { id: b.id };
@@ -1377,7 +1380,7 @@
     const t = {
       id: uid(), ws: state.ws, parentId: parent.id, kind: 'text',
       text: content, font: 'sans', size: field === 'notes' ? 16 : 22,
-      bold: false, italic: false, align: 'left',
+      bold: false, italic: false, align: 'left', nowrap: true,
       orient: 'h', rot: 0, glow: false, glowColor: '', color: '',
       title: '', description: '', notes: '', tags: '', layout: 'canvas', icon: '',
       x: 60, y: 60, z: 0, createdAt: now, updatedAt: now,
