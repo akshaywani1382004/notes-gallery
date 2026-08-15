@@ -412,10 +412,7 @@
       `<div class="text-content"></div>` +
       `<div class="block-actions"><button class="blk-btn" data-blk="edit" title="Edit text">${ic('pencil')}</button></div>` +
       `<div class="tnode-rotate" title="Rotate"></div>` +
-      `<div class="tnode-edge e" data-edge="e" title="Resize box"></div>` +
-      `<div class="tnode-edge w" data-edge="w" title="Resize box"></div>` +
-      `<div class="tnode-edge n" data-edge="n" title="Resize box"></div>` +
-      `<div class="tnode-edge s" data-edge="s" title="Resize box"></div>` +
+      `<div class="tnode-edge e" data-edge="e" title="Set wrap width"></div>` +
       `<div class="tnode-resize" title="Resize text size"></div>`;
     // Set styles via DOM props — the font stacks contain double quotes, which
     // would break a string-interpolated style="..." attribute.
@@ -428,18 +425,26 @@
     s.fontStyle = b.italic ? 'italic' : 'normal';
     s.textAlign = b.align || 'left';
     s.color = b.color ? b.color : 'var(--text)';
-    // Box sizing: an explicit width (from side handles) makes text wrap/reflow to
-    // fit; justify also needs a real width. Height (from top/bottom handles) sets a
-    // min box height. The bottom-right corner handle scales font size instead.
-    // `nowrap` (imported text) preserves the source's exact line breaks — one
-    // source line stays one line — until you drag a side handle to give it a width.
-    if (b.w) { el.style.width = b.w + 'px'; el.style.maxWidth = 'none'; s.width = '100%'; }
-    else if (b.align === 'justify') { el.style.width = '320px'; el.style.maxWidth = 'none'; s.width = '100%'; }
-    else { el.style.width = ''; el.style.maxWidth = (b.nowrap ? 'none' : ''); s.width = ''; }
-    el.style.minHeight = b.h ? (b.h + 'px') : '';
-    if (b.align === 'justify') { s.whiteSpace = 'pre-line'; s.textAlignLast = 'left'; }
-    else if (!b.w && b.nowrap) { s.whiteSpace = 'pre'; s.textAlignLast = ''; }   // exact lines, no soft wrap
-    else { s.whiteSpace = ''; s.textAlignLast = ''; }
+    // The box ALWAYS hugs the text (fit-content, auto height) — it never keeps
+    // empty space. The right (e) handle sets a WRAP WIDTH: text reflows to fit,
+    // and if you drag wider than the text needs, the box snaps back to the text.
+    // The bottom-right corner scales the font (the box grows/shrinks with it).
+    // `nowrap` (imported text) keeps the source's exact line breaks until you set a width.
+    el.style.height = ''; el.style.minHeight = '';
+    el.style.width = 'fit-content'; s.width = 'auto';
+    if (b.align === 'justify') {
+      el.style.width = (b.w || 320) + 'px'; el.style.maxWidth = 'none'; s.width = '100%';
+      s.whiteSpace = 'pre-line'; s.textAlignLast = 'left';
+    } else if (b.w) {                                   // explicit wrap width set by the e handle
+      el.style.maxWidth = b.w + 'px';
+      s.whiteSpace = 'pre-wrap'; s.textAlignLast = '';
+    } else if (b.nowrap) {                              // imported: keep exact source lines
+      el.style.maxWidth = 'none';
+      s.whiteSpace = 'pre'; s.textAlignLast = '';
+    } else {                                            // typed text: soft cap so it doesn't run forever
+      el.style.maxWidth = '600px';
+      s.whiteSpace = 'pre-wrap'; s.textAlignLast = '';
+    }
     if (b.orient === 'v') { s.writingMode = 'vertical-rl'; s.textOrientation = 'mixed'; }
     else { s.writingMode = ''; s.textOrientation = ''; }
   }
