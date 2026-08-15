@@ -412,7 +412,11 @@
       `<div class="text-content"></div>` +
       `<div class="block-actions"><button class="blk-btn" data-blk="edit" title="Edit text">${ic('pencil')}</button></div>` +
       `<div class="tnode-rotate" title="Rotate"></div>` +
-      `<div class="tnode-resize" title="Resize"></div>`;
+      `<div class="tnode-edge e" data-edge="e" title="Resize box"></div>` +
+      `<div class="tnode-edge w" data-edge="w" title="Resize box"></div>` +
+      `<div class="tnode-edge n" data-edge="n" title="Resize box"></div>` +
+      `<div class="tnode-edge s" data-edge="s" title="Resize box"></div>` +
+      `<div class="tnode-resize" title="Resize text size"></div>`;
     // Set styles via DOM props — the font stacks contain double quotes, which
     // would break a string-interpolated style="..." attribute.
     const tc = el.querySelector('.text-content');
@@ -424,15 +428,15 @@
     s.fontStyle = b.italic ? 'italic' : 'normal';
     s.textAlign = b.align || 'left';
     s.color = b.color ? b.color : 'var(--text)';
-    // Justify only distributes words when the box has a real width and lines can
-    // reflow — give it a fixed width and reflow whitespace; otherwise size to content.
-    if (b.align === 'justify') {
-      el.style.width = (b.w ? b.w : 320) + 'px';
-      s.width = '100%'; s.whiteSpace = 'pre-line'; s.textAlignLast = 'left';
-    } else {
-      el.style.width = b.w ? (b.w + 'px') : '';
-      s.width = ''; s.whiteSpace = ''; s.textAlignLast = '';
-    }
+    // Box sizing: an explicit width (from side handles) makes text wrap/reflow to
+    // fit; justify also needs a real width. Height (from top/bottom handles) sets a
+    // min box height. The bottom-right corner handle scales font size instead.
+    if (b.w) { el.style.width = b.w + 'px'; el.style.maxWidth = 'none'; s.width = '100%'; }
+    else if (b.align === 'justify') { el.style.width = '320px'; el.style.maxWidth = 'none'; s.width = '100%'; }
+    else { el.style.width = ''; el.style.maxWidth = ''; s.width = ''; }
+    el.style.minHeight = b.h ? (b.h + 'px') : '';
+    if (b.align === 'justify') { s.whiteSpace = 'pre-line'; s.textAlignLast = 'left'; }
+    else { s.whiteSpace = ''; s.textAlignLast = ''; }
     if (b.orient === 'v') { s.writingMode = 'vertical-rl'; s.textOrientation = 'mixed'; }
     else { s.writingMode = ''; s.textOrientation = ''; }
   }
@@ -1838,17 +1842,22 @@
     const blockEl = e.target.closest('.block');
     if (blockEl) {
       const id = blockEl.dataset.id;
-      // rotate / resize handle → start a gizmo gesture (not a move)
-      const handle = e.target.closest('.tnode-rotate, .tnode-resize');
+      // rotate / resize / edge handle → start a gizmo gesture (not a move)
+      const edge = e.target.closest('.tnode-edge');
+      const handle = edge || e.target.closest('.tnode-rotate, .tnode-resize');
       if (handle) {
         const b = state.blocks.find(x => x.id === id);
         if (b && b.locked) { selectBlock(id); return; }   // locked: no resize/rotate
         selectBlock(id);
         const rect = blockEl.getBoundingClientRect();
+        const s = state.view.scale || 1;
         gizmo = {
-          id, mode: handle.classList.contains('tnode-rotate') ? 'rotate' : 'resize',
+          id, mode: edge ? 'box' : (handle.classList.contains('tnode-rotate') ? 'rotate' : 'resize'),
+          edge: edge ? edge.dataset.edge : null,
           startX: e.clientX, startY: e.clientY,
-          startSize: b.size || 22, startW: b.w || 150, startH: b.h || 100, startRot: b.rot || 0,
+          startSize: b.size || 22, startRot: b.rot || 0,
+          startW: b.w || Math.round(rect.width / s), startH: b.h || Math.round(rect.height / s),
+          startBX: b.x, startBY: b.y,
           cx: rect.left + rect.width / 2, cy: rect.top + rect.height / 2,
           isText: b.kind === 'text', isImage: b.kind === 'image', before: { ...b },
         };
@@ -1914,6 +1923,17 @@
     if (gizmo) {
       const b = state.blocks.find(x => x.id === gizmo.id); if (!b) return;
       const s = state.view.scale || 1;
+      if (gizmo.mode === 'box') {
+        const dxw = (e.clientX - gizmo.startX) / s, dyw = (e.clientY - gizmo.startY) / s;
+        if (gizmo.edge === 'e') b.w = clamp(Math.round(gizmo.startW + dxw), 40, 2000);
+        else if (gizmo.edge === 'w') { const nw = clamp(Math.round(gizmo.startW - dxw), 40, 2000); b.x = gizmo.startBX + (gizmo.startW - nw); b.w = nw; }
+        else if (gizmo.edge === 's') b.h = clamp(Math.round(gizmo.startH + dyw), 24, 2000);
+        else if (gizmo.edge === 'n') { const nh = clamp(Math.round(gizmo.startH - dyw), 24, 2000); b.y = gizmo.startBY + (gizmo.startH - nh); b.h = nh; }
+        const el = state.els[b.id]; if (el) { el.style.left = b.x + 'px'; el.style.top = b.y + 'px'; }
+        refreshBlockCard(b.id);
+        drawEdges();
+        return;
+      }
       if (gizmo.mode === 'resize') {
         if (gizmo.isText) {
           const d = ((e.clientX - gizmo.startX) + (e.clientY - gizmo.startY)) / 2 / s;

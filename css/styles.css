@@ -437,8 +437,15 @@ input, textarea { font-size: 15px; }
 .tnode-rotate { top: -26px; left: 50%; transform: translateX(-50%); cursor: grab; }
 .tnode-rotate::before { content: ""; position: absolute; left: 50%; top: 12px; width: 1.5px; height: 12px; background: var(--accent); transform: translateX(-50%); }
 .tnode-resize { right: -8px; bottom: -8px; border-radius: 4px; cursor: nwse-resize; }
+/* box-resize edge handles (text nodes) — pill-shaped, on each side */
+.tnode-edge { position: absolute; background: var(--accent); border: 2px solid var(--panel); box-shadow: var(--shadow); opacity: 0; transition: opacity .12s; z-index: 3; border-radius: 999px; }
+.tnode-edge.e { right: -6px; top: 50%; transform: translateY(-50%); width: 8px; height: 22px; cursor: ew-resize; }
+.tnode-edge.w { left: -6px; top: 50%; transform: translateY(-50%); width: 8px; height: 22px; cursor: ew-resize; }
+.tnode-edge.n { top: -6px; left: 50%; transform: translateX(-50%); width: 22px; height: 8px; cursor: ns-resize; }
+.tnode-edge.s { bottom: -6px; left: 50%; transform: translateX(-50%); width: 22px; height: 8px; cursor: ns-resize; }
 .block.block-text:hover .tnode-rotate, .block.block-text.selected .tnode-rotate,
-.block.block-text:hover .tnode-resize, .block.block-text.selected .tnode-resize { opacity: 1; }
+.block.block-text:hover .tnode-resize, .block.block-text.selected .tnode-resize,
+.block.block-text:hover .tnode-edge, .block.block-text.selected .tnode-edge { opacity: 1; }
 .block.block-shape:hover .tnode-resize, .block.block-shape.selected .tnode-resize,
 .block.block-shape:hover .tnode-rotate, .block.block-shape.selected .tnode-rotate { opacity: 1; }
 
