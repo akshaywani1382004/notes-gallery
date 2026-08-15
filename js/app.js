@@ -449,7 +449,8 @@
     const d = pts.map((p, i) => `${(p[0] + pad).toFixed(1)},${(p[1] + pad).toFixed(1)}`).join(' ');
     el.innerHTML =
       `<svg class="ink-svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">` +
-      `<polyline points="${d}" fill="none" stroke="${esc(b.color || penColor)}" stroke-width="${b.width || 3}" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      `<polyline points="${d}" fill="none" stroke="${esc(b.color || penColor)}" stroke-width="${b.width || 3}" stroke-linecap="round" stroke-linejoin="round"/></svg>` +
+      `<div class="block-actions"><button class="blk-btn" data-blk="edit" title="Edit ink">${ic('pencil')}</button></div>`;
   }
 
   // Update whichever representation (canvas card or list row) exists for a block.
@@ -1130,7 +1131,7 @@
   const saveState = $('#save-state');
   let saveTimer = null;
   // superset covering both the block editor and the text editor
-  const EDIT_FIELDS = ['title', 'description', 'notes', 'tags', 'color', 'layout', 'text', 'font', 'size', 'bold', 'italic', 'align', 'orient', 'rot', 'glow', 'glowColor', 'shape', 'w', 'h', 'fill', 'outline', 'outlineW', 'outlineColor', 'src', 'round'];
+  const EDIT_FIELDS = ['title', 'description', 'notes', 'tags', 'color', 'layout', 'text', 'font', 'size', 'bold', 'italic', 'align', 'orient', 'rot', 'glow', 'glowColor', 'shape', 'w', 'h', 'fill', 'outline', 'outlineW', 'outlineColor', 'src', 'round', 'width'];
 
   function snapshotFields(b) {
     const o = { id: b.id };
@@ -1143,6 +1144,7 @@
     if (b && b.kind === 'text') openTextEditor(id);
     else if (b && b.kind === 'shape') openShapeEditor(id);
     else if (b && b.kind === 'image') openImageEditor(id);
+    else if (b && b.kind === 'ink') openInkEditor(id);
     else openEditor(id);
   }
 
@@ -1154,7 +1156,8 @@
       (drawerBlock && drawerBlock.id === base.id ? drawerBlock : null) ||
       (textBlock && textBlock.id === base.id ? textBlock : null) ||
       (shapeBlock && shapeBlock.id === base.id ? shapeBlock : null) ||
-      (imageBlock && imageBlock.id === base.id ? imageBlock : null);
+      (imageBlock && imageBlock.id === base.id ? imageBlock : null) ||
+      (inkBlock && inkBlock.id === base.id ? inkBlock : null);
     if (!cur) return;
     if (!EDIT_FIELDS.some(f => (cur[f] ?? '') !== (base[f] ?? ''))) return;
     const before = { ...cur };
@@ -1524,6 +1527,59 @@
         await createImageBlock(file);
       }
     });
+  }
+
+  /* ---------------------------- ink editor ----------------------------- */
+  let inkBlock = null, inkSaveTimer = null;
+  function renderKSwatches(active) {
+    const wrap = $('#k-swatches'); wrap.innerHTML = '';
+    PALETTE.concat(['#ffffff', '#0a0b0d']).forEach(col => {
+      const s = document.createElement('div');
+      s.className = 'swatch' + ((active || PALETTE[0]) === col ? ' active' : '');
+      s.style.background = col;
+      s.addEventListener('click', () => { if (!inkBlock) return; inkBlock.color = col; renderKSwatches(col); refreshItem(inkBlock.id); queueInkSave(); });
+      wrap.appendChild(s);
+    });
+  }
+  function queueInkSave() {
+    if (!inkBlock) return;
+    $('#ink-save').textContent = 'Saving…';
+    clearTimeout(inkSaveTimer);
+    inkSaveTimer = setTimeout(async () => {
+      if (!inkBlock) return;
+      await persistBlock(inkBlock); refreshItem(inkBlock.id);
+      $('#ink-save').textContent = 'Saved';
+      setTimeout(() => { if ($('#ink-save').textContent === 'Saved') $('#ink-save').textContent = ''; }, 1500);
+      markChanged();
+    }, 300);
+  }
+  function openInkEditor(id) {
+    flushEdit();
+    const b = state.blocks.find(x => x.id === id);
+    if (!b) return;
+    selectBlock(id);
+    $('#drawer').hidden = true; drawerBlock = null;
+    $('#text-drawer').hidden = true; textBlock = null;
+    $('#shape-drawer').hidden = true; shapeBlock = null;
+    $('#image-drawer').hidden = true; imageBlock = null;
+    inkBlock = b;
+    editBaseline = snapshotFields(b);
+    renderKSwatches(b.color);
+    $('#k-width').value = b.width || 3; $('#k-width-val').textContent = (b.width || 3) + 'px';
+    $('#ink-drawer').hidden = false;
+    $('#ink-save').textContent = '';
+  }
+  function closeInkEditor() {
+    if ($('#ink-drawer').hidden && !inkBlock) return;
+    flushEdit();
+    $('#ink-drawer').hidden = true;
+    inkBlock = null;
+  }
+  function bindInkEditor() {
+    $('#k-width').addEventListener('input', (e) => { if (!inkBlock) return; inkBlock.width = parseInt(e.target.value, 10) || 3; $('#k-width-val').textContent = inkBlock.width + 'px'; refreshItem(inkBlock.id); queueInkSave(); });
+    $('#ink-close').addEventListener('click', closeInkEditor);
+    $('#k-done').addEventListener('click', closeInkEditor);
+    $('#k-delete').addEventListener('click', () => { if (inkBlock) deleteBlock(inkBlock.id); });
   }
 
   /* ---------------------------- files ---------------------------------- */
@@ -1906,6 +1962,7 @@
     if (!$('#text-drawer').hidden) closeTextEditor();
     if (!$('#shape-drawer').hidden) closeShapeEditor();
     if (!$('#image-drawer').hidden) closeImageEditor();
+    if (!$('#ink-drawer').hidden) closeInkEditor();
     hideSearchResults();
     $('#menu').hidden = true;
   }
@@ -2096,7 +2153,7 @@
       if (b && b.kind === 'text') openTextEditor(b.id);
       else if (b && b.kind === 'shape') openShapeEditor(b.id);
       else if (b && b.kind === 'image') openImageEditor(b.id);
-      else if (b && b.kind === 'ink') { /* ink has no editor */ }
+      else if (b && b.kind === 'ink') openInkEditor(b.id);
       else navigateTo(blockEl.dataset.id);
       return;
     }
@@ -2403,6 +2460,7 @@
 
     const hits = [];
     for (const b of blocks) {
+      if (b.kind === 'shape' || b.kind === 'image' || b.kind === 'ink') continue;   // purely visual — nothing to match
       const inTitle = (b.title || '').toLowerCase().includes(ql);
       const inDesc  = (b.description || '').toLowerCase().includes(ql);
       const inNotes = (b.notes || '').toLowerCase().includes(ql);
@@ -3123,6 +3181,16 @@
       ? esc(rec.handle.name) + ' <span class="muted">(folder hidden by the browser)</span>'
       : '<span class="muted">Stored in this browser — no linked file</span>';
     const created = w && w.createdAt ? new Date(w.createdAt).toLocaleString() : '—';
+    let storage = 'not reported by this browser';
+    try {
+      if (navigator.storage && navigator.storage.estimate) {
+        const est = await navigator.storage.estimate();
+        if (est && est.usage != null) {
+          const pct = est.quota ? ` of ${humanSize(est.quota)} (${Math.round(est.usage / est.quota * 100)}%)` : '';
+          storage = `${humanSize(est.usage)} used${pct}`;
+        }
+      }
+    } catch (_) {}
     p.innerHTML = `
       <dl class="about-props">
         <div><dt>Name</dt><dd>${esc((w && w.name) || 'Untitled')}</dd></div>
@@ -3130,6 +3198,7 @@
         <div><dt>Blocks</dt><dd>${blocks.length}</dd></div>
         <div><dt>Created</dt><dd>${esc(created)}</dd></div>
         <div><dt>File</dt><dd>${loc}</dd></div>
+        <div><dt>Storage</dt><dd>${esc(storage)} <span class="muted">— all workspaces in this browser</span></dd></div>
       </dl>`;
   }
   async function openAbout(tab) {
@@ -3167,6 +3236,7 @@
         else if (!$('#text-drawer').hidden) closeTextEditor();
         else if (!$('#shape-drawer').hidden) closeShapeEditor();
         else if (!$('#image-drawer').hidden) closeImageEditor();
+        else if (!$('#ink-drawer').hidden) closeInkEditor();
         else if (!$('#drawer').hidden) closeDrawer();
         else if (state.selectedIds.size) clearSelection();
         else hideSearchResults();
@@ -3345,7 +3415,7 @@
     bindToolbar(); bindStage(); bindDrawerFields(); bindFileInputs();
     bindSearch(); bindMenu(); bindConfirm(); bindKeys();
     bindAddMenu(); bindListView(); bindHome(); bindPrompt(); bindBrandMenu(); bindAutosave(); bindProps(); bindAbout(); bindContextMenu();
-    bindTextEditor(); bindShapeEditor(); bindImageEditor(); bindImagePaste(); bindCmdk(); bindMinimap();
+    bindTextEditor(); bindShapeEditor(); bindImageEditor(); bindInkEditor(); bindImagePaste(); bindCmdk(); bindMinimap();
     try {
       await DB.open();
     } catch (err) {
