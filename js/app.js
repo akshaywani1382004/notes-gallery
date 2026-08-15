@@ -118,6 +118,10 @@
   ];
   const BLOCK_W = 210;
   const BLOCK_H_GUESS = 130;
+  const GRID = 26;   // world-units grid step (matches the dot grid)
+  let snapOn = false;
+  try { snapOn = localStorage.getItem('ng-snap') === '1'; } catch (_) {}
+  const snapVal = (v) => snapOn ? Math.round(v / GRID) * GRID : Math.round(v);
 
   /* ---------------------------- app state ------------------------------ */
   const state = {
@@ -813,6 +817,39 @@
   const bringForward = (ids) => stepZ(ids, true);
   const sendBackward = (ids) => stepZ(ids, false);
 
+  /* ---------------------------- arrow-key nudge ------------------------ */
+  let nudge = null;   // { before:Map<id,{x,y}>, timer }
+  function nudgeSelection(dx, dy) {
+    const ids = [...state.selectedIds];
+    if (!ids.length) return;
+    if (!nudge) {
+      const before = new Map();
+      ids.forEach(id => { const b = state.blocks.find(x => x.id === id); if (b) before.set(id, { x: b.x, y: b.y }); });
+      nudge = { before, timer: null };
+    }
+    for (const id of ids) {
+      const b = state.blocks.find(x => x.id === id); if (!b) continue;
+      b.x += dx; b.y += dy;
+      const el = state.els[id]; if (el) { el.style.left = b.x + 'px'; el.style.top = b.y + 'px'; }
+    }
+    drawEdges();
+    clearTimeout(nudge.timer);
+    nudge.timer = setTimeout(commitNudge, 450);
+  }
+  async function commitNudge() {
+    if (!nudge) return;
+    const before = { blocks: [], edges: [], files: [] }, after = { blocks: [], edges: [], files: [] };
+    for (const [id, pos] of nudge.before) {
+      const b = state.blocks.find(x => x.id === id); if (!b) continue;
+      if (b.x === pos.x && b.y === pos.y) continue;
+      before.blocks.push({ ...b, x: pos.x, y: pos.y });
+      after.blocks.push({ ...b });
+      await persistBlock(b);
+    }
+    nudge = null;
+    if (after.blocks.length) recordChange(before, after);
+  }
+
   function deleteBlock(id) {
     const b = state.blocks.find(x => x.id === id);
     if (!b) return;
@@ -921,9 +958,41 @@
     toast(`Cut ${ids.length} block${ids.length > 1 ? 's' : ''}`);
   }
 
+  // Gather a deep snapshot of the given top-level ids (blocks+descendants+edges+files).
+  async function gatherSnapshot(ids) {
+    const blocks = [], edges = [], files = [], seen = new Set();
+    async function gather(id) {
+      if (seen.has(id)) return;
+      seen.add(id);
+      const b = await DB.getBlock(id); if (!b) return;
+      blocks.push(b);
+      const [kids, fs, es] = await Promise.all([DB.childBlocks(id), DB.blockFiles(id), DB.levelEdges(id)]);
+      files.push(...fs); edges.push(...es);
+      for (const k of kids) await gather(k.id);
+    }
+    for (const id of ids) await gather(id);
+    const sel = new Set(ids);
+    const sibEdges = (await DB.levelEdges(state.level)).filter(e => sel.has(e.from) && sel.has(e.to));
+    edges.push(...sibEdges);
+    return { roots: ids.slice(), blocks, edges, files };
+  }
+
   async function pasteClipboard() {
     if (!clipboard) return;
-    const { roots, blocks, edges, files } = clipboard;
+    await pasteSnapshot(clipboard, 'Pasted');
+  }
+
+  // Duplicate the current selection in place (offset), without touching clipboard.
+  async function duplicateSelection() {
+    if (drawerBlock) await persistBlock(drawerBlock);
+    const ids = [...state.selectedIds];
+    if (!ids.length) return;
+    const snap = await gatherSnapshot(ids);
+    await pasteSnapshot(snap, 'Duplicated');
+  }
+
+  async function pasteSnapshot(snap, verb) {
+    const { roots, blocks, edges, files } = snap;
     const idMap = new Map();
     blocks.forEach(b => idMap.set(b.id, uid()));   // fresh id for every copied block
     const rootSet = new Set(roots);
@@ -958,7 +1027,7 @@
     const newRoots = roots.map(r => idMap.get(r));
     await loadLevel(state.level);
     setSelection(newRoots);
-    toast(`Pasted ${roots.length} block${roots.length > 1 ? 's' : ''}`);
+    toast(`${verb || 'Pasted'} ${roots.length} block${roots.length > 1 ? 's' : ''}`);
   }
 
   let drawerBlock = null;
@@ -1570,7 +1639,7 @@
       const s = state.view.scale;
       for (const bid of dragging.ids) {
         const st = dragging.starts[bid]; if (!st) continue;
-        const nx = Math.round(st.x + dx / s), ny = Math.round(st.y + dy / s);
+        const nx = snapVal(st.x + dx / s), ny = snapVal(st.y + dy / s);
         const bb = state.blocks.find(x => x.id === bid); if (!bb) continue;
         bb.x = nx; bb.y = ny;
         const el = state.els[bid]; if (el) { el.style.left = nx + 'px'; el.style.top = ny + 'px'; }
@@ -2499,6 +2568,8 @@
     setTheme(t);
   }
 
+  function updateSnapLabel() { const el = $('#snap-state'); if (el) el.textContent = snapOn ? '· on' : '· off'; }
+
   /* ---------------------------- menu ----------------------------------- */
   function bindMenu() {
     const menu = $('#menu');
@@ -2510,9 +2581,12 @@
       if (act === 'export') exportWorkspaceFlow(state.ws);
       if (act === 'properties') openProperties(state.ws);
       if (act === 'add-child') createBlock('block');
+      if (act === 'snap') { snapOn = !snapOn; try { localStorage.setItem('ng-snap', snapOn ? '1' : '0'); } catch (_) {} updateSnapLabel(); toast(snapOn ? 'Snap to grid on' : 'Snap to grid off'); }
+      if (act === 'properties') openProperties(state.ws);
       if (act === 'about') openAbout('about');
       if (act === 'help') openAbout('help');
     });
+    updateSnapLabel();
     $('#import-input').addEventListener('change', (e) => { if (e.target.files[0]) importWorkspaceFile(e.target.files[0]); e.target.value = ''; });
     document.addEventListener('click', (e) => {
       if (!menu.hidden && !menu.contains(e.target) && e.target.id !== 'btn-menu') menu.hidden = true;
@@ -2595,8 +2669,20 @@
       if ((e.key === 'v' || e.key === 'V') && (e.ctrlKey || e.metaKey)) {
         if (clipboard) { e.preventDefault(); pasteClipboard(); } return;
       }
+      if ((e.key === 'd' || e.key === 'D') && (e.ctrlKey || e.metaKey)) {
+        if (state.selectedIds.size && state.levelLayout === 'canvas') { e.preventDefault(); duplicateSelection(); } return;
+      }
       if (e.key === ']' && (e.ctrlKey || e.metaKey)) { if (state.selectedIds.size) { e.preventDefault(); (e.shiftKey ? bringToFront : bringForward)([...state.selectedIds]); } return; }
       if (e.key === '[' && (e.ctrlKey || e.metaKey)) { if (state.selectedIds.size) { e.preventDefault(); (e.shiftKey ? sendToBack : sendBackward)([...state.selectedIds]); } return; }
+      // arrow-key nudge (canvas only)
+      if (/^Arrow/.test(e.key) && state.selectedIds.size && state.levelLayout === 'canvas') {
+        e.preventDefault();
+        const step = (e.shiftKey ? 10 : 1);
+        const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+        const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+        nudgeSelection(dx, dy);
+        return;
+      }
       if (e.key === 'n' || e.key === 'N') { e.preventDefault(); createBlock('block'); }
       if (e.key === 'l' || e.key === 'L') setLinkMode(!state.linkMode);
       if (e.key === 'f' || e.key === 'F') fitToView();
@@ -2715,8 +2801,17 @@
     });
   }
 
+  // Register the service worker (offline / installable). Secure contexts only.
+  function registerSW() {
+    if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW register failed:', e));
+    });
+  }
+
   async function init() {
     hydrateIcons();
+    registerSW();
     initTheme();
     document.getElementById('app').classList.add('home-mode');   // avoid canvas flash before landing loads
     $('#stage').hidden = true;
