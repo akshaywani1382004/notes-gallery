@@ -647,7 +647,11 @@
       for (const it of items) { if (it.kind === 'file' && /^image\//.test(it.type)) { const f = it.getAsFile(); if (f) imgs.push(f); } }
       if (!imgs.length) return;               // no image on the clipboard → let block-paste handle it
       e.preventDefault();
-      const c = centerOfView();
+      // drop at the cursor if it's over the canvas, else at the view centre
+      const r = stage.getBoundingClientRect();
+      const p = lastPointer;
+      const overStage = p && p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom;
+      const c = overStage ? screenToWorld(p.x - r.left, p.y - r.top) : centerOfView();
       let i = 0;
       for (const f of imgs) { await createImageBlock(f, { at: { x: c.x + i * 24, y: c.y + i * 24 }, openAfter: false }); i++; }
       toast(imgs.length > 1 ? `${imgs.length} images pasted` : 'Image pasted');
@@ -1399,6 +1403,7 @@
   let marquee = null;                  // rubber-band: {r, sx, sy, base}
   let lpTimer = null, lpFired = false, lpX = 0, lpY = 0;   // long-press (touch → context menu)
   let gizmo = null;                    // rotate/resize handle drag {id, mode, ...}
+  let lastPointer = null;              // last pointer position (screen coords) for paste-at-cursor
 
   function onPointerDown(e) {
     if (state.levelLayout === 'list') return;   // list view handles its own clicks/scroll
@@ -1471,6 +1476,7 @@
   }
 
   function onPointerMove(e) {
+    lastPointer = { x: e.clientX, y: e.clientY };   // for paste-at-cursor
     if (lpTimer && (Math.abs(e.clientX - lpX) + Math.abs(e.clientY - lpY) > 8)) { clearTimeout(lpTimer); lpTimer = null; }
     if (marquee) {
       if (!marquee.moved && (Math.abs(e.clientX - marquee.sx) + Math.abs(e.clientY - marquee.sy) > 4)) {
