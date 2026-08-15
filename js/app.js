@@ -707,14 +707,14 @@
     pendingTextAt = at || centerOfView();
     $('#txt-input').click();
   }
-  async function createTextFromFile(file) {
+  async function createTextFromFile(file, opts = {}) {
     let content = '';
     try { content = await file.text(); } catch (_) { toast('Could not read that file.'); return; }
     content = content.replace(/\r\n/g, '\n');
     if (!content.trim()) { toast('That file is empty.'); return; }
     const MAX = 20000;
-    if (content.length > MAX) { content = content.slice(0, MAX) + '\n…(truncated)'; toast('Large file — imported the first part.'); }
-    const pos = pendingTextAt || centerOfView();
+    if (content.length > MAX) { content = content.slice(0, MAX) + '\n…(truncated)'; if (!opts.silent) toast('Large file — imported the first part.'); }
+    const pos = opts.at || pendingTextAt || centerOfView();
     const now = Date.now();
     const b = {
       id: uid(), ws: state.ws, parentId: state.level, kind: 'text',
@@ -782,18 +782,81 @@
   }
 
   // Drop image files onto the canvas (from the OS or another app).
-  async function dropImageFiles(fileList, clientX, clientY) {
-    const imgs = Array.from(fileList).filter(f => /^image\//.test(f.type));
-    if (!imgs.length) return;
-    if (state.ws == null || state.levelLayout !== 'canvas') { toast('Open a canvas to drop images.'); return; }
+  const isTextFile = (f) => /^text\/(plain|markdown)$/.test(f.type) || /\.(txt|md|markdown)$/i.test(f.name);
+  const isCsvFile = (f) => f.type === 'text/csv' || /\.csv$/i.test(f.name);
+  // Drop files onto the canvas: images→image nodes, .txt/.md→text, .csv→list.
+  async function dropFiles(fileList, clientX, clientY) {
+    const files = Array.from(fileList);
+    if (state.ws == null || state.levelLayout !== 'canvas') { toast('Open a canvas to drop files.'); return; }
     const r = stage.getBoundingClientRect();
     const base = screenToWorld(clientX - r.left, clientY - r.top);
-    let i = 0;
-    for (const f of imgs) {
-      await createImageBlock(f, { at: { x: base.x + i * 24, y: base.y + i * 24 }, openAfter: false });
-      i++;
+    let i = 0, n = 0;
+    for (const f of files) {
+      const at = { x: base.x + i * 28, y: base.y + i * 28 };
+      if (/^image\//.test(f.type)) { await createImageBlock(f, { at, openAfter: false }); n++; i++; }
+      else if (isCsvFile(f)) { await createListFromCsv(f, at); n++; i++; }
+      else if (isTextFile(f)) { await createTextFromFile(f, { at, silent: true }); n++; i++; }
     }
-    toast(imgs.length > 1 ? `${imgs.length} images added` : 'Image added');
+    if (!n) toast('Drop images, .txt/.md, or .csv files.');
+    else if (n > 1) toast(`${n} files imported`);
+  }
+
+  // Parse CSV → a List block whose rows are child blocks.
+  function parseCsv(text) {
+    const rows = [];
+    let row = [], cur = '', q = false;
+    const s = text.replace(/\r\n/g, '\n');
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (q) {
+        if (c === '"') { if (s[i + 1] === '"') { cur += '"'; i++; } else q = false; }
+        else cur += c;
+      } else if (c === '"') q = true;
+      else if (c === ',') { row.push(cur); cur = ''; }
+      else if (c === '\n') { row.push(cur); rows.push(row); row = []; cur = ''; }
+      else cur += c;
+    }
+    if (cur.length || row.length) { row.push(cur); rows.push(row); }
+    return rows.filter(r => r.some(c => c.trim() !== ''));
+  }
+  async function createListFromCsv(file, at) {
+    let text = '';
+    try { text = await file.text(); } catch (_) { toast('Could not read that file.'); return; }
+    const rows = parseCsv(text);
+    if (!rows.length) { toast('That CSV looks empty.'); return; }
+    const name = file.name.replace(/\.csv$/i, '') || 'Imported CSV';
+    const pos = at || centerOfView();
+    const now = Date.now();
+    const listId = uid();
+    const made = [];
+    const list = {
+      id: listId, ws: state.ws, parentId: state.level, title: name, layout: 'list',
+      description: '', notes: '', tags: '', color: PALETTE[state.blocks.length % PALETTE.length], icon: '',
+      x: Math.round(pos.x - BLOCK_W / 2), y: Math.round(pos.y - 30), z: 0, createdAt: now, updatedAt: now,
+    };
+    await DB.saveBlock(list); made.push(list);
+    let ri = 0;
+    for (const cells of rows.slice(0, 500)) {
+      ri++;
+      const title = (cells[0] || '').trim() || `Row ${ri}`;
+      const rest = cells.slice(1).map(c => c.trim()).filter(Boolean).join(' · ');
+      made.push(await (async () => {
+        const c = {
+          id: uid(), ws: state.ws, parentId: listId, title, description: rest, layout: 'canvas',
+          notes: '', tags: '', color: PALETTE[ri % PALETTE.length], icon: '',
+          x: 0, y: 0, z: 0, createdAt: now + ri, updatedAt: now + ri,
+        };
+        await DB.saveBlock(c); return c;
+      })());
+    }
+    state.blocks.push(list);
+    state.childCounts[listId] = { blocks: made.length - 1, files: 0 };
+    state.childPeek[listId] = made.slice(1, 5).map(k => ({ title: k.title, color: k.color }));
+    world.appendChild(makeBlockEl(list));
+    $('#empty-hint').hidden = true;
+    recordChange(emptySet(), { blocks: made, edges: [], files: [] });
+    selectBlock(listId);
+    toast(`Imported ${made.length - 1} rows as a list`);
   }
 
   /* ---------------------------- undo / redo ---------------------------- */
@@ -1705,7 +1768,8 @@
     $('#txt-input').addEventListener('change', (e) => {
       const f = e.target.files && e.target.files[0];
       e.target.value = '';
-      if (f) createTextFromFile(f);
+      if (!f) return;
+      if (isCsvFile(f)) createListFromCsv(f, pendingTextAt); else createTextFromFile(f);
     });
     const dz = $('#dropzone');
     ['dragenter','dragover'].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('over'); }));
@@ -3431,7 +3495,7 @@
     stage.addEventListener('dragleave', (e) => { if (e.target === stage) stage.classList.remove('drop-active'); });
     stage.addEventListener('drop', (e) => {
       const files = e.dataTransfer && e.dataTransfer.files;
-      if (files && files.length) { e.preventDefault(); stage.classList.remove('drop-active'); dropImageFiles(files, e.clientX, e.clientY); }
+      if (files && files.length) { e.preventDefault(); stage.classList.remove('drop-active'); dropFiles(files, e.clientX, e.clientY); }
     });
     window.addEventListener('beforeunload', (e) => {
       objectUrls.forEach(u => URL.revokeObjectURL(u));
