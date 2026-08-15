@@ -412,6 +412,7 @@
       `<div class="text-content"></div>` +
       `<div class="block-actions"><button class="blk-btn" data-blk="edit" title="Edit text">${ic('pencil')}</button></div>` +
       `<div class="tnode-rotate" title="Rotate"></div>` +
+      `<div class="tnode-edge e" data-edge="e" title="Wrap width"></div>` +
       `<div class="tnode-resize" title="Resize text size"></div>`;
     // Set styles via DOM props — the font stacks contain double quotes, which
     // would break a string-interpolated style="..." attribute.
@@ -428,11 +429,18 @@
     // Enter was pressed — no soft wrapping), height = the number of lines. So the
     // bottom-right corner scales the font and the whole box grows/shrinks in BOTH
     // dimensions. (Justify is the exception — it needs a fixed width to distribute.)
+    // Box hugs content. With no wrap width it hugs the widest line (breaks only on
+    // Enter). The right handle sets a wrap width `b.w`; the box then wraps within it
+    // (and still hugs when the text is narrower). Corner-scaling scales b.w by the
+    // same ratio, so resizing keeps the same proportions.
     el.style.height = ''; el.style.minHeight = '';
     el.style.width = 'fit-content'; s.width = 'auto';
     if (b.align === 'justify') {
       el.style.width = (b.w || 320) + 'px'; el.style.maxWidth = 'none'; s.width = '100%';
       s.whiteSpace = 'pre-line'; s.textAlignLast = 'left';
+    } else if (b.w) {
+      el.style.maxWidth = b.w + 'px';
+      s.whiteSpace = 'pre-wrap'; s.textAlignLast = '';
     } else {
       el.style.maxWidth = 'none';
       s.whiteSpace = 'pre'; s.textAlignLast = '';
@@ -1857,6 +1865,7 @@
           startX: e.clientX, startY: e.clientY,
           startSize: b.size || 22, startRot: b.rot || 0,
           startW: b.w || Math.round(rect.width / s), startH: b.h || Math.round(rect.height / s),
+          startWrapW: b.w || null,
           startBX: b.x, startBY: b.y,
           cx: rect.left + rect.width / 2, cy: rect.top + rect.height / 2,
           isText: b.kind === 'text', isImage: b.kind === 'image', before: { ...b },
@@ -1938,6 +1947,8 @@
         if (gizmo.isText) {
           const d = ((e.clientX - gizmo.startX) + (e.clientY - gizmo.startY)) / 2 / s;
           b.size = clamp(Math.round(gizmo.startSize + d * 0.7), 8, 240);
+          // scale the wrap width by the same ratio so proportions stay constant
+          if (gizmo.startWrapW) b.w = Math.max(40, Math.round(gizmo.startWrapW * (b.size / (gizmo.startSize || 1))));
           if (textBlock && textBlock.id === b.id) { $('#t-size').value = b.size; $('#t-size-val').textContent = b.size + 'px'; }
         } else if (gizmo.isImage) {
           const ratio = gizmo.startH / (gizmo.startW || 1);
