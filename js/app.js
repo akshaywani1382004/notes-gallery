@@ -699,6 +699,39 @@
     replaceImageId = null;
     $('#image-input').click();
   }
+
+  /* ---- import a text file → a text node ------------------------------- */
+  let pendingTextAt = null;
+  function pickTextFile(at) {
+    if (state.levelLayout !== 'canvas') { toast('Open a canvas to import a text file here.'); return; }
+    pendingTextAt = at || centerOfView();
+    $('#txt-input').click();
+  }
+  async function createTextFromFile(file) {
+    let content = '';
+    try { content = await file.text(); } catch (_) { toast('Could not read that file.'); return; }
+    content = content.replace(/\r\n/g, '\n');
+    if (!content.trim()) { toast('That file is empty.'); return; }
+    const MAX = 20000;
+    if (content.length > MAX) { content = content.slice(0, MAX) + '\n…(truncated)'; toast('Large file — imported the first part.'); }
+    const pos = pendingTextAt || centerOfView();
+    const now = Date.now();
+    const b = {
+      id: uid(), ws: state.ws, parentId: state.level, kind: 'text',
+      text: content, font: 'sans', size: 16, bold: false, italic: false, align: 'left',
+      orient: 'h', rot: 0, glow: false, glowColor: '', color: '',
+      title: '', description: '', notes: '', tags: '', layout: 'canvas', icon: '',
+      x: Math.round(pos.x - 150), y: Math.round(pos.y - 20), z: 0, createdAt: now, updatedAt: now,
+    };
+    await DB.saveBlock(b);
+    state.blocks.push(b);
+    state.childCounts[b.id] = { blocks: 0, files: 0 };
+    world.appendChild(makeBlockEl(b));
+    $('#empty-hint').hidden = true;
+    recordChange(emptySet(), { blocks: [b], edges: [], files: [] });
+    selectBlock(b.id);
+    toast('Text file imported');
+  }
   async function createImageBlock(file, opts = {}) {
     if (!file || !/^image\//.test(file.type)) { toast('That file is not an image.'); return null; }
     const src = await readAsDataUrl(file);
@@ -1669,6 +1702,11 @@
       addFiles(e.target.files);
       e.target.value = '';
     });
+    $('#txt-input').addEventListener('change', (e) => {
+      const f = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (f) createTextFromFile(f);
+    });
     const dz = $('#dropzone');
     ['dragenter','dragover'].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('over'); }));
     ['dragleave','drop'].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('over'); }));
@@ -2004,6 +2042,7 @@
         { icon: 'type', label: 'Add text', fn: () => createBlock('text', at) },
         { icon: 'shapes', label: 'Add shape', fn: () => createBlock('shape', at) },
         { icon: 'image', label: 'Add image', fn: () => pickImage(at) },
+        { icon: 'upload', label: 'Import text file', fn: () => pickTextFile(at) },
         { sep: true },
         { icon: 'download', label: 'Paste', fn: () => pasteClipboard(), disabled: !clipboard },
         { icon: 'frame', label: 'Fit to view', fn: () => fitToView() },
@@ -2051,6 +2090,7 @@
         { g: 'Create', icon: 'type', title: 'Add text', fn: () => createBlock('text') },
         { g: 'Create', icon: 'shapes', title: 'Add shape', fn: () => createBlock('shape') },
         { g: 'Create', icon: 'image', title: 'Add image', fn: () => pickImage() },
+        { g: 'Create', icon: 'upload', title: 'Import text file', fn: () => pickTextFile() },
         { g: 'View', icon: 'frame', title: 'Fit to view', fn: () => fitToView() },
         { g: 'View', icon: 'home', title: 'Workspace home (root)', fn: () => navigateTo(DB.ROOT) },
         { g: 'Edit', icon: 'arrow-left', title: 'Undo', fn: () => undo() },
@@ -3317,6 +3357,7 @@
       const item = e.target.closest('[data-add]'); if (!item) return;
       hideAddMenu();
       if (item.dataset.add === 'image') pickImage();
+      else if (item.dataset.add === 'txtfile') pickTextFile();
       else createBlock(item.dataset.add);
     });
     document.addEventListener('click', (e) => {
