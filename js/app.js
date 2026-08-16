@@ -506,8 +506,9 @@
       t += '<tr>';
       for (let c = 0; c < cols; c++) {
         const v = r[c] != null ? String(r[c]) : '';
-        const grip = (ri === 0) ? `<span class="col-resize" data-col="${c}" title="Drag to resize column"></span>` : '';
-        t += `<${cellTag} data-r="${ri}" data-c="${c}"${editing ? ' tabindex="0"' : ''}>${esc(v)}${grip}</${cellTag}>`;
+        const cgrip = (ri === 0) ? `<span class="col-resize" data-col="${c}" title="Drag to resize column"></span>` : '';
+        const rgrip = (c === 0) ? `<span class="row-resize" data-row="${ri}" title="Drag to resize row"></span>` : '';
+        t += `<${cellTag} data-r="${ri}" data-c="${c}"${editing ? ' tabindex="0"' : ''}>${esc(v)}${cgrip}${rgrip}</${cellTag}>`;
       }
       t += '</tr>';
     });
@@ -533,7 +534,12 @@
       const w = b.colW && b.colW[+td.dataset.c];
       if (w) { td.style.width = td.style.minWidth = td.style.maxWidth = w + 'px'; td.style.whiteSpace = 'normal'; td.style.overflowWrap = 'anywhere'; }
       else { td.style.width = td.style.minWidth = td.style.maxWidth = ''; td.style.whiteSpace = ''; td.style.overflowWrap = ''; }
+      const rh = b.rowH && b.rowH[+td.dataset.r];
+      if (rh) { td.style.height = td.style.maxHeight = rh + 'px'; td.style.overflow = 'hidden'; td.style.verticalAlign = 'top'; }
+      else { td.style.height = td.style.maxHeight = ''; td.style.overflow = ''; td.style.verticalAlign = ''; }
     });
+    const titleEl = el.querySelector('.table-title');
+    if (titleEl) { titleEl.style.fontSize = fs + 'px'; titleEl.style.padding = `${Math.round(fs * 0.5)}px ${Math.round(fs * 0.9)}px`; }
     const sc = el.querySelector('.table-scroll');
     sc.style.maxWidth = 'none';
     sc.style.maxHeight = b.h ? 'none' : '';
@@ -1994,7 +2000,7 @@
   let tsel = null;            // { id, r, c, editing, orig }
   let tableOrig = null;       // deep snapshot when the editor opened (for undo + reset)
   const deepRows = (b) => (b.rows || []).map(r => r.slice());
-  const tableSnap = (b) => ({ title: b.title, header: b.header, fontSize: b.fontSize, w: b.w, h: b.h, colW: (b.colW || []).slice(), rows: deepRows(b) });
+  const tableSnap = (b) => ({ title: b.title, header: b.header, fontSize: b.fontSize, w: b.w, h: b.h, colW: (b.colW || []).slice(), rowH: (b.rowH || []).slice(), rows: deepRows(b) });
 
   function openTableEditor(id) {
     flushEdit();
@@ -2033,14 +2039,24 @@
     tableOrig = null;
     if (id) refreshBlockCard(id);
   }
-  // --- column-width dragging ---
+  // --- column-width / row-height dragging ---
   let colResize = null;   // { id, c, startX, startW, before }
+  let rowResize = null;   // { id, r, startY, startH, before }
   function startColResize(e, id, c) {
     const b = state.blocks.find(x => x.id === id); if (!b) return;
     const el = state.els[id]; const cell = el && el.querySelector(`[data-r="0"][data-c="${c}"]`);
     const s = state.view.scale || 1;
     const startW = cell ? Math.round(cell.getBoundingClientRect().width / s) : 80;
     colResize = { id, c, startX: e.clientX, startW, before: { ...b, colW: (b.colW || []).slice() } };
+    selectBlock(id);
+    e.preventDefault(); e.stopPropagation();
+  }
+  function startRowResize(e, id, r) {
+    const b = state.blocks.find(x => x.id === id); if (!b) return;
+    const el = state.els[id]; const cell = el && el.querySelector(`[data-r="${r}"][data-c="0"]`);
+    const s = state.view.scale || 1;
+    const startH = cell ? Math.round(cell.getBoundingClientRect().height / s) : 28;
+    rowResize = { id, r, startY: e.clientY, startH, before: { ...b, rowH: (b.rowH || []).slice() } };
     selectBlock(id);
     e.preventDefault(); e.stopPropagation();
   }
@@ -2092,7 +2108,7 @@
       ensureCell(b, tsel.r, tsel.c);
       if (b.rows[tsel.r][tsel.c] !== val) { b.rows[tsel.r][tsel.c] = val; b.updatedAt = Date.now(); persistBlock(b); markChanged(); }
       cell.removeAttribute('contenteditable');
-      if (tsel.r === 0) refreshBlockCard(b.id);   // restore the column grips wiped while editing a header cell
+      if (tsel.r === 0 || tsel.c === 0) refreshBlockCard(b.id);   // restore column/row grips wiped while editing an edge cell
     }
     tsel.editing = false;
   }
@@ -2154,23 +2170,15 @@
     $('#tbl-done').addEventListener('click', closeTableEditor);
     $('#tbl-reset').addEventListener('click', () => {
       if (!tableBlock || !tableOrig) return;
-      Object.assign(tableBlock, { title: tableOrig.title, header: tableOrig.header, fontSize: tableOrig.fontSize, w: tableOrig.w, h: tableOrig.h, colW: (tableOrig.colW || []).slice(), rows: tableOrig.rows.map(r => r.slice()) });
+      Object.assign(tableBlock, { title: tableOrig.title, header: tableOrig.header, fontSize: tableOrig.fontSize, w: tableOrig.w, h: tableOrig.h, colW: (tableOrig.colW || []).slice(), rowH: (tableOrig.rowH || []).slice(), rows: tableOrig.rows.map(r => r.slice()) });
       $('#tbl-title').value = tableBlock.title || '';
       $('#tbl-header').checked = tableBlock.header !== false;
       const fs = tableBlock.fontSize || 13; $('#tbl-fs').value = fs; $('#tbl-fs-val').value = fs;
       tableRepaint(); toast('Reset to original');
     });
     $('#tbl-delete').addEventListener('click', () => { if (tableBlock) { const id = tableBlock.id; closeTableEditor(); deleteBlock(id); } });
-    // cell interactions (delegated on the persistent world container)
+    // keyboard handling for cells (selection is done on pointerdown, see onPointerDown)
     world.addEventListener('keydown', onTableKey);
-    world.addEventListener('click', (e) => {
-      if (!editTableId) return;
-      const cell = e.target.closest('[data-r]'); const el = tableEl();
-      if (cell && el && el.contains(cell)) {
-        const r = +cell.dataset.r, c = +cell.dataset.c;
-        if (!(tsel && tsel.editing && tsel.r === r && tsel.c === c)) focusCell(editTableId, r, c, false);
-      }
-    });
   }
 
   /* ---------------------------- files ---------------------------------- */
@@ -2340,9 +2348,11 @@
     const blockEl = e.target.closest('.block');
     if (blockEl) {
       const id = blockEl.dataset.id;
-      // column-width grip on a table
+      // column-width / row-height grips on a table
       const colH = e.target.closest('.col-resize');
       if (colH) { startColResize(e, id, +colH.dataset.col); return; }
+      const rowH = e.target.closest('.row-resize');
+      if (rowH) { startRowResize(e, id, +rowH.dataset.row); return; }
       // rotate / resize / edge handle → start a gizmo gesture (not a move)
       const edge = e.target.closest('.tnode-edge');
       const handle = edge || e.target.closest('.tnode-rotate, .tnode-resize');
@@ -2358,7 +2368,7 @@
           startX: e.clientX, startY: e.clientY,
           startSize: b.size || 22, startRot: b.rot || 0,
           startW: b.w || Math.round(rect.width / s), startH: b.h || Math.round(rect.height / s),
-          startWrapW: b.w || null, startWrapH: b.h || null, startFont: b.fontSize || 13, startColW: (b.colW || []).slice(),
+          startWrapW: b.w || null, startWrapH: b.h || null, startFont: b.fontSize || 13, startColW: (b.colW || []).slice(), startRowH: (b.rowH || []).slice(),
           startBX: b.x, startBY: b.y,
           cx: rect.left + rect.width / 2, cy: rect.top + rect.height / 2,
           isText: b.kind === 'text', isImage: b.kind === 'image', isTable: b.kind === 'table', before: { ...b },
@@ -2366,8 +2376,22 @@
         gizmo.startAngle = Math.atan2(e.clientY - gizmo.cy, e.clientX - gizmo.cx);
         return;
       }
-      // in table cell-edit mode, let clicks reach the cells (don't drag the block)
-      if (editTableId === id && e.target.closest('.data-table')) return;
+      // table cells: single-click selects a cell (entering edit mode if the table is
+      // already selected); dragging the title/border still moves the block.
+      const tb0 = state.blocks.find(x => x.id === id);
+      if (tb0 && tb0.kind === 'table') {
+        const cell = e.target.closest('.data-table [data-r]');
+        if (cell) {
+          const r = +cell.dataset.r, c = +cell.dataset.c;
+          if (editTableId === id) {
+            if (!(tsel && tsel.editing && tsel.r === r && tsel.c === c)) focusCell(id, r, c, false);
+            return;
+          }
+          if (state.selectedIds.has(id)) { openTableEditor(id); focusCell(id, r, c, false); return; }
+          // otherwise fall through: first click selects the block (so it can be dragged)
+        }
+        // clicking the title/border falls through → normal drag to move the block
+      }
       if (e.target.closest('[data-blk]')) return;   // hover action buttons
       if (state.linkMode) { handleLinkTap(id); return; }
       // if it's an unselected block and no shift, select just it (so drag moves it)
@@ -2434,6 +2458,15 @@
       refreshBlockCard(b.id);
       return;
     }
+    if (rowResize) {
+      const b = state.blocks.find(x => x.id === rowResize.id); if (!b) return;
+      const s = state.view.scale || 1;
+      const nh = Math.max(16, Math.round(rowResize.startH + (e.clientY - rowResize.startY) / s));
+      if (!Array.isArray(b.rowH)) b.rowH = [];
+      b.rowH[rowResize.r] = nh;
+      refreshBlockCard(b.id);
+      return;
+    }
     if (gizmo) {
       const b = state.blocks.find(x => x.id === gizmo.id); if (!b) return;
       const s = state.view.scale || 1;
@@ -2469,6 +2502,7 @@
           if (gizmo.startWrapW) b.w = Math.max(60, Math.round(gizmo.startWrapW * ratio));
           if (gizmo.startWrapH) b.h = Math.max(40, Math.round(gizmo.startWrapH * ratio));
           if (gizmo.startColW && gizmo.startColW.length) b.colW = gizmo.startColW.map(w => w ? Math.max(20, Math.round(w * ratio)) : w);
+          if (gizmo.startRowH && gizmo.startRowH.length) b.rowH = gizmo.startRowH.map(h => h ? Math.max(16, Math.round(h * ratio)) : h);
           if (tableBlock && tableBlock.id === b.id) { $('#tbl-fs').value = b.fontSize; $('#tbl-fs-val').value = b.fontSize; }
         } else {
           b.w = clamp(Math.round(gizmo.startW + (e.clientX - gizmo.startX) / s), 20, 1400);
@@ -2531,6 +2565,14 @@
         recordChange({ blocks: [{ ...colResize.before }], edges: [], files: [] }, { blocks: [{ ...b, colW: (b.colW || []).slice() }], edges: [], files: [] });
       }
       colResize = null; pointers.delete(e.pointerId); return;
+    }
+    if (rowResize) {
+      const b = state.blocks.find(x => x.id === rowResize.id);
+      if (b) {
+        await persistBlock(b); markChanged();
+        recordChange({ blocks: [{ ...rowResize.before }], edges: [], files: [] }, { blocks: [{ ...b, rowH: (b.rowH || []).slice() }], edges: [], files: [] });
+      }
+      rowResize = null; pointers.delete(e.pointerId); return;
     }
     if (erasing) { erasing = false; pointers.delete(e.pointerId); return; }
     if (inking) {
