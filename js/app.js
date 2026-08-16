@@ -122,6 +122,7 @@
     circle: '<circle cx="12" cy="12" r="8.5"/>',
     triangle: '<path d="M12 4.5 20.5 19H3.5Z"/>',
     star: '<path d="M12 3.6l2.6 5.2 5.8.9-4.2 4.1 1 5.7-5.2-2.7-5.2 2.7 1-5.7L3.6 9.7l5.8-.9z"/>',
+    line: '<line x1="4.5" y1="19.5" x2="19.5" y2="4.5"/>',
     image: '<rect x="3.5" y="5" width="17" height="14" rx="2.2"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M4 17l4.5-4.5 3 3L15 12l5 5"/>',
     pen: '<path d="M4 20l1-4L16 5a2 2 0 0 1 3 3L8 19l-4 1Z"/><line x1="14" y1="7" x2="17" y2="10"/>',
     eraser: '<path d="M9 20H20"/><path d="M15.5 5.5l3 3a2 2 0 0 1 0 2.8L11 19l-4.5-4.5a2 2 0 0 1 0-2.8l6.2-6.2a2 2 0 0 1 2.8 0Z"/><line x1="8" y1="9" x2="14" y2="15"/>',
@@ -312,11 +313,15 @@
     el.style.width = w + 'px'; el.style.height = h + 'px';
     el.style.transform = b.rot ? `rotate(${b.rot}deg)` : '';
     el.innerHTML =
-      `<img class="img-content" alt="" draggable="false" style="border-radius:${b.round ? 12 : 0}px" />` +
+      `<img class="img-content" alt="" draggable="false" />` +
       `<div class="block-actions"><button class="blk-btn" data-blk="edit" title="Edit image">${ic('pencil')}</button></div>` +
       `<div class="tnode-rotate" title="Rotate"></div>` +
       `<div class="tnode-resize" title="Resize"></div>`;
-    el.querySelector('.img-content').src = b.src || '';
+    const im = el.querySelector('.img-content');
+    im.style.borderRadius = (b.round ? 12 : 0) + 'px';
+    // outline drawn as a box-shadow ring so it hugs rounded corners and doesn't shift layout
+    im.style.boxShadow = b.outline ? `0 0 0 ${b.outlineW || 2}px ${b.outlineColor || PALETTE[0]}` : '';
+    im.src = b.src || '';
   }
 
   // free vector shape node (kind === 'shape'), drawn with inline SVG so fill
@@ -340,7 +345,12 @@
     const pad = sw / 2 + 0.5;
     let inner;
     const pts = shapePoints(b);
-    if (b.shape === 'circle') {
+    if (b.shape === 'line') {
+      const y = h / 2;
+      const lw = Math.max(1, b.outlineW || 4);
+      const col = b.outlineColor || b.color || PALETTE[0];
+      inner = `<line x1="${(lw / 2 + 0.5).toFixed(1)}" y1="${y}" x2="${Math.max(lw / 2 + 0.5, w - lw / 2 - 0.5).toFixed(1)}" y2="${y}" stroke="${col}" stroke-width="${lw}" stroke-linecap="round"/>`;
+    } else if (b.shape === 'circle') {
       inner = `<ellipse cx="${w / 2}" cy="${h / 2}" rx="${Math.max(1, w / 2 - pad)}" ry="${Math.max(1, h / 2 - pad)}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
     } else if (pts) {
       const poly = pts.map(([x, y]) => `${(pad + x * (w - 2 * pad)).toFixed(1)},${(pad + y * (h - 2 * pad)).toFixed(1)}`).join(' ');
@@ -1613,7 +1623,24 @@
     shapeBlock = null;
   }
   function bindShapeEditor() {
-    $$('#s-type button').forEach(btn => btn.addEventListener('click', () => { if (!shapeBlock) return; shapeBlock.shape = btn.dataset.shape; if (btn.dataset.shape !== 'polygon') shapeBlock.points = null; renderSType(btn.dataset.shape); refreshItem(shapeBlock.id); queueShapeSave(); }));
+    $$('#s-type button').forEach(btn => btn.addEventListener('click', () => {
+      if (!shapeBlock) return;
+      const shape = btn.dataset.shape;
+      shapeBlock.shape = shape;
+      if (shape !== 'polygon') shapeBlock.points = null;
+      if (shape === 'line') {                       // a line is stroke-only: no fill, drive it via the outline controls
+        shapeBlock.fill = false;
+        shapeBlock.outline = true;
+        if (!shapeBlock.outlineW) shapeBlock.outlineW = 4;
+        if (!shapeBlock.outlineColor) shapeBlock.outlineColor = shapeBlock.color || PALETTE[0];
+        $('#s-fill').checked = false; $('#s-fill-wrap').hidden = true;
+        $('#s-outline').checked = true; $('#s-outline-wrap').hidden = false;
+        $('#s-ow').value = shapeBlock.outlineW; $('#s-ow-val').value = shapeBlock.outlineW;
+        renderSOutline(shapeBlock.outlineColor);
+      }
+      renderSType(shape);
+      refreshItem(shapeBlock.id); queueShapeSave();
+    }));
     wireParam('s-w-val', 's-w', (v) => { if (!shapeBlock) return; shapeBlock.w = Math.max(1, Math.round(v)); refreshItem(shapeBlock.id); queueShapeSave(); });
     wireParam('s-h-val', 's-h', (v) => { if (!shapeBlock) return; shapeBlock.h = Math.max(1, Math.round(v)); refreshItem(shapeBlock.id); queueShapeSave(); });
     $('#s-fill').addEventListener('change', (e) => { if (!shapeBlock) return; shapeBlock.fill = e.target.checked; $('#s-fill-wrap').hidden = !e.target.checked; refreshItem(shapeBlock.id); queueShapeSave(); });
@@ -1628,6 +1655,16 @@
   /* ---------------------------- image editor --------------------------- */
   let imageBlock = null;
   let imageSaveTimer = null;
+  function renderIOutline(active) {
+    const wrap = $('#i-outline-swatches'); if (!wrap) return; wrap.innerHTML = '';
+    PALETTE.concat(['#ffffff', '#0a0b0d']).forEach(col => {
+      const s = document.createElement('div');
+      s.className = 'swatch' + ((active || PALETTE[0]) === col ? ' active' : '');
+      s.style.background = col;
+      s.addEventListener('click', () => { if (!imageBlock) return; imageBlock.outlineColor = col; renderIOutline(col); refreshItem(imageBlock.id); queueImageSave(); });
+      wrap.appendChild(s);
+    });
+  }
   function queueImageSave() {
     if (!imageBlock) return;
     $('#image-save').textContent = 'Saving…';
@@ -1655,6 +1692,10 @@
     $('#i-w').value = b.w || 200; $('#i-w-val').value = (b.w || 200);
     $('#i-rot').value = b.rot || 0; $('#i-rot-val').value = (b.rot || 0);
     $('#i-round').checked = !!b.round;
+    $('#i-outline').checked = !!b.outline;
+    $('#i-outline-wrap').hidden = !b.outline;
+    $('#i-ow').value = b.outlineW || 3; $('#i-ow-val').value = (b.outlineW || 3);
+    renderIOutline(b.outlineColor);
     $('#image-drawer').hidden = false;
     $('#image-save').textContent = '';
   }
@@ -1674,6 +1715,8 @@
     });
     wireParam('i-rot-val', 'i-rot', (v) => { if (!imageBlock) return; imageBlock.rot = Math.round(v); refreshItem(imageBlock.id); queueImageSave(); });
     $('#i-round').addEventListener('change', (e) => { if (!imageBlock) return; imageBlock.round = e.target.checked; refreshItem(imageBlock.id); queueImageSave(); });
+    $('#i-outline').addEventListener('change', (e) => { if (!imageBlock) return; imageBlock.outline = e.target.checked; $('#i-outline-wrap').hidden = !e.target.checked; refreshItem(imageBlock.id); queueImageSave(); });
+    wireParam('i-ow-val', 'i-ow', (v) => { if (!imageBlock) return; imageBlock.outlineW = Math.max(1, Math.round(v)); refreshItem(imageBlock.id); queueImageSave(); });
     $('#i-replace').addEventListener('click', () => { if (!imageBlock) return; replaceImageId = imageBlock.id; pendingImageAt = null; $('#image-input').click(); });
     $('#image-close').addEventListener('click', closeImageEditor);
     $('#i-done').addEventListener('click', closeImageEditor);
@@ -2601,6 +2644,11 @@
       ctx.beginPath();
       pts.forEach((p, i) => { const px = wx(b.x + pad + p[0]), py = wy(b.y + pad + p[1]); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
       ctx.stroke();
+    } else if (b.kind === 'shape' && b.shape === 'line') {
+      ctx.strokeStyle = b.outlineColor || b.color || col.accent;
+      ctx.lineWidth = Math.max(0.6, (b.outlineW || 4) * scale);
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(x, cy); ctx.lineTo(x + w, cy); ctx.stroke();
     } else if (b.kind === 'shape') {
       const fill = b.fill ? (b.color || col.accent) : null;
       const stroke = b.outline ? (b.outlineColor || col.accent) : null;
