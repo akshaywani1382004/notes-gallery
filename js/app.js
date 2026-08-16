@@ -1039,7 +1039,17 @@
       : Object.keys(zip.entries).find(k => /^xl\/worksheets\/.*\.xml$/.test(k));
     if (!sheet) throw new Error('no worksheet found');
     const sdoc = parseXml(await zipRead(zip, sheet));
-    const grid = []; let maxCol = 0;
+    // column widths: <cols><col min max width/></cols> — width is in "characters"
+    const colW = [];
+    for (const cel of Array.from(sdoc.getElementsByTagName('col'))) {
+      const min = parseInt(cel.getAttribute('min'), 10), max = parseInt(cel.getAttribute('max'), 10);
+      const wv = parseFloat(cel.getAttribute('width'));
+      if (!isNaN(min) && !isNaN(max) && !isNaN(wv)) {
+        const px = Math.max(24, Math.round(wv * 7 + 5));   // ~Calibri 11 char→px
+        for (let i = min - 1; i <= max - 1 && i < 400; i++) if (i >= 0) colW[i] = px;
+      }
+    }
+    const grid = [], heights = []; let maxCol = 0;
     for (const rowEl of Array.from(sdoc.getElementsByTagName('row'))) {
       const arr = [];
       for (const c of Array.from(rowEl.getElementsByTagName('c'))) {
@@ -1053,23 +1063,29 @@
         else if (vEl) { val = vEl.textContent; }
         if (col >= 0) { arr[col] = val; if (col + 1 > maxCol) maxCol = col + 1; }
       }
+      const ht = parseFloat(rowEl.getAttribute('ht'));
+      heights.push(!isNaN(ht) ? Math.max(16, Math.round(ht * 4 / 3)) : null);   // points → px
       grid.push(arr);
     }
-    const rows = grid.map(r => { const a = []; for (let i = 0; i < maxCol; i++) a.push(r[i] != null ? r[i] : ''); return a; });
-    return rows.filter(r => r.some(c => String(c).trim() !== ''));
+    const rows = [], rowH = [];
+    grid.forEach((r, i) => {
+      const a = []; for (let j = 0; j < maxCol; j++) a.push(r[j] != null ? r[j] : '');
+      if (a.some(c => String(c).trim() !== '')) { rows.push(a); rowH.push(heights[i]); }
+    });
+    return { rows, colW: colW.slice(0, maxCol), rowH };
   }
   async function importSheetFile(file, at) {
     const isCsv = file.type === 'text/csv' || /\.csv$/i.test(file.name);
     const isXlsx = /\.xlsx$/i.test(file.name);
     if (!isCsv && !isXlsx) { toast('Choose an .xlsx or .csv file (.xls isn’t supported).'); return; }
-    let rows;
+    let res;
     try {
-      rows = isCsv ? parseCsv(await file.text()) : await parseXlsx(await file.arrayBuffer());
+      res = isCsv ? { rows: parseCsv(await file.text()) } : await parseXlsx(await file.arrayBuffer());
     } catch (err) { toast(err && err.message ? err.message : 'Could not read that spreadsheet.'); return; }
     const name = file.name.replace(/\.(xlsx|csv)$/i, '') || 'Table';
-    await createTableBlock(rows, name, at);
+    await createTableBlock(res.rows, name, at, { colW: res.colW, rowH: res.rowH });
   }
-  async function createTableBlock(rows, name, at) {
+  async function createTableBlock(rows, name, at, sizes) {
     if (!rows || !rows.length) { toast('That sheet looks empty.'); return; }
     rows = rows.slice(0, 200).map(r => r.slice(0, 40));   // sane caps
     const pos = at || centerOfView();
@@ -1080,6 +1096,13 @@
       description: '', notes: '', tags: '', layout: 'canvas', color: '', icon: '',
       x: Math.round(pos.x - 180), y: Math.round(pos.y - 60), z: 0, createdAt: now, updatedAt: now,
     };
+    // carry over the sheet's column widths / row heights when present
+    if (sizes) {
+      const cw = (sizes.colW || []).slice(0, 40);
+      const rh = (sizes.rowH || []).slice(0, 200);
+      if (cw.some(x => x)) b.colW = cw;
+      if (rh.some(x => x)) b.rowH = rh;
+    }
     await DB.saveBlock(b);
     state.blocks.push(b);
     state.childCounts[b.id] = { blocks: 0, files: 0 };
