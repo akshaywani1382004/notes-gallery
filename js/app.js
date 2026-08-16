@@ -2043,6 +2043,7 @@
   let editTableId = null;     // id of the table currently in cell-edit mode
   let tsel = null;            // { id, r, c, editing, orig } — the active/anchor cell
   let tmulti = new Set();     // multi-selection of "r:c" keys (includes the anchor)
+  let tmultiMode = false;     // touch: taps add/remove cells (no Shift key needed)
   let tfocus = 'cell';        // which target the format bar acts on: 'cell' | 'title'
   let titleEditing = false;   // inline title text edit in progress
   let tableOrig = null;       // deep snapshot when the editor opened (for undo + reset)
@@ -2059,7 +2060,7 @@
     $('#shape-drawer').hidden = true; shapeBlock = null;
     $('#image-drawer').hidden = true; imageBlock = null;
     $('#ink-drawer').hidden = true; inkBlock = null;
-    tableBlock = b; editTableId = id; tfocus = 'cell'; titleEditing = false;
+    tableBlock = b; editTableId = id; tfocus = 'cell'; titleEditing = false; tmultiMode = false;
     tableOrig = tableSnap(b);
     editBaseline = snapshotFields(b);   // lets the per-field font-size reset work
     $('#tbl-header').checked = b.header !== false;
@@ -2075,7 +2076,7 @@
     const b = tableBlock;
     $('#table-drawer').hidden = true;
     const id = b ? b.id : editTableId;
-    tableBlock = null; editTableId = null; tsel = null; tmulti = new Set(); tfocus = 'cell'; titleEditing = false; editBaseline = null;
+    tableBlock = null; editTableId = null; tsel = null; tmulti = new Set(); tmultiMode = false; tfocus = 'cell'; titleEditing = false; editBaseline = null;
     if (b && tableOrig && state.blocks.some(x => x.id === b.id)) {
       const now = tableSnap(b);
       if (JSON.stringify(now) !== JSON.stringify(tableOrig)) {
@@ -2222,6 +2223,7 @@
     else if (tsel) { if (label) label.textContent = 'Cell ' + colLetter(tsel.c) + (tsel.r + 1); if (input) { input.value = (b.rows[tsel.r] && b.rows[tsel.r][tsel.c]) || ''; input.disabled = false; } }
     $('#tbl-b').classList.toggle('on', !!fmt.bold);
     $('#tbl-i').classList.toggle('on', !!fmt.italic);
+    $('#tbl-multi').classList.toggle('on', tmultiMode);
     $$('#tbl-align button').forEach(x => x.classList.toggle('on', (fmt.align || 'left') === x.dataset.al));
     $$('#tbl-font button').forEach(x => x.classList.toggle('on', (fmt.font || 'sans') === x.dataset.font));
     renderTblColors(fmt.color || '');
@@ -2320,6 +2322,7 @@
     $('#tbl-b').addEventListener('click', () => applyFmt('bold', !activeFmt().bold));
     $('#tbl-i').addEventListener('click', () => applyFmt('italic', !activeFmt().italic));
     $$('#tbl-align button').forEach(btn => btn.addEventListener('click', () => applyFmt('align', btn.dataset.al)));
+    $('#tbl-multi').addEventListener('click', () => { tmultiMode = !tmultiMode; $('#tbl-multi').classList.toggle('on', tmultiMode); toast(tmultiMode ? 'Tap cells to select multiple' : 'Multi-select off'); });
     $$('#tbl-font button').forEach(btn => btn.addEventListener('click', () => applyFmt('font', btn.dataset.font)));
     $('#tbl-header').addEventListener('change', (e) => { if (!tableBlock) return; tableBlock.header = e.target.checked; tableRepaint(); });
     wireParam('tbl-fs-val', 'tbl-fs', (v) => { if (!tableBlock) return; tableBlock.fontSize = clamp(Math.round(v), 7, 60); tableRepaint(); });
@@ -2563,11 +2566,11 @@
         if (cell) {
           const r = +cell.dataset.r, c = +cell.dataset.c;
           if (editTableId === id) {
-            if (e.shiftKey) { toggleCellSel(id, r, c); return; }
+            if (e.shiftKey || tmultiMode) { toggleCellSel(id, r, c); return; }
             if (!(tsel && tsel.editing && tsel.r === r && tsel.c === c)) focusCell(id, r, c, false);
             return;
           }
-          if (state.selectedIds.has(id)) { openTableEditor(id); if (e.shiftKey) toggleCellSel(id, r, c); else focusCell(id, r, c, false); return; }
+          if (state.selectedIds.has(id)) { openTableEditor(id); if (e.shiftKey || tmultiMode) toggleCellSel(id, r, c); else focusCell(id, r, c, false); return; }
           // otherwise fall through: first click selects the block (so it can be dragged)
         } else if (titleHit) {
           if (editTableId === id) { if (!titleEditing) setFocusTitle(); return; }
@@ -3200,6 +3203,13 @@
   }
 
   /* ---------------------------- fit / zoom buttons --------------------- */
+  function resetZoom() {
+    const c = centerOfView();
+    state.view.scale = 1;
+    const rr = stage.getBoundingClientRect();
+    state.view.tx = rr.width / 2 - c.x; state.view.ty = rr.height / 2 - c.y;
+    applyView();
+  }
   function fitToView() {
     if (state.levelLayout === 'list') return;
     const r = stage.getBoundingClientRect();
@@ -4101,6 +4111,8 @@
       if (act === 'export') exportWorkspaceFlow(state.ws);
       if (act === 'properties') openProperties(state.ws);
       if (act === 'add-child') createBlock('block');
+      if (act === 'fit') fitToView();
+      if (act === 'zoom-reset') resetZoom();
       if (act === 'snap') { snapOn = !snapOn; try { localStorage.setItem('ng-snap', snapOn ? '1' : '0'); } catch (_) {} updateSnapLabel(); toast(snapOn ? 'Snap to grid on' : 'Snap to grid off'); }
       if (act === 'properties') openProperties(state.ws);
       if (act === 'about') openAbout('about');
@@ -4243,7 +4255,14 @@
     if (!fly || !wrap) return;
     if (!on) { fly.hidden = true; return; }
     fly.hidden = false;
-    // default: open to the right of the Import row; flip left if it would overflow
+    if (window.innerWidth <= 560) {
+      // phones: drop the submenu straight down (a side flyout won't fit)
+      fly.style.left = '0'; fly.style.right = 'auto'; fly.style.top = '100%';
+      fly.style.marginLeft = '0'; fly.style.marginRight = ''; fly.style.marginTop = '6px'; fly.style.width = '100%';
+      return;
+    }
+    // desktop: open to the right of the Import row; flip left if it would overflow
+    fly.style.width = ''; fly.style.marginTop = '';
     fly.style.left = '100%'; fly.style.right = 'auto'; fly.style.marginLeft = '6px'; fly.style.marginRight = '';
     fly.style.top = '0';
     const r = fly.getBoundingClientRect();
@@ -4339,13 +4358,7 @@
     const r = () => stage.getBoundingClientRect();
     $('#btn-zoom-in').addEventListener('click',  () => zoomAt(r().width / 2, r().height / 2, 1.18));
     $('#btn-zoom-out').addEventListener('click', () => zoomAt(r().width / 2, r().height / 2, 1 / 1.18));
-    $('#btn-zoom-reset').addEventListener('click', () => {
-      const c = centerOfView();
-      state.view.scale = 1;
-      const rr = r();
-      state.view.tx = rr.width / 2 - c.x; state.view.ty = rr.height / 2 - c.y;
-      applyView();
-    });
+    $('#btn-zoom-reset').addEventListener('click', resetZoom);
   }
 
   function bindStage() {

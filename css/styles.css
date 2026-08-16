@@ -879,9 +879,17 @@ input, textarea { font-size: 15px; }
 @media (hover: none) {
   .block-actions, .lr-actions, .ws-card-actions { opacity: 1; }
   .blk-btn, .lr-btn { width: 34px; height: 34px; }
-  .tnode-rotate, .tnode-resize { width: 22px; height: 22px; }
-  .tnode-rotate { top: -34px; }
+  .tnode-rotate, .tnode-resize { width: 26px; height: 26px; }
+  .tnode-rotate { top: -36px; }
+  .tnode-edge.e, .tnode-edge.w { width: 14px; }
+  .tnode-edge.n, .tnode-edge.s { height: 14px; }
   .btn.icon { min-width: 42px; padding: 10px; }
   .ctxmenu button, .menu button, .add-menu button { padding: 12px 12px; }
   .swatch { width: 30px; height: 30px; }
+  /* fat, always-visible grips for column/row resizing by finger */
+  .col-resize { width: 20px; right: -10px; opacity: .4; }
+  .row-resize { height: 20px; bottom: -10px; opacity: .4; }
+  .block.block-table.selected .col-resize, .block.block-table.selected .row-resize { opacity: .7; }
+  .param-num { min-height: 30px; }
+  .tbl-format .tbtn, #tbl-font button { min-height: 34px; }
 }
