@@ -498,6 +498,14 @@ input, textarea { font-size: 15px; }
 .data-table th { background: var(--panel-2); font-weight: 700; position: sticky; top: 0; z-index: 1; }
 .data-table tr:nth-child(even) td { background: color-mix(in srgb, var(--panel-2) 45%, transparent); }
 .block.block-table:hover .tnode-resize, .block.block-table.selected .tnode-resize { opacity: 1; }
+.block.block-table:hover .tnode-edge, .block.block-table.selected .tnode-edge { opacity: 1; }
+/* edit mode: cells become selectable/typable */
+.block.block-table.editing .data-table th, .block.block-table.editing .data-table td { cursor: text; }
+.block.block-table.editing .data-table td:focus, .block.block-table.editing .data-table th:focus { outline: none; }
+.data-table .cell-sel { outline: 2px solid var(--accent); outline-offset: -2px; background: color-mix(in srgb, var(--accent) 14%, transparent) !important; }
+.data-table [contenteditable="true"] { background: var(--panel) !important; box-shadow: inset 0 0 0 2px var(--accent); cursor: text; white-space: normal; }
+.tbl-grid-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.tbl-grid-btns .btn { justify-content: center; }
 .i-preview { border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); padding: 8px; display: grid; place-items: center; margin-bottom: 4px; }
 .i-preview img { max-width: 100%; max-height: 180px; border-radius: 6px; display: block; }
 .block.block-shape .block-actions { top: -15px; right: -8px; }

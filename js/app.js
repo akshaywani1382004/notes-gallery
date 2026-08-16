@@ -491,25 +491,47 @@
       `<div class="block-actions"><button class="blk-btn" data-blk="edit" title="Edit ink">${ic('pencil')}</button></div>`;
   }
 
-  // table node (kind === 'table'); rows is an array of arrays of cell strings
+  // table node (kind === 'table'); rows is an array of arrays of cell strings.
+  // fontSize scales the whole table (corner handle); w/h wrap it (edge handles).
   function paintTableNode(el, b) {
     const rows = Array.isArray(b.rows) ? b.rows : [];
     const cols = rows.reduce((m, r) => Math.max(m, r.length), 0);
+    const editing = (editTableId === b.id);
     let t = '<div class="table-scroll"><table class="data-table"><tbody>';
     rows.forEach((r, ri) => {
       const cellTag = (ri === 0 && b.header !== false) ? 'th' : 'td';
       t += '<tr>';
-      for (let c = 0; c < cols; c++) { const v = r[c] != null ? String(r[c]) : ''; t += `<${cellTag}>${esc(v)}</${cellTag}>`; }
+      for (let c = 0; c < cols; c++) {
+        const v = r[c] != null ? String(r[c]) : '';
+        t += `<${cellTag} data-r="${ri}" data-c="${c}"${editing ? ' tabindex="0"' : ''}>${esc(v)}</${cellTag}>`;
+      }
       t += '</tr>';
     });
     t += '</tbody></table></div>';
     el.style.transform = b.rot ? `rotate(${b.rot}deg)` : '';
     el.style.width = b.w ? b.w + 'px' : '';
+    el.style.maxWidth = b.w ? b.w + 'px' : '';
     el.style.height = b.h ? b.h + 'px' : '';
+    el.classList.toggle('editing', editing);
     el.innerHTML =
       (b.title ? `<div class="table-title">${esc(b.title)}</div>` : '') +
       t +
-      `<div class="tnode-resize" title="Resize"></div>`;
+      `<div class="block-actions"><button class="blk-btn" data-blk="edit" title="Edit table">${ic('pencil')}</button></div>` +
+      `<div class="tnode-edge e" data-edge="e" title="Wrap width"></div>` +
+      `<div class="tnode-edge s" data-edge="s" title="Wrap height"></div>` +
+      `<div class="tnode-resize" title="Scale table"></div>`;
+    const fs = b.fontSize || 13;
+    const tbl = el.querySelector('.data-table');
+    tbl.style.fontSize = fs + 'px';
+    const py = Math.max(2, Math.round(fs * 0.38)), px = Math.max(4, Math.round(fs * 0.72));
+    el.querySelectorAll('.data-table th, .data-table td').forEach(td => { td.style.padding = `${py}px ${px}px`; });
+    const sc = el.querySelector('.table-scroll');
+    sc.style.maxWidth = 'none';
+    sc.style.maxHeight = b.h ? 'none' : '';
+    if (editing && tsel && tsel.id === b.id) {
+      const cell = el.querySelector(`[data-r="${tsel.r}"][data-c="${tsel.c}"]`);
+      if (cell) cell.classList.add('cell-sel');
+    }
   }
 
   // Update whichever representation (canvas card or list row) exists for a block.
@@ -1029,7 +1051,7 @@
     const now = Date.now();
     const b = {
       id: uid(), ws: state.ws, parentId: state.level, kind: 'table',
-      rows, header: true, title: name || 'Table',
+      rows, header: true, fontSize: 13, title: name || 'Table',
       description: '', notes: '', tags: '', layout: 'canvas', color: '', icon: '',
       x: Math.round(pos.x - 180), y: Math.round(pos.y - 60), z: 0, createdAt: now, updatedAt: now,
     };
@@ -1240,7 +1262,7 @@
       const removal = await gatherRemoval([id]);
       await DB.deleteBlockDeep(id);
       recordChange(removal, emptySet());
-      closeDrawer(); closeTextEditor();
+      closeDrawer(); closeTextEditor(); closeTableEditor();
       await loadLevel(state.level);
       toast(b.kind === 'text' ? 'Text deleted' : 'Block deleted');
     });
@@ -1284,7 +1306,7 @@
         const removal = await gatherRemoval(ids);
         for (const id of ids) await DB.deleteBlockDeep(id);
         recordChange(removal, emptySet());
-        closeDrawer(); closeTextEditor();
+        closeDrawer(); closeTextEditor(); closeTableEditor();
         await loadLevel(state.level);
         toast(`${ids.length} blocks deleted`);
       });
@@ -1329,7 +1351,7 @@
     const removal = await gatherRemoval(ids);
     for (const id of ids) await DB.deleteBlockDeep(id);
     recordChange(removal, emptySet());
-    closeDrawer(); closeTextEditor();
+    closeDrawer(); closeTextEditor(); closeTableEditor();
     await loadLevel(state.level);
     toast(`Cut ${ids.length} block${ids.length > 1 ? 's' : ''}`);
   }
@@ -1472,7 +1494,7 @@
     else if (b && b.kind === 'shape') openShapeEditor(id);
     else if (b && b.kind === 'image') openImageEditor(id);
     else if (b && b.kind === 'ink') openInkEditor(id);
-    else if (b && b.kind === 'table') selectBlock(id);   // tables have no editor drawer
+    else if (b && b.kind === 'table') openTableEditor(id);
     else openEditor(id);
   }
 
@@ -1495,6 +1517,7 @@
 
   async function openDrawer(id, focusTitle) {
     flushEdit();
+    if (editTableId) closeTableEditor();
     closeTextEditor(true);
     const b = state.blocks.find(x => x.id === id);
     if (!b) return;
@@ -1664,6 +1687,7 @@
   }
   function openTextEditor(id) {
     flushEdit();
+    if (editTableId) closeTableEditor();
     const b = state.blocks.find(x => x.id === id);
     if (!b) return;
     selectBlock(id);
@@ -1747,6 +1771,7 @@
   }
   function openShapeEditor(id) {
     flushEdit();
+    if (editTableId) closeTableEditor();
     const b = state.blocks.find(x => x.id === id);
     if (!b) return;
     selectBlock(id);
@@ -1833,6 +1858,7 @@
   }
   function openImageEditor(id) {
     flushEdit();
+    if (editTableId) closeTableEditor();
     const b = state.blocks.find(x => x.id === id);
     if (!b) return;
     selectBlock(id);
@@ -1924,6 +1950,7 @@
   }
   function openInkEditor(id) {
     flushEdit();
+    if (editTableId) closeTableEditor();
     const b = state.blocks.find(x => x.id === id);
     if (!b) return;
     selectBlock(id);
@@ -1950,6 +1977,178 @@
     $('#k-done').addEventListener('click', closeInkEditor);
     $('#k-reset').addEventListener('click', resetActiveEditor);
     $('#k-delete').addEventListener('click', () => { if (inkBlock) deleteBlock(inkBlock.id); });
+  }
+
+  /* ---------------------------- table editor --------------------------- */
+  let tableBlock = null;      // block bound to the table drawer
+  let editTableId = null;     // id of the table currently in cell-edit mode
+  let tsel = null;            // { id, r, c, editing, orig }
+  let tableOrig = null;       // deep snapshot when the editor opened (for undo + reset)
+  const deepRows = (b) => (b.rows || []).map(r => r.slice());
+  const tableSnap = (b) => ({ title: b.title, header: b.header, fontSize: b.fontSize, w: b.w, h: b.h, rows: deepRows(b) });
+
+  function openTableEditor(id) {
+    flushEdit();
+    const b = state.blocks.find(x => x.id === id); if (!b) return;
+    selectBlock(id);
+    $('#drawer').hidden = true; drawerBlock = null;
+    $('#text-drawer').hidden = true; textBlock = null;
+    $('#shape-drawer').hidden = true; shapeBlock = null;
+    $('#image-drawer').hidden = true; imageBlock = null;
+    $('#ink-drawer').hidden = true; inkBlock = null;
+    tableBlock = b; editTableId = id;
+    tableOrig = tableSnap(b);
+    editBaseline = snapshotFields(b);   // lets the per-field font-size reset work
+    $('#tbl-title').value = b.title || '';
+    $('#tbl-header').checked = b.header !== false;
+    const fs = b.fontSize || 13; $('#tbl-fs').value = fs; $('#tbl-fs-val').value = fs;
+    $('#table-drawer').hidden = false;
+    refreshBlockCard(id);                // repaint with editing class + focusable cells
+    tsel = { id, r: 0, c: 0, editing: false };
+    focusCell(id, 0, 0, false);
+  }
+  function closeTableEditor() {
+    if ($('#table-drawer').hidden && !tableBlock) return;
+    commitCellEdit();
+    const b = tableBlock;
+    $('#table-drawer').hidden = true;
+    const id = b ? b.id : editTableId;
+    tableBlock = null; editTableId = null; tsel = null; editBaseline = null;
+    if (b && tableOrig && state.blocks.some(x => x.id === b.id)) {
+      const now = tableSnap(b);
+      if (JSON.stringify(now) !== JSON.stringify(tableOrig)) {
+        recordChange({ blocks: [{ ...b, ...tableOrig }], edges: [], files: [] },
+                     { blocks: [{ ...b, rows: deepRows(b) }], edges: [], files: [] });
+      }
+    }
+    tableOrig = null;
+    if (id) refreshBlockCard(id);
+  }
+  // --- cell selection / editing ---
+  function tableEl() { return editTableId ? state.els[editTableId] : null; }
+  function cellEl(r, c) { const el = tableEl(); return el ? el.querySelector(`[data-r="${r}"][data-c="${c}"]`) : null; }
+  function placeCaretEnd(node) {
+    const rng = document.createRange(); rng.selectNodeContents(node); rng.collapse(false);
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(rng);
+  }
+  function ensureCell(b, r, c) {
+    if (!Array.isArray(b.rows)) b.rows = [];
+    while (b.rows.length <= r) b.rows.push([]);
+    while (b.rows[r].length <= c) b.rows[r].push('');
+  }
+  function focusCell(id, r, c, edit) {
+    if (tsel && tsel.editing && !(tsel.r === r && tsel.c === c)) commitCellEdit();
+    const el = state.els[id]; if (!el) return;
+    el.querySelectorAll('.cell-sel').forEach(x => x.classList.remove('cell-sel'));
+    tsel = { id, r, c, editing: !!edit };
+    const cell = cellEl(r, c); if (!cell) return;
+    cell.classList.add('cell-sel');
+    if (edit) { tsel.orig = cell.textContent; cell.setAttribute('contenteditable', 'true'); cell.focus(); placeCaretEnd(cell); }
+    else { cell.removeAttribute('contenteditable'); cell.focus({ preventScroll: false }); }
+  }
+  function beginEdit(replaceChar) {
+    if (!tsel) return;
+    const cell = cellEl(tsel.r, tsel.c); if (!cell) return;
+    tsel.editing = true; tsel.orig = cell.textContent;
+    cell.setAttribute('contenteditable', 'true');
+    if (replaceChar != null) cell.textContent = replaceChar;
+    cell.focus(); placeCaretEnd(cell);
+  }
+  function setCellValue(r, c, val) {
+    const b = state.blocks.find(x => x.id === editTableId); if (!b) return;
+    ensureCell(b, r, c);
+    b.rows[r][c] = val;
+    const cell = cellEl(r, c); if (cell) cell.textContent = val;
+    b.updatedAt = Date.now(); persistBlock(b); markChanged();
+  }
+  function commitCellEdit(cancel) {
+    if (!tsel || !tsel.editing) return;
+    const cell = cellEl(tsel.r, tsel.c);
+    const b = state.blocks.find(x => x.id === tsel.id);
+    if (cell && b) {
+      if (cancel) cell.textContent = tsel.orig != null ? tsel.orig : '';
+      const val = cell.textContent;
+      ensureCell(b, tsel.r, tsel.c);
+      if (b.rows[tsel.r][tsel.c] !== val) { b.rows[tsel.r][tsel.c] = val; b.updatedAt = Date.now(); persistBlock(b); markChanged(); }
+      cell.removeAttribute('contenteditable');
+    }
+    tsel.editing = false;
+  }
+  function moveCell(dr, dc) {
+    if (!tsel) return;
+    const b = state.blocks.find(x => x.id === tsel.id); if (!b) return;
+    const nr = (b.rows || []).length;
+    const nc = (b.rows || []).reduce((m, r) => Math.max(m, r.length), 0);
+    if (!nr || !nc) return;
+    const r = clamp(tsel.r + dr, 0, nr - 1), c = clamp(tsel.c + dc, 0, nc - 1);
+    focusCell(tsel.id, r, c, false);
+  }
+  // Keyboard handling while a table cell is focused (Excel-like).
+  function onTableKey(e) {
+    if (!editTableId || !tsel) return;
+    const el = tableEl(); const a = document.activeElement;
+    if (!el || !a || !el.contains(a) || !a.matches('[data-r]')) return;
+    if (tsel.editing) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitCellEdit(); moveCell(1, 0); }
+      else if (e.key === 'Escape') { e.preventDefault(); commitCellEdit(true); focusCell(tsel.id, tsel.r, tsel.c, false); }
+      else if (e.key === 'Tab') { e.preventDefault(); commitCellEdit(); moveCell(0, e.shiftKey ? -1 : 1); }
+      return;   // all other keys type into the cell normally
+    }
+    if (e.key === 'Enter' || e.key === 'F2') { e.preventDefault(); beginEdit(null); }
+    else if (e.key === 'Escape') { e.preventDefault(); closeTableEditor(); }
+    else if (e.key === 'Tab') { e.preventDefault(); moveCell(0, e.shiftKey ? -1 : 1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); moveCell(-1, 0); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); moveCell(1, 0); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); moveCell(0, -1); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); moveCell(0, 1); }
+    else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); setCellValue(tsel.r, tsel.c, ''); }
+    else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); beginEdit(e.key); }
+  }
+  // structural edits from the drawer — repaint keeps the current selection
+  function tableRepaint() {
+    if (!tableBlock) return;
+    tableBlock.updatedAt = Date.now(); persistBlock(tableBlock); markChanged();
+    refreshBlockCard(tableBlock.id);
+  }
+  function bindTableEditor() {
+    $('#tbl-title').addEventListener('input', (e) => { if (!tableBlock) return; tableBlock.title = e.target.value; tableRepaint(); });
+    $('#tbl-header').addEventListener('change', (e) => { if (!tableBlock) return; tableBlock.header = e.target.checked; tableRepaint(); });
+    wireParam('tbl-fs-val', 'tbl-fs', (v) => { if (!tableBlock) return; tableBlock.fontSize = clamp(Math.round(v), 7, 60); tableRepaint(); });
+    $('#tbl-add-row').addEventListener('click', () => {
+      if (!tableBlock) return; const cols = (tableBlock.rows || []).reduce((m, r) => Math.max(m, r.length), 1);
+      tableBlock.rows.push(new Array(cols).fill('')); tableRepaint();
+    });
+    $('#tbl-add-col').addEventListener('click', () => {
+      if (!tableBlock) return; (tableBlock.rows || []).forEach(r => r.push('')); tableRepaint();
+    });
+    $('#tbl-del-row').addEventListener('click', () => {
+      if (!tableBlock || (tableBlock.rows || []).length <= 1) return; tableBlock.rows.pop(); tableRepaint();
+    });
+    $('#tbl-del-col').addEventListener('click', () => {
+      if (!tableBlock) return; const cols = (tableBlock.rows || []).reduce((m, r) => Math.max(m, r.length), 0);
+      if (cols <= 1) return; tableBlock.rows.forEach(r => { if (r.length) r.pop(); }); tableRepaint();
+    });
+    $('#table-close').addEventListener('click', closeTableEditor);
+    $('#tbl-done').addEventListener('click', closeTableEditor);
+    $('#tbl-reset').addEventListener('click', () => {
+      if (!tableBlock || !tableOrig) return;
+      Object.assign(tableBlock, { title: tableOrig.title, header: tableOrig.header, fontSize: tableOrig.fontSize, w: tableOrig.w, h: tableOrig.h, rows: tableOrig.rows.map(r => r.slice()) });
+      $('#tbl-title').value = tableBlock.title || '';
+      $('#tbl-header').checked = tableBlock.header !== false;
+      const fs = tableBlock.fontSize || 13; $('#tbl-fs').value = fs; $('#tbl-fs-val').value = fs;
+      tableRepaint(); toast('Reset to original');
+    });
+    $('#tbl-delete').addEventListener('click', () => { if (tableBlock) { const id = tableBlock.id; closeTableEditor(); deleteBlock(id); } });
+    // cell interactions (delegated on the persistent world container)
+    world.addEventListener('keydown', onTableKey);
+    world.addEventListener('click', (e) => {
+      if (!editTableId) return;
+      const cell = e.target.closest('[data-r]'); const el = tableEl();
+      if (cell && el && el.contains(cell)) {
+        const r = +cell.dataset.r, c = +cell.dataset.c;
+        if (!(tsel && tsel.editing && tsel.r === r && tsel.c === c)) focusCell(editTableId, r, c, false);
+      }
+    });
   }
 
   /* ---------------------------- files ---------------------------------- */
@@ -2072,6 +2271,12 @@
   function onPointerDown(e) {
     if (state.levelLayout === 'list') return;   // list view handles its own clicks/scroll
 
+    // committing an in-progress table cell edit when clicking away from it
+    if (editTableId && tsel && tsel.editing) {
+      const cc = e.target.closest && e.target.closest('[data-r]');
+      if (!cc || +cc.dataset.r !== tsel.r || +cc.dataset.c !== tsel.c) commitCellEdit();
+    }
+
     // RIGHT-button drag = marquee (rubber-band) selection
     if (e.button === 2) { startMarquee(e); return; }
     if (e.button !== 0) return;
@@ -2128,14 +2333,16 @@
           startX: e.clientX, startY: e.clientY,
           startSize: b.size || 22, startRot: b.rot || 0,
           startW: b.w || Math.round(rect.width / s), startH: b.h || Math.round(rect.height / s),
-          startWrapW: b.w || null,
+          startWrapW: b.w || null, startWrapH: b.h || null, startFont: b.fontSize || 13,
           startBX: b.x, startBY: b.y,
           cx: rect.left + rect.width / 2, cy: rect.top + rect.height / 2,
-          isText: b.kind === 'text', isImage: b.kind === 'image', before: { ...b },
+          isText: b.kind === 'text', isImage: b.kind === 'image', isTable: b.kind === 'table', before: { ...b },
         };
         gizmo.startAngle = Math.atan2(e.clientY - gizmo.cy, e.clientX - gizmo.cx);
         return;
       }
+      // in table cell-edit mode, let clicks reach the cells (don't drag the block)
+      if (editTableId === id && e.target.closest('.data-table')) return;
       if (e.target.closest('[data-blk]')) return;   // hover action buttons
       if (state.linkMode) { handleLinkTap(id); return; }
       // if it's an unselected block and no shift, select just it (so drag moves it)
@@ -2219,6 +2426,15 @@
           b.w = clamp(Math.round(gizmo.startW + (e.clientX - gizmo.startX) / s), 20, 2000);
           b.h = Math.max(20, Math.round(b.w * ratio));   // keep aspect ratio
           if (imageBlock && imageBlock.id === b.id) { const W = $('#i-w'); if (W) { W.value = b.w; $('#i-w-val').value = b.w; } }
+        } else if (gizmo.isTable) {
+          // corner = scale the whole table: font size + (proportionally) any wrap w/h
+          const d = ((e.clientX - gizmo.startX) + (e.clientY - gizmo.startY)) / 2 / s;
+          const nf = clamp(Math.round(gizmo.startFont + d * 0.12), 7, 60);
+          const ratio = nf / (gizmo.startFont || 13);
+          b.fontSize = nf;
+          if (gizmo.startWrapW) b.w = Math.max(60, Math.round(gizmo.startWrapW * ratio));
+          if (gizmo.startWrapH) b.h = Math.max(40, Math.round(gizmo.startWrapH * ratio));
+          if (tableBlock && tableBlock.id === b.id) { $('#tbl-fs').value = b.fontSize; $('#tbl-fs-val').value = b.fontSize; }
         } else {
           b.w = clamp(Math.round(gizmo.startW + (e.clientX - gizmo.startX) / s), 20, 1400);
           b.h = clamp(Math.round(gizmo.startH + (e.clientY - gizmo.startY) / s), 20, 1400);
@@ -2375,6 +2591,7 @@
     if (!$('#shape-drawer').hidden) closeShapeEditor();
     if (!$('#image-drawer').hidden) closeImageEditor();
     if (!$('#ink-drawer').hidden) closeInkEditor();
+    if (!$('#table-drawer').hidden) closeTableEditor();
     hideSearchResults();
     $('#menu').hidden = true;
   }
@@ -2568,6 +2785,11 @@
       else if (b && b.kind === 'shape') openShapeEditor(b.id);
       else if (b && b.kind === 'image') openImageEditor(b.id);
       else if (b && b.kind === 'ink') openInkEditor(b.id);
+      else if (b && b.kind === 'table') {
+        const cell = e.target.closest('.data-table [data-r]');
+        if (editTableId !== b.id) openTableEditor(b.id);
+        if (cell) { focusCell(b.id, +cell.dataset.r, +cell.dataset.c, false); beginEdit(null); }
+      }
       else navigateTo(blockEl.dataset.id);
       return;
     }
@@ -3673,6 +3895,8 @@
   /* ---------------------------- keyboard ------------------------------- */
   function bindKeys() {
     document.addEventListener('keydown', (e) => {
+      // while editing a table's cells, the grid owns the keyboard (see onTableKey)
+      if (editTableId) return;
       const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
       // Command palette — works everywhere, even while typing
       if ((e.key === 'k' || e.key === 'K') && (e.ctrlKey || e.metaKey)) {
@@ -3875,7 +4099,7 @@
     bindToolbar(); bindStage(); bindDrawerFields(); bindFileInputs();
     bindSearch(); bindMenu(); bindConfirm(); bindKeys();
     bindAddMenu(); bindListView(); bindHome(); bindPrompt(); bindBrandMenu(); bindAutosave(); bindProps(); bindAbout(); bindContextMenu();
-    bindTextEditor(); bindShapeEditor(); bindImageEditor(); bindInkEditor(); bindImagePaste(); bindCmdk(); bindMinimap();
+    bindTextEditor(); bindShapeEditor(); bindImageEditor(); bindInkEditor(); bindTableEditor(); bindImagePaste(); bindCmdk(); bindMinimap();
     document.addEventListener('click', (e) => { const rb = e.target.closest && e.target.closest('.param-reset'); if (rb) { e.preventDefault(); resetParamField(rb); } });
     try {
       await DB.open();
