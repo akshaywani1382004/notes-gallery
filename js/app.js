@@ -515,8 +515,10 @@
     });
     t += '</tbody></table></div>';
     el.style.transform = b.rot ? `rotate(${b.rot}deg)` : '';
+    // By default the table shows everything (no cap). A wrap width/height (edge drag)
+    // switches it to a fixed viewport that scrolls.
     el.style.width = b.w ? b.w + 'px' : '';
-    el.style.maxWidth = b.w ? b.w + 'px' : '';
+    el.style.maxWidth = b.w ? b.w + 'px' : 'none';
     el.style.height = b.h ? b.h + 'px' : '';
     el.classList.toggle('editing', editing);
     el.innerHTML =
@@ -545,15 +547,23 @@
       if (w) { td.style.width = td.style.minWidth = td.style.maxWidth = w + 'px'; td.style.whiteSpace = 'normal'; td.style.overflowWrap = 'anywhere'; }
       else { td.style.width = td.style.minWidth = td.style.maxWidth = ''; td.style.whiteSpace = ''; td.style.overflowWrap = ''; }
       const rh = b.rowH && b.rowH[+td.dataset.r];
-      if (rh) { td.style.height = td.style.maxHeight = rh + 'px'; td.style.overflow = 'hidden'; td.style.verticalAlign = 'top'; }
-      else { td.style.height = td.style.maxHeight = ''; td.style.overflow = ''; td.style.verticalAlign = ''; }
+      // row height acts as a minimum — content is never clipped, so everything stays visible
+      if (rh) { td.style.height = rh + 'px'; td.style.verticalAlign = 'top'; td.style.maxHeight = ''; td.style.overflow = ''; }
+      else { td.style.height = ''; td.style.verticalAlign = ''; td.style.maxHeight = ''; td.style.overflow = ''; }
       applyFmtStyle(td, b.cellFmt && b.cellFmt[td.dataset.r + ':' + td.dataset.c]);
     });
     const titleEl = el.querySelector('.table-title');
     if (titleEl) { titleEl.style.fontSize = Math.round(fs * 1.05) + 'px'; titleEl.style.padding = `${Math.round(fs * 0.5)}px ${Math.round(fs * 0.9)}px`; applyFmtStyle(titleEl, b.titleFmt); }
     const sc = el.querySelector('.table-scroll');
+    const wrapped = !!(b.w || b.h);
     sc.style.maxWidth = 'none';
-    sc.style.maxHeight = b.h ? 'none' : '';
+    sc.style.maxHeight = 'none';
+    // Only scroll when a wrap width/height is set; otherwise use plain block flow so the
+    // node grows to fit the whole table exactly (no flex rounding → nothing clipped).
+    el.style.display = wrapped ? 'flex' : 'block';
+    el.style.overflow = wrapped ? 'hidden' : 'visible';
+    sc.style.overflow = wrapped ? 'auto' : 'visible';
+    sc.style.flex = wrapped ? '1 1 auto' : 'none';
     if (editing && tfocus === 'title') { const tt = el.querySelector('.table-title'); if (tt) tt.classList.add('title-sel'); }
     else if (editing && editTableId === b.id && tmulti.size) {
       tmulti.forEach(k => { const [rr, cc] = k.split(':'); const cell = el.querySelector(`[data-r="${rr}"][data-c="${cc}"]`); if (cell) cell.classList.add('cell-sel'); });
