@@ -497,13 +497,17 @@
     const rows = Array.isArray(b.rows) ? b.rows : [];
     const cols = rows.reduce((m, r) => Math.max(m, r.length), 0);
     const editing = (editTableId === b.id);
-    let t = '<div class="table-scroll"><table class="data-table"><tbody>';
+    let cg = '<colgroup>';
+    for (let c = 0; c < cols; c++) { const w = b.colW && b.colW[c]; cg += `<col${w ? ` style="width:${w}px"` : ''}>`; }
+    cg += '</colgroup>';
+    let t = '<div class="table-scroll"><table class="data-table">' + cg + '<tbody>';
     rows.forEach((r, ri) => {
       const cellTag = (ri === 0 && b.header !== false) ? 'th' : 'td';
       t += '<tr>';
       for (let c = 0; c < cols; c++) {
         const v = r[c] != null ? String(r[c]) : '';
-        t += `<${cellTag} data-r="${ri}" data-c="${c}"${editing ? ' tabindex="0"' : ''}>${esc(v)}</${cellTag}>`;
+        const grip = (ri === 0) ? `<span class="col-resize" data-col="${c}" title="Drag to resize column"></span>` : '';
+        t += `<${cellTag} data-r="${ri}" data-c="${c}"${editing ? ' tabindex="0"' : ''}>${esc(v)}${grip}</${cellTag}>`;
       }
       t += '</tr>';
     });
@@ -524,7 +528,12 @@
     const tbl = el.querySelector('.data-table');
     tbl.style.fontSize = fs + 'px';
     const py = Math.max(2, Math.round(fs * 0.38)), px = Math.max(4, Math.round(fs * 0.72));
-    el.querySelectorAll('.data-table th, .data-table td').forEach(td => { td.style.padding = `${py}px ${px}px`; });
+    el.querySelectorAll('.data-table th, .data-table td').forEach(td => {
+      td.style.padding = `${py}px ${px}px`;
+      const w = b.colW && b.colW[+td.dataset.c];
+      if (w) { td.style.width = td.style.minWidth = td.style.maxWidth = w + 'px'; td.style.whiteSpace = 'normal'; td.style.overflowWrap = 'anywhere'; }
+      else { td.style.width = td.style.minWidth = td.style.maxWidth = ''; td.style.whiteSpace = ''; td.style.overflowWrap = ''; }
+    });
     const sc = el.querySelector('.table-scroll');
     sc.style.maxWidth = 'none';
     sc.style.maxHeight = b.h ? 'none' : '';
@@ -1985,7 +1994,7 @@
   let tsel = null;            // { id, r, c, editing, orig }
   let tableOrig = null;       // deep snapshot when the editor opened (for undo + reset)
   const deepRows = (b) => (b.rows || []).map(r => r.slice());
-  const tableSnap = (b) => ({ title: b.title, header: b.header, fontSize: b.fontSize, w: b.w, h: b.h, rows: deepRows(b) });
+  const tableSnap = (b) => ({ title: b.title, header: b.header, fontSize: b.fontSize, w: b.w, h: b.h, colW: (b.colW || []).slice(), rows: deepRows(b) });
 
   function openTableEditor(id) {
     flushEdit();
@@ -2024,6 +2033,18 @@
     tableOrig = null;
     if (id) refreshBlockCard(id);
   }
+  // --- column-width dragging ---
+  let colResize = null;   // { id, c, startX, startW, before }
+  function startColResize(e, id, c) {
+    const b = state.blocks.find(x => x.id === id); if (!b) return;
+    const el = state.els[id]; const cell = el && el.querySelector(`[data-r="0"][data-c="${c}"]`);
+    const s = state.view.scale || 1;
+    const startW = cell ? Math.round(cell.getBoundingClientRect().width / s) : 80;
+    colResize = { id, c, startX: e.clientX, startW, before: { ...b, colW: (b.colW || []).slice() } };
+    selectBlock(id);
+    e.preventDefault(); e.stopPropagation();
+  }
+
   // --- cell selection / editing ---
   function tableEl() { return editTableId ? state.els[editTableId] : null; }
   function cellEl(r, c) { const el = tableEl(); return el ? el.querySelector(`[data-r="${r}"][data-c="${c}"]`) : null; }
@@ -2071,6 +2092,7 @@
       ensureCell(b, tsel.r, tsel.c);
       if (b.rows[tsel.r][tsel.c] !== val) { b.rows[tsel.r][tsel.c] = val; b.updatedAt = Date.now(); persistBlock(b); markChanged(); }
       cell.removeAttribute('contenteditable');
+      if (tsel.r === 0) refreshBlockCard(b.id);   // restore the column grips wiped while editing a header cell
     }
     tsel.editing = false;
   }
@@ -2132,7 +2154,7 @@
     $('#tbl-done').addEventListener('click', closeTableEditor);
     $('#tbl-reset').addEventListener('click', () => {
       if (!tableBlock || !tableOrig) return;
-      Object.assign(tableBlock, { title: tableOrig.title, header: tableOrig.header, fontSize: tableOrig.fontSize, w: tableOrig.w, h: tableOrig.h, rows: tableOrig.rows.map(r => r.slice()) });
+      Object.assign(tableBlock, { title: tableOrig.title, header: tableOrig.header, fontSize: tableOrig.fontSize, w: tableOrig.w, h: tableOrig.h, colW: (tableOrig.colW || []).slice(), rows: tableOrig.rows.map(r => r.slice()) });
       $('#tbl-title').value = tableBlock.title || '';
       $('#tbl-header').checked = tableBlock.header !== false;
       const fs = tableBlock.fontSize || 13; $('#tbl-fs').value = fs; $('#tbl-fs-val').value = fs;
@@ -2318,6 +2340,9 @@
     const blockEl = e.target.closest('.block');
     if (blockEl) {
       const id = blockEl.dataset.id;
+      // column-width grip on a table
+      const colH = e.target.closest('.col-resize');
+      if (colH) { startColResize(e, id, +colH.dataset.col); return; }
       // rotate / resize / edge handle → start a gizmo gesture (not a move)
       const edge = e.target.closest('.tnode-edge');
       const handle = edge || e.target.closest('.tnode-rotate, .tnode-resize');
@@ -2333,7 +2358,7 @@
           startX: e.clientX, startY: e.clientY,
           startSize: b.size || 22, startRot: b.rot || 0,
           startW: b.w || Math.round(rect.width / s), startH: b.h || Math.round(rect.height / s),
-          startWrapW: b.w || null, startWrapH: b.h || null, startFont: b.fontSize || 13,
+          startWrapW: b.w || null, startWrapH: b.h || null, startFont: b.fontSize || 13, startColW: (b.colW || []).slice(),
           startBX: b.x, startBY: b.y,
           cx: rect.left + rect.width / 2, cy: rect.top + rect.height / 2,
           isText: b.kind === 'text', isImage: b.kind === 'image', isTable: b.kind === 'table', before: { ...b },
@@ -2400,6 +2425,15 @@
       if (marquee.moved) { positionMarquee(e.clientX, e.clientY); updateMarqueeSelection(e.clientX, e.clientY); }
       return;
     }
+    if (colResize) {
+      const b = state.blocks.find(x => x.id === colResize.id); if (!b) return;
+      const s = state.view.scale || 1;
+      const nw = Math.max(24, Math.round(colResize.startW + (e.clientX - colResize.startX) / s));
+      if (!Array.isArray(b.colW)) b.colW = [];
+      b.colW[colResize.c] = nw;
+      refreshBlockCard(b.id);
+      return;
+    }
     if (gizmo) {
       const b = state.blocks.find(x => x.id === gizmo.id); if (!b) return;
       const s = state.view.scale || 1;
@@ -2434,6 +2468,7 @@
           b.fontSize = nf;
           if (gizmo.startWrapW) b.w = Math.max(60, Math.round(gizmo.startWrapW * ratio));
           if (gizmo.startWrapH) b.h = Math.max(40, Math.round(gizmo.startWrapH * ratio));
+          if (gizmo.startColW && gizmo.startColW.length) b.colW = gizmo.startColW.map(w => w ? Math.max(20, Math.round(w * ratio)) : w);
           if (tableBlock && tableBlock.id === b.id) { $('#tbl-fs').value = b.fontSize; $('#tbl-fs-val').value = b.fontSize; }
         } else {
           b.w = clamp(Math.round(gizmo.startW + (e.clientX - gizmo.startX) / s), 20, 1400);
@@ -2489,6 +2524,14 @@
   }
 
   async function onPointerUp(e) {
+    if (colResize) {
+      const b = state.blocks.find(x => x.id === colResize.id);
+      if (b) {
+        await persistBlock(b); markChanged();
+        recordChange({ blocks: [{ ...colResize.before }], edges: [], files: [] }, { blocks: [{ ...b, colW: (b.colW || []).slice() }], edges: [], files: [] });
+      }
+      colResize = null; pointers.delete(e.pointerId); return;
+    }
     if (erasing) { erasing = false; pointers.delete(e.pointerId); return; }
     if (inking) {
       const stroke = inking; inking = null;
