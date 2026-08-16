@@ -1757,6 +1757,7 @@
     renderSType(b.shape || 'rectangle');
     $('#s-w').value = b.w || 150; $('#s-w-val').value = (b.w || 150);
     $('#s-h').value = b.h || 100; $('#s-h-val').value = (b.h || 100);
+    $('#s-rot').value = b.rot || 0; $('#s-rot-val').value = (b.rot || 0);
     $('#s-fill').checked = b.fill !== false;
     $('#s-fill-wrap').hidden = b.fill === false;
     renderSFill(b.color);
@@ -1794,6 +1795,7 @@
     }));
     wireParam('s-w-val', 's-w', (v) => { if (!shapeBlock) return; shapeBlock.w = Math.max(1, Math.round(v)); refreshItem(shapeBlock.id); queueShapeSave(); });
     wireParam('s-h-val', 's-h', (v) => { if (!shapeBlock) return; shapeBlock.h = Math.max(1, Math.round(v)); refreshItem(shapeBlock.id); queueShapeSave(); });
+    wireParam('s-rot-val', 's-rot', (v) => { if (!shapeBlock) return; shapeBlock.rot = Math.round(v); refreshItem(shapeBlock.id); queueShapeSave(); });
     $('#s-fill').addEventListener('change', (e) => { if (!shapeBlock) return; shapeBlock.fill = e.target.checked; $('#s-fill-wrap').hidden = !e.target.checked; refreshItem(shapeBlock.id); queueShapeSave(); });
     $('#s-outline').addEventListener('change', (e) => { if (!shapeBlock) return; shapeBlock.outline = e.target.checked; $('#s-outline-wrap').hidden = !e.target.checked; refreshItem(shapeBlock.id); queueShapeSave(); });
     wireParam('s-ow-val', 's-ow', (v) => { if (!shapeBlock) return; shapeBlock.outlineW = Math.max(0, Math.round(v)); refreshItem(shapeBlock.id); queueShapeSave(); });
@@ -2229,6 +2231,7 @@
         b.rot = deg;
         if (textBlock && textBlock.id === b.id) { $('#t-rot').value = deg; $('#t-rot-val').value = deg; }
         if (imageBlock && imageBlock.id === b.id) { $('#i-rot').value = deg; $('#i-rot-val').value = deg; }
+        if (shapeBlock && shapeBlock.id === b.id) { $('#s-rot').value = deg; $('#s-rot-val').value = deg; }
       }
       refreshBlockCard(b.id);
       drawEdges();
