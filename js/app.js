@@ -554,9 +554,8 @@
     sc.style.maxWidth = 'none';
     sc.style.maxHeight = b.h ? 'none' : '';
     if (editing && tfocus === 'title') { const tt = el.querySelector('.table-title'); if (tt) tt.classList.add('title-sel'); }
-    else if (editing && tsel && tsel.id === b.id) {
-      const cell = el.querySelector(`[data-r="${tsel.r}"][data-c="${tsel.c}"]`);
-      if (cell) cell.classList.add('cell-sel');
+    else if (editing && editTableId === b.id && tmulti.size) {
+      tmulti.forEach(k => { const [rr, cc] = k.split(':'); const cell = el.querySelector(`[data-r="${rr}"][data-c="${cc}"]`); if (cell) cell.classList.add('cell-sel'); });
     }
   }
 
@@ -2008,7 +2007,8 @@
   /* ---------------------------- table editor --------------------------- */
   let tableBlock = null;      // block bound to the table drawer
   let editTableId = null;     // id of the table currently in cell-edit mode
-  let tsel = null;            // { id, r, c, editing, orig }
+  let tsel = null;            // { id, r, c, editing, orig } — the active/anchor cell
+  let tmulti = new Set();     // multi-selection of "r:c" keys (includes the anchor)
   let tfocus = 'cell';        // which target the format bar acts on: 'cell' | 'title'
   let titleEditing = false;   // inline title text edit in progress
   let tableOrig = null;       // deep snapshot when the editor opened (for undo + reset)
@@ -2041,7 +2041,7 @@
     const b = tableBlock;
     $('#table-drawer').hidden = true;
     const id = b ? b.id : editTableId;
-    tableBlock = null; editTableId = null; tsel = null; tfocus = 'cell'; titleEditing = false; editBaseline = null;
+    tableBlock = null; editTableId = null; tsel = null; tmulti = new Set(); tfocus = 'cell'; titleEditing = false; editBaseline = null;
     if (b && tableOrig && state.blocks.some(x => x.id === b.id)) {
       const now = tableSnap(b);
       if (JSON.stringify(now) !== JSON.stringify(tableOrig)) {
@@ -2094,10 +2094,29 @@
     const tt = el.querySelector('.table-title'); if (tt) tt.classList.remove('title-sel');
     tfocus = 'cell';
     tsel = { id, r, c, editing: !!edit };
+    tmulti = new Set([r + ':' + c]);
     const cell = cellEl(r, c); if (!cell) return;
     cell.classList.add('cell-sel');
     if (edit) { tsel.orig = cell.textContent; cell.setAttribute('contenteditable', 'true'); cell.focus(); placeCaretEnd(cell); }
     else { cell.removeAttribute('contenteditable'); cell.focus({ preventScroll: false }); }
+    syncTablePanel();
+  }
+  // shift-click: toggle a cell in/out of the multi-selection (anchor follows the click)
+  function toggleCellSel(id, r, c) {
+    if (tsel && tsel.editing) commitCellEdit();
+    if (titleEditing) commitTitleEdit();
+    tfocus = 'cell';
+    const key = r + ':' + c;
+    if (tmulti.has(key)) { if (tmulti.size > 1) tmulti.delete(key); }
+    else tmulti.add(key);
+    // anchor = the clicked cell if still selected, else the first remaining
+    const anchorKey = tmulti.has(key) ? key : [...tmulti][0];
+    const [ar, ac] = anchorKey.split(':').map(Number);
+    tsel = { id, r: ar, c: ac, editing: false };
+    const el = state.els[id]; if (!el) return;
+    el.querySelectorAll('.cell-sel').forEach(x => x.classList.remove('cell-sel'));
+    tmulti.forEach(k => { const [rr, cc] = k.split(':'); const ce = el.querySelector(`[data-r="${rr}"][data-c="${cc}"]`); if (ce) ce.classList.add('cell-sel'); });
+    const a = cellEl(tsel.r, tsel.c); if (a) a.focus({ preventScroll: true });
     syncTablePanel();
   }
   // --- title selection / inline editing ---
@@ -2140,6 +2159,7 @@
     const b = tableBlock; if (!b) return;
     commitCellEdit(); commitTitleEdit();     // keep any in-progress inline text before repainting
     if (tfocus === 'title') { b.titleFmt = { ...(b.titleFmt || {}), [prop]: val }; }
+    else if (tmulti.size) { b.cellFmt = b.cellFmt || {}; tmulti.forEach(k => { b.cellFmt[k] = { ...(b.cellFmt[k] || {}), [prop]: val }; }); }
     else if (tsel) { const k = tsel.r + ':' + tsel.c; b.cellFmt = b.cellFmt || {}; b.cellFmt[k] = { ...(b.cellFmt[k] || {}), [prop]: val }; }
     else return;
     b.updatedAt = Date.now(); persistBlock(b); markChanged();
@@ -2163,8 +2183,9 @@
     const b = tableBlock; if (!b) return;
     const fmt = activeFmt();
     const label = $('#tbl-active-label'), input = $('#tbl-active-input');
-    if (tfocus === 'title') { if (label) label.textContent = 'Title'; if (input) input.value = b.title || ''; }
-    else if (tsel) { if (label) label.textContent = 'Cell ' + colLetter(tsel.c) + (tsel.r + 1); if (input) input.value = (b.rows[tsel.r] && b.rows[tsel.r][tsel.c]) || ''; }
+    if (tfocus === 'title') { if (label) label.textContent = 'Title'; if (input) { input.value = b.title || ''; input.disabled = false; } }
+    else if (tmulti.size > 1) { if (label) label.textContent = tmulti.size + ' cells'; if (input) { input.value = ''; input.disabled = true; } }
+    else if (tsel) { if (label) label.textContent = 'Cell ' + colLetter(tsel.c) + (tsel.r + 1); if (input) { input.value = (b.rows[tsel.r] && b.rows[tsel.r][tsel.c]) || ''; input.disabled = false; } }
     $('#tbl-b').classList.toggle('on', !!fmt.bold);
     $('#tbl-i').classList.toggle('on', !!fmt.italic);
     $$('#tbl-align button').forEach(x => x.classList.toggle('on', (fmt.align || 'left') === x.dataset.al));
@@ -2175,6 +2196,11 @@
   function beginEdit(replaceChar) {
     if (!tsel) return;
     const cell = cellEl(tsel.r, tsel.c); if (!cell) return;
+    if (tmulti.size > 1) {   // typing/F2 collapses a multi-selection to the anchor cell
+      tmulti = new Set([tsel.r + ':' + tsel.c]);
+      const el = state.els[tsel.id];
+      if (el) { el.querySelectorAll('.cell-sel').forEach(x => x.classList.remove('cell-sel')); cell.classList.add('cell-sel'); }
+    }
     tsel.editing = true; tsel.orig = cell.textContent;
     cell.setAttribute('contenteditable', 'true');
     if (replaceChar != null) cell.textContent = replaceChar;
@@ -2237,7 +2263,7 @@
     else if (e.key === 'ArrowDown') { e.preventDefault(); moveCell(1, 0); }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); moveCell(0, -1); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); moveCell(0, 1); }
-    else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); setCellValue(tsel.r, tsel.c, ''); }
+    else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); if (tmulti.size > 1) tmulti.forEach(k => { const [rr, cc] = k.split(':').map(Number); setCellValue(rr, cc, ''); }); else setCellValue(tsel.r, tsel.c, ''); }
     else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); beginEdit(e.key); }
   }
   // structural edits from the drawer — repaint keeps the current selection
@@ -2503,10 +2529,11 @@
         if (cell) {
           const r = +cell.dataset.r, c = +cell.dataset.c;
           if (editTableId === id) {
+            if (e.shiftKey) { toggleCellSel(id, r, c); return; }
             if (!(tsel && tsel.editing && tsel.r === r && tsel.c === c)) focusCell(id, r, c, false);
             return;
           }
-          if (state.selectedIds.has(id)) { openTableEditor(id); focusCell(id, r, c, false); return; }
+          if (state.selectedIds.has(id)) { openTableEditor(id); if (e.shiftKey) toggleCellSel(id, r, c); else focusCell(id, r, c, false); return; }
           // otherwise fall through: first click selects the block (so it can be dragged)
         } else if (titleHit) {
           if (editTableId === id) { if (!titleEditing) setFocusTitle(); return; }
