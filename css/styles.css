@@ -235,7 +235,11 @@ input, textarea { font-size: 15px; }
 .add-menu .am-text { flex: 1; }
 .add-menu .am-caret { margin-left: auto; color: var(--text-mute); display: inline-flex; }
 .add-menu .am-caret .ic { width: 16px; height: 16px; }
-.add-menu .am-back .am-ico { background: var(--panel-2); color: var(--text-mute); }
+/* Import submenu flyout */
+.am-sub { position: relative; }
+.am-sub > .am-parent { width: 100%; }
+.am-sub:hover > .am-parent, #am-import-wrap:not([data-x]) > .am-parent:focus { background: var(--panel-2); }
+.add-flyout { position: absolute; top: 0; z-index: 90; padding: 7px; }
 
 /* ---------------------------- Type toggle (drawer) --------------------- */
 .seg { display: flex; gap: 6px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 11px; padding: 4px; }

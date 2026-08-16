@@ -4227,9 +4227,22 @@
 
   /* ---------------------------- add popover ---------------------------- */
   let addHideTimer = null;
+  function showImportFlyout(on) {
+    const fly = $('#add-import'), wrap = $('#am-import-wrap');
+    if (!fly || !wrap) return;
+    if (!on) { fly.hidden = true; return; }
+    fly.hidden = false;
+    // default: open to the right of the Import row; flip left if it would overflow
+    fly.style.left = '100%'; fly.style.right = 'auto'; fly.style.marginLeft = '6px'; fly.style.marginRight = '';
+    fly.style.top = '0';
+    const r = fly.getBoundingClientRect();
+    if (r.right > window.innerWidth - 8) {
+      fly.style.left = 'auto'; fly.style.right = '100%'; fly.style.marginLeft = ''; fly.style.marginRight = '6px';
+    }
+  }
   function openAddMenu(anchor) {
     const menu = $('#add-menu');
-    $('#add-main').hidden = false; $('#add-import').hidden = true;   // always start on the main page
+    showImportFlyout(false);   // always start collapsed
     menu.hidden = false;
     const a = anchor.getBoundingClientRect();
     const mw = menu.offsetWidth || 250;
@@ -4239,7 +4252,7 @@
     menu.style.left = left + 'px';
     menu.style.top = (a.bottom + 6) + 'px';
   }
-  function hideAddMenu() { $('#add-menu').hidden = true; }
+  function hideAddMenu() { $('#add-menu').hidden = true; showImportFlyout(false); }
   function scheduleHideAdd() { clearTimeout(addHideTimer); addHideTimer = setTimeout(hideAddMenu, 180); }
   function cancelHideAdd() { clearTimeout(addHideTimer); }
 
@@ -4255,11 +4268,15 @@
       e.stopPropagation();
       if (menu.hidden) openAddMenu(btn); else hideAddMenu();
     });
+    // Import submenu opens to the side on hover (desktop) and on click/tap (touch)
+    const importWrap = $('#am-import-wrap');
+    let importHideTimer = null;
+    importWrap.addEventListener('mouseenter', () => { clearTimeout(importHideTimer); showImportFlyout(true); });
+    importWrap.addEventListener('mouseleave', () => { clearTimeout(importHideTimer); importHideTimer = setTimeout(() => showImportFlyout(false), 180); });
     menu.addEventListener('click', (e) => {
       const item = e.target.closest('[data-add]'); if (!item) return;
       const kind = item.dataset.add;
-      if (kind === 'import') { $('#add-main').hidden = true; $('#add-import').hidden = false; return; }
-      if (kind === 'import-back') { $('#add-import').hidden = true; $('#add-main').hidden = false; return; }
+      if (kind === 'import') { showImportFlyout($('#add-import').hidden); return; }   // tap toggles the flyout
       hideAddMenu();
       if (kind === 'image') pickImage();
       else if (kind === 'txtfile') pickTextFile();
