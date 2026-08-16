@@ -534,6 +534,7 @@
       if ('italic' in fmt) node.style.fontStyle = fmt.italic ? 'italic' : 'normal';
       if (fmt.align) node.style.textAlign = fmt.align;
       if (fmt.color) node.style.color = fmt.color;
+      if (fmt.bg) node.style.backgroundColor = fmt.bg;
       if (fmt.font) node.style.fontFamily = FONT_STACK[fmt.font] || '';
     };
     const py = Math.max(2, Math.round(fs * 0.38)), px = Math.max(4, Math.round(fs * 0.72));
@@ -2145,16 +2146,18 @@
     refreshBlockCard(b.id);
     syncTablePanel();
   }
-  function renderTblColors(active) {
-    const wrap = $('#tbl-colors'); if (!wrap) return; wrap.innerHTML = '';
+  function renderSwatchRow(wrapId, prop, active) {
+    const wrap = $('#' + wrapId); if (!wrap) return; wrap.innerHTML = '';
     [''].concat(PALETTE, ['#ffffff', '#0a0b0d']).forEach(col => {
       const s = document.createElement('div');
       s.className = 'swatch' + (col === '' ? ' swatch-auto' : '') + ((active || '') === col ? ' active' : '');
       if (col) s.style.background = col; s.title = col || 'Default';
-      s.addEventListener('click', () => applyFmt('color', col));
+      s.addEventListener('click', () => applyFmt(prop, col));
       wrap.appendChild(s);
     });
   }
+  const renderTblColors = (active) => renderSwatchRow('tbl-colors', 'color', active);
+  const renderTblBg = (active) => renderSwatchRow('tbl-bg', 'bg', active);
   // Reflect the active target in the drawer's format bar + active-text field.
   function syncTablePanel() {
     const b = tableBlock; if (!b) return;
@@ -2167,6 +2170,7 @@
     $$('#tbl-align button').forEach(x => x.classList.toggle('on', (fmt.align || 'left') === x.dataset.al));
     $$('#tbl-font button').forEach(x => x.classList.toggle('on', (fmt.font || 'sans') === x.dataset.font));
     renderTblColors(fmt.color || '');
+    renderTblBg(fmt.bg || '');
   }
   function beginEdit(replaceChar) {
     if (!tsel) return;
