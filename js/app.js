@@ -123,6 +123,7 @@
     triangle: '<path d="M12 4.5 20.5 19H3.5Z"/>',
     star: '<path d="M12 3.6l2.6 5.2 5.8.9-4.2 4.1 1 5.7-5.2-2.7-5.2 2.7 1-5.7L3.6 9.7l5.8-.9z"/>',
     line: '<line x1="4.5" y1="19.5" x2="19.5" y2="4.5"/>',
+    table: '<rect x="4" y="5" width="16" height="14" rx="2"/><line x1="4" y1="10" x2="20" y2="10"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="5" x2="10" y2="19"/>',
     image: '<rect x="3.5" y="5" width="17" height="14" rx="2.2"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M4 17l4.5-4.5 3 3L15 12l5 5"/>',
     pen: '<path d="M4 20l1-4L16 5a2 2 0 0 1 3 3L8 19l-4 1Z"/><line x1="14" y1="7" x2="17" y2="10"/>',
     eraser: '<path d="M9 20H20"/><path d="M15.5 5.5l3 3a2 2 0 0 1 0 2.8L11 19l-4.5-4.5a2 2 0 0 1 0-2.8l6.2-6.2a2 2 0 0 1 2.8 0Z"/><line x1="8" y1="9" x2="14" y2="15"/>',
@@ -292,7 +293,8 @@
       + (b.kind === 'text' ? ' block-text' : '')
       + (b.kind === 'shape' ? ' block-shape' : '')
       + (b.kind === 'image' ? ' block-image' : '')
-      + (b.kind === 'ink' ? ' block-ink' : '');
+      + (b.kind === 'ink' ? ' block-ink' : '')
+      + (b.kind === 'table' ? ' block-table' : '');
     el.dataset.id = b.id;
     el.style.left = b.x + 'px';
     el.style.top = b.y + 'px';
@@ -301,6 +303,7 @@
     else if (b.kind === 'shape') paintShapeNode(el, b);
     else if (b.kind === 'image') paintImageNode(el, b);
     else if (b.kind === 'ink') paintInkNode(el, b);
+    else if (b.kind === 'table') paintTableNode(el, b);
     else { el.style.setProperty('--b-accent', b.color || PALETTE[0]); paintBlock(el, b); }
     el.classList.toggle('locked', !!b.locked);
     state.els[b.id] = el;
@@ -470,6 +473,7 @@
     else if (b.kind === 'shape') { paintShapeNode(el, b); }
     else if (b.kind === 'image') { paintImageNode(el, b); }
     else if (b.kind === 'ink') { paintInkNode(el, b); }
+    else if (b.kind === 'table') { paintTableNode(el, b); }
     else { paintBlock(el, b); el.style.setProperty('--b-accent', b.color || PALETTE[0]); }
     el.classList.toggle('locked', !!b.locked);
   }
@@ -485,6 +489,27 @@
       `<svg class="ink-svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">` +
       `<polyline points="${d}" fill="none" stroke="${esc(b.color || penColor)}" stroke-width="${b.width || 3}" stroke-linecap="round" stroke-linejoin="round"/></svg>` +
       `<div class="block-actions"><button class="blk-btn" data-blk="edit" title="Edit ink">${ic('pencil')}</button></div>`;
+  }
+
+  // table node (kind === 'table'); rows is an array of arrays of cell strings
+  function paintTableNode(el, b) {
+    const rows = Array.isArray(b.rows) ? b.rows : [];
+    const cols = rows.reduce((m, r) => Math.max(m, r.length), 0);
+    let t = '<div class="table-scroll"><table class="data-table"><tbody>';
+    rows.forEach((r, ri) => {
+      const cellTag = (ri === 0 && b.header !== false) ? 'th' : 'td';
+      t += '<tr>';
+      for (let c = 0; c < cols; c++) { const v = r[c] != null ? String(r[c]) : ''; t += `<${cellTag}>${esc(v)}</${cellTag}>`; }
+      t += '</tr>';
+    });
+    t += '</tbody></table></div>';
+    el.style.transform = b.rot ? `rotate(${b.rot}deg)` : '';
+    el.style.width = b.w ? b.w + 'px' : '';
+    el.style.height = b.h ? b.h + 'px' : '';
+    el.innerHTML =
+      (b.title ? `<div class="table-title">${esc(b.title)}</div>` : '') +
+      t +
+      `<div class="tnode-resize" title="Resize"></div>`;
   }
 
   // Update whichever representation (canvas card or list row) exists for a block.
@@ -512,6 +537,15 @@
           <div class="lr-main"><div class="lr-title">${esc((b.text || 'Text').slice(0, 80))}</div>
           <div class="lr-sub">Text</div></div>
           <div class="lr-actions"><button class="lr-btn" data-edit="${esc(b.id)}" title="Edit text">${ic('pencil')}</button></div>
+        </div>`;
+    }
+    if (b.kind === 'table') {
+      const rows = Array.isArray(b.rows) ? b.rows : [];
+      const cols = rows.reduce((m, r) => Math.max(m, r.length), 0);
+      return `<div class="list-row" data-id="${esc(b.id)}" style="--b-accent:${esc(b.color || 'var(--accent)')}">
+          <div class="lr-ico">${ic('table')}</div>
+          <div class="lr-main"><div class="lr-title">${esc(b.title || 'Table')}</div>
+          <div class="lr-sub">Table · ${rows.length}×${cols}</div></div>
         </div>`;
     }
     if (b.kind === 'image' || b.kind === 'shape' || b.kind === 'ink') {
@@ -828,10 +862,11 @@
     for (const f of files) {
       const at = { x: base.x + i * 28, y: base.y + i * 28 };
       if (/^image\//.test(f.type)) { await createImageBlock(f, { at, openAfter: false }); n++; i++; }
+      else if (/\.xlsx$/i.test(f.name)) { await importSheetFile(f, at); n++; i++; }
       else if (isCsvFile(f)) { await createListFromCsv(f, at); n++; i++; }
       else if (isTextFile(f)) { await createTextFromFile(f, { at, silent: true }); n++; i++; }
     }
-    if (!n) toast('Drop images, .txt/.md, or .csv files.');
+    if (!n) toast('Drop images, .xlsx, .txt/.md, or .csv files.');
     else if (n > 1) toast(`${n} files imported`);
   }
 
@@ -891,6 +926,121 @@
     recordChange(emptySet(), { blocks: made, edges: [], files: [] });
     selectBlock(listId);
     toast(`Imported ${made.length - 1} rows as a list`);
+  }
+
+  /* ---- import a spreadsheet (.xlsx / .csv) → a table node ------------- */
+  let pendingSheetAt = null;
+  function pickSheetFile(at) {
+    if (state.levelLayout !== 'canvas') { toast('Open a canvas to import a spreadsheet here.'); return; }
+    pendingSheetAt = at || centerOfView();
+    $('#xlsx-input').click();
+  }
+  // Inflate a raw DEFLATE stream (zip entries) using the browser's DecompressionStream.
+  async function inflateRaw(bytes) {
+    const ds = new DecompressionStream('deflate-raw');
+    const ab = await new Response(new Blob([bytes]).stream().pipeThrough(ds)).arrayBuffer();
+    return new Uint8Array(ab);
+  }
+  // Minimal ZIP reader (central directory) — enough to pull entries out of an .xlsx.
+  function readZip(u8) {
+    const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    let eocd = -1;
+    for (let i = u8.length - 22; i >= 0 && i >= u8.length - 22 - 65536; i--) {
+      if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) throw new Error('not a zip');
+    const count = dv.getUint16(eocd + 10, true);
+    let p = dv.getUint32(eocd + 16, true);
+    const entries = {};
+    const td = new TextDecoder();
+    for (let n = 0; n < count; n++) {
+      if (dv.getUint32(p, true) !== 0x02014b50) break;
+      const method = dv.getUint16(p + 10, true);
+      const compSize = dv.getUint32(p + 20, true);
+      const nameLen = dv.getUint16(p + 28, true);
+      const extraLen = dv.getUint16(p + 30, true);
+      const commentLen = dv.getUint16(p + 32, true);
+      const localOff = dv.getUint32(p + 42, true);
+      const name = td.decode(u8.subarray(p + 46, p + 46 + nameLen));
+      entries[name] = { method, compSize, localOff };
+      p += 46 + nameLen + extraLen + commentLen;
+    }
+    return { entries, dv, u8 };
+  }
+  async function zipRead(zip, name) {
+    const e = zip.entries[name]; if (!e) return null;
+    const lnLen = zip.dv.getUint16(e.localOff + 26, true);
+    const leLen = zip.dv.getUint16(e.localOff + 28, true);
+    const start = e.localOff + 30 + lnLen + leLen;
+    const raw = zip.u8.subarray(start, start + e.compSize);
+    return e.method === 0 ? raw.slice() : await inflateRaw(raw);
+  }
+  const colToIndex = (ref) => { const m = /^([A-Z]+)/.exec(ref || ''); if (!m) return -1; let n = 0; for (const ch of m[1]) n = n * 26 + (ch.charCodeAt(0) - 64); return n - 1; };
+  // Parse the first worksheet of an .xlsx into rows[][] (uses shared strings).
+  async function parseXlsx(arrayBuffer) {
+    if (typeof DecompressionStream === 'undefined') throw new Error('This browser can’t unzip .xlsx — try .csv.');
+    const zip = readZip(new Uint8Array(arrayBuffer));
+    const dec = new TextDecoder();
+    const parseXml = (bytes) => new DOMParser().parseFromString(dec.decode(bytes), 'application/xml');
+    let shared = [];
+    if (zip.entries['xl/sharedStrings.xml']) {
+      const doc = parseXml(await zipRead(zip, 'xl/sharedStrings.xml'));
+      shared = Array.from(doc.getElementsByTagName('si')).map(si =>
+        Array.from(si.getElementsByTagName('t')).map(t => t.textContent).join(''));
+    }
+    let sheet = zip.entries['xl/worksheets/sheet1.xml'] ? 'xl/worksheets/sheet1.xml'
+      : Object.keys(zip.entries).find(k => /^xl\/worksheets\/.*\.xml$/.test(k));
+    if (!sheet) throw new Error('no worksheet found');
+    const sdoc = parseXml(await zipRead(zip, sheet));
+    const grid = []; let maxCol = 0;
+    for (const rowEl of Array.from(sdoc.getElementsByTagName('row'))) {
+      const arr = [];
+      for (const c of Array.from(rowEl.getElementsByTagName('c'))) {
+        const col = colToIndex(c.getAttribute('r'));
+        const t = c.getAttribute('t');
+        const vEl = c.getElementsByTagName('v')[0];
+        const isEl = c.getElementsByTagName('is')[0];
+        let val = '';
+        if (t === 's' && vEl) { const i = parseInt(vEl.textContent, 10); val = shared[i] != null ? shared[i] : ''; }
+        else if (t === 'inlineStr' && isEl) { val = Array.from(isEl.getElementsByTagName('t')).map(x => x.textContent).join(''); }
+        else if (vEl) { val = vEl.textContent; }
+        if (col >= 0) { arr[col] = val; if (col + 1 > maxCol) maxCol = col + 1; }
+      }
+      grid.push(arr);
+    }
+    const rows = grid.map(r => { const a = []; for (let i = 0; i < maxCol; i++) a.push(r[i] != null ? r[i] : ''); return a; });
+    return rows.filter(r => r.some(c => String(c).trim() !== ''));
+  }
+  async function importSheetFile(file, at) {
+    const isCsv = file.type === 'text/csv' || /\.csv$/i.test(file.name);
+    const isXlsx = /\.xlsx$/i.test(file.name);
+    if (!isCsv && !isXlsx) { toast('Choose an .xlsx or .csv file (.xls isn’t supported).'); return; }
+    let rows;
+    try {
+      rows = isCsv ? parseCsv(await file.text()) : await parseXlsx(await file.arrayBuffer());
+    } catch (err) { toast(err && err.message ? err.message : 'Could not read that spreadsheet.'); return; }
+    const name = file.name.replace(/\.(xlsx|csv)$/i, '') || 'Table';
+    await createTableBlock(rows, name, at);
+  }
+  async function createTableBlock(rows, name, at) {
+    if (!rows || !rows.length) { toast('That sheet looks empty.'); return; }
+    rows = rows.slice(0, 200).map(r => r.slice(0, 40));   // sane caps
+    const pos = at || centerOfView();
+    const now = Date.now();
+    const b = {
+      id: uid(), ws: state.ws, parentId: state.level, kind: 'table',
+      rows, header: true, title: name || 'Table',
+      description: '', notes: '', tags: '', layout: 'canvas', color: '', icon: '',
+      x: Math.round(pos.x - 180), y: Math.round(pos.y - 60), z: 0, createdAt: now, updatedAt: now,
+    };
+    await DB.saveBlock(b);
+    state.blocks.push(b);
+    state.childCounts[b.id] = { blocks: 0, files: 0 };
+    world.appendChild(makeBlockEl(b));
+    $('#empty-hint').hidden = true;
+    recordChange(emptySet(), { blocks: [b], edges: [], files: [] });
+    selectBlock(b.id);
+    toast(`Imported ${rows.length}×${rows[0].length} table`);
   }
 
   /* ---------------------------- undo / redo ---------------------------- */
@@ -1322,6 +1472,7 @@
     else if (b && b.kind === 'shape') openShapeEditor(id);
     else if (b && b.kind === 'image') openImageEditor(id);
     else if (b && b.kind === 'ink') openInkEditor(id);
+    else if (b && b.kind === 'table') selectBlock(id);   // tables have no editor drawer
     else openEditor(id);
   }
 
@@ -1891,6 +2042,12 @@
       e.target.value = '';
       if (!f) return;
       if (isCsvFile(f)) createListFromCsv(f, pendingTextAt); else createTextFromFile(f);
+    });
+    $('#xlsx-input').addEventListener('change', (e) => {
+      const f = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (f) importSheetFile(f, pendingSheetAt);
+      pendingSheetAt = null;
     });
     const dz = $('#dropzone');
     ['dragenter','dragover'].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('over'); }));
@@ -3615,6 +3772,7 @@
       hideAddMenu();
       if (item.dataset.add === 'image') pickImage();
       else if (item.dataset.add === 'txtfile') pickTextFile();
+      else if (item.dataset.add === 'xlsx') pickSheetFile();
       else createBlock(item.dataset.add);
     });
     document.addEventListener('click', (e) => {
