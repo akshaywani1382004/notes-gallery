@@ -2070,8 +2070,18 @@
     tsel = { id, r: 0, c: 0, editing: false };
     focusCell(id, 0, 0, false);
   }
+  // Enter cell-interaction mode WITHOUT opening the drawer — a single click on a
+  // cell just selects it; the edit panel only opens from the pencil button.
+  function enterTableCells(id) {
+    const b = state.blocks.find(x => x.id === id); if (!b) return;
+    closeDrawerIfOpen();   // close any other editor (incl. a table drawer / other cell-mode)
+    selectBlock(id);
+    editTableId = id; tfocus = 'cell'; titleEditing = false; tmultiMode = false;
+    tsel = null; tmulti = new Set();
+    refreshBlockCard(id);
+  }
   function closeTableEditor() {
-    if ($('#table-drawer').hidden && !tableBlock) return;
+    if ($('#table-drawer').hidden && !tableBlock && !editTableId) return;
     commitCellEdit(); commitTitleEdit();
     const b = tableBlock;
     $('#table-drawer').hidden = true;
@@ -2155,6 +2165,7 @@
     syncTablePanel();
   }
   // --- title selection / inline editing ---
+  const activeTableBlock = () => tableBlock || state.blocks.find(x => x.id === editTableId) || null;
   function titleElOf() { const el = tableEl(); return el ? el.querySelector('.table-title') : null; }
   function setFocusTitle() {
     if (tsel && tsel.editing) commitCellEdit();
@@ -2165,7 +2176,7 @@
     syncTablePanel();
   }
   function beginTitleEdit() {
-    const tt = titleElOf(); const b = tableBlock; if (!tt || !b) return;
+    const tt = titleElOf(); const b = activeTableBlock(); if (!tt || !b) return;
     setFocusTitle();
     titleEditing = true;
     if (tt.classList.contains('empty')) { tt.textContent = ''; tt.classList.remove('empty'); }
@@ -2173,7 +2184,7 @@
   }
   function commitTitleEdit(cancel) {
     if (!titleEditing) return;
-    const tt = titleElOf(); const b = tableBlock;
+    const tt = titleElOf(); const b = activeTableBlock();
     if (tt && b) {
       const val = cancel ? (tableOrig ? tableOrig.title : b.title) : tt.textContent.trim();
       tt.removeAttribute('contenteditable');
@@ -2570,11 +2581,11 @@
             if (!(tsel && tsel.editing && tsel.r === r && tsel.c === c)) focusCell(id, r, c, false);
             return;
           }
-          if (state.selectedIds.has(id)) { openTableEditor(id); if (e.shiftKey || tmultiMode) toggleCellSel(id, r, c); else focusCell(id, r, c, false); return; }
+          if (state.selectedIds.has(id)) { enterTableCells(id); if (e.shiftKey || tmultiMode) toggleCellSel(id, r, c); else focusCell(id, r, c, false); return; }
           // otherwise fall through: first click selects the block (so it can be dragged)
         } else if (titleHit) {
           if (editTableId === id) { if (!titleEditing) setFocusTitle(); return; }
-          if (state.selectedIds.has(id)) { openTableEditor(id); setFocusTitle(); return; }
+          if (state.selectedIds.has(id)) { enterTableCells(id); setFocusTitle(); return; }
           // else fall through: first click selects the block
         }
         // clicking the border/padding falls through → normal drag to move the block
@@ -3060,7 +3071,7 @@
       else if (b && b.kind === 'table') {
         const cell = e.target.closest('.data-table [data-r]');
         const titleHit = e.target.closest('.table-title');
-        if (editTableId !== b.id) openTableEditor(b.id);
+        if (editTableId !== b.id) enterTableCells(b.id);   // inline edit, no drawer
         if (cell) { focusCell(b.id, +cell.dataset.r, +cell.dataset.c, false); beginEdit(null); }
         else if (titleHit) { beginTitleEdit(); }
       }
