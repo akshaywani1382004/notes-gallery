@@ -4229,6 +4229,7 @@
   let addHideTimer = null;
   function openAddMenu(anchor) {
     const menu = $('#add-menu');
+    $('#add-main').hidden = false; $('#add-import').hidden = true;   // always start on the main page
     menu.hidden = false;
     const a = anchor.getBoundingClientRect();
     const mw = menu.offsetWidth || 250;
@@ -4256,11 +4257,14 @@
     });
     menu.addEventListener('click', (e) => {
       const item = e.target.closest('[data-add]'); if (!item) return;
+      const kind = item.dataset.add;
+      if (kind === 'import') { $('#add-main').hidden = true; $('#add-import').hidden = false; return; }
+      if (kind === 'import-back') { $('#add-import').hidden = true; $('#add-main').hidden = false; return; }
       hideAddMenu();
-      if (item.dataset.add === 'image') pickImage();
-      else if (item.dataset.add === 'txtfile') pickTextFile();
-      else if (item.dataset.add === 'xlsx') pickSheetFile();
-      else createBlock(item.dataset.add);
+      if (kind === 'image') pickImage();
+      else if (kind === 'txtfile') pickTextFile();
+      else if (kind === 'xlsx') pickSheetFile();
+      else createBlock(kind);
     });
     document.addEventListener('click', (e) => {
       if (menu.hidden) return;
