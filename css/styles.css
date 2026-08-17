@@ -496,6 +496,10 @@ input, textarea { font-size: 15px; }
   box-shadow: var(--shadow); display: flex; flex-direction: column; transform-origin: center center;
 }
 .block.block-table::before { display: none; }
+.block.block-table .block-actions { top: -15px; right: -8px; }
+.block.block-table .table-title { border-radius: 11px 11px 0 0; }
+.block.block-table .table-scroll { border-radius: 0 0 11px 11px; }
+.block.block-table .table-scroll:first-child { border-radius: 11px; }
 .block.block-table:hover { transform: none; box-shadow: var(--shadow-lg); }
 .block.block-table.selected { outline: 2px solid var(--accent); outline-offset: 3px; }
 .block.block-table .table-title { flex: 0 0 auto; font-weight: 700; font-size: 12px; padding: 8px 12px;

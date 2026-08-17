@@ -561,7 +561,7 @@
     // Only scroll when a wrap width/height is set; otherwise use plain block flow so the
     // node grows to fit the whole table exactly (no flex rounding → nothing clipped).
     el.style.display = wrapped ? 'flex' : 'block';
-    el.style.overflow = wrapped ? 'hidden' : 'visible';
+    el.style.overflow = 'visible';   // never clip the hover pencil/handles; .table-scroll does the clipping
     sc.style.overflow = wrapped ? 'auto' : 'visible';
     sc.style.flex = wrapped ? '1 1 auto' : 'none';
     if (editing && tfocus === 'title') { const tt = el.querySelector('.table-title'); if (tt) tt.classList.add('title-sel'); }
@@ -2499,8 +2499,23 @@
     }
     if (editTableId && titleEditing && !(e.target.closest && e.target.closest('.table-title'))) commitTitleEdit();
 
-    // RIGHT-button drag = marquee (rubber-band) selection
-    if (e.button === 2) { startMarquee(e); return; }
+    // RIGHT-click on a table cell (or title) → open the edit panel for that cell
+    if (e.button === 2) {
+      const rcCell = e.target.closest('.block-table .data-table [data-r]');
+      const rcTitle = e.target.closest('.block-table .table-title');
+      if (rcCell || rcTitle) {
+        const tEl = e.target.closest('.block');
+        if (tEl) {
+          e.preventDefault();
+          openTableEditor(tEl.dataset.id);
+          if (rcCell) focusCell(tEl.dataset.id, +rcCell.dataset.r, +rcCell.dataset.c, false);
+          else setFocusTitle();
+          return;
+        }
+      }
+      // RIGHT-button drag elsewhere = marquee (rubber-band) selection
+      startMarquee(e); return;
+    }
     if (e.button !== 0) return;
 
     // pen eraser: wipe any ink stroke touched (drag continues in onPointerMove)
