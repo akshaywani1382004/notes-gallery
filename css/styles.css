@@ -890,13 +890,13 @@ input, textarea { font-size: 15px; }
 @media (max-width: 560px) {
   :root { --bar-h: 56px; }
   #topbar { flex-wrap: wrap; height: auto; padding: 8px 10px; gap: 8px; row-gap: 7px; }
-  .bar-left { order: 1; align-self: flex-start; }
-  .bar-right { order: 2; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; row-gap: 7px; }
-  .bar-center { order: 3; flex-basis: 100%; }
-  /* row 1: Add + Link · row 2: pen, map, autosave, status, help, theme, more */
-  .bar-break { display: block; flex-basis: 100%; height: 0; }
-  #app.home-mode .bar-break { display: none; }
-  .bar-right { gap: 6px; }
+  /* row 1: logo + home/back/forward + search · row 2: all tools */
+  .bar-left { order: 1; }
+  .bar-center { order: 2; flex: 1 1 0; min-width: 0; gap: 6px; }
+  .search { min-width: 0; }
+  .bar-right { order: 3; flex-basis: 100%; margin-left: 0; flex-wrap: nowrap; justify-content: space-between; gap: 4px; }
+  #app.home-mode .bar-right { justify-content: flex-end; flex-basis: auto; order: 2; margin-left: auto; }
+  #app.home-mode .bar-center { order: 3; flex-basis: 100%; }
   /* #topbar prefix outweighs the (later) touch min-width bump so the row fits */
   #topbar .btn.icon { min-width: 34px; padding: 7px; }
   #topbar .btn { padding: 7px 10px; }
