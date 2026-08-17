@@ -63,7 +63,7 @@ html[data-theme="light"] {
    `[hidden]{display:none}`. Force it. The drawer opts out via its own
    higher-specificity `.drawer[hidden]` rule. */
 [hidden] { display: none !important; }
-html, body { height: 100%; margin: 0; }
+html, body { height: 100%; margin: 0; overflow: hidden; }   /* app owns all scrolling — no page pan from off-screen drawers */
 body {
   font-family: var(--font);
   color: var(--text);
@@ -865,29 +865,77 @@ input, textarea { font-size: 15px; }
 .props-loc { margin-top: 8px; font-size: 13px; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; word-break: break-word; }
 
 /* ---------------------------- Responsive ------------------------------- */
-@media (max-width: 860px) {
+.bar-break { display: none; }
+
+/* Tablets (≤1024px): one compact row — tighter gaps, smaller buttons, no wordmark */
+@media (max-width: 1024px) {
   .brand-name { display: none; }
-  .zoom-label, #btn-fit, .divider { display: none; }
-  .search { width: 100%; }
+  #topbar { gap: 10px; padding: 0 12px; }
+  .bar-group { gap: 8px; }
+  .btn { padding: 8px 11px; font-size: 13.5px; }
+  .btn.icon { min-width: 38px; padding: 8px; }
+  .search { width: min(400px, 100%); }
+  .zoom-label { display: none; }
+  .drawer { width: min(400px, 100%); }
+  .bottombar { padding: 14px 20px; }
 }
+@media (max-width: 860px) {
+  #btn-fit, .divider { display: none; }
+  .search { width: 100%; }
+  .minimap { width: 150px; height: 104px; }
+}
+
+/* Phones (≤560px): toolbar splits into two rows (break after the Link button),
+   search drops to its own row, breadcrumbs scroll, everything full-width */
 @media (max-width: 560px) {
   :root { --bar-h: 56px; }
-  #topbar { flex-wrap: wrap; height: auto; padding: 9px 10px; gap: 8px; row-gap: 8px; }
-  .bar-left { order: 1; }
-  .bar-right { order: 2; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+  #topbar { flex-wrap: wrap; height: auto; padding: 8px 10px; gap: 8px; row-gap: 7px; }
+  .bar-left { order: 1; align-self: flex-start; }
+  .bar-right { order: 2; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; row-gap: 7px; }
   .bar-center { order: 3; flex-basis: 100%; }
+  /* row 1: Add + Link · row 2: pen, map, autosave, status, help, theme, more */
+  .bar-break { display: block; flex-basis: 100%; height: 0; }
+  #app.home-mode .bar-break { display: none; }
+  .bar-right { gap: 6px; }
+  /* #topbar prefix outweighs the (later) touch min-width bump so the row fits */
+  #topbar .btn.icon { min-width: 34px; padding: 7px; }
+  #topbar .btn { padding: 7px 10px; }
   .search { width: 100%; }
+  #search { padding: 9px 12px 9px 36px; font-size: 14px; }
   .desktop-only { display: none; }
   .mobile-only { display: block; }
   #btn-add .lbl { display: none; }
-  /* zoom uses pinch on mobile; Fit lives in the long-press menu */
+  /* zoom uses pinch on mobile; Fit / reset zoom live in the ⋯ menu */
   #btn-zoom-out, #btn-zoom-in, #btn-zoom-reset, .toolbar .divider { display: none; }
+  .navgroup .btn.icon { min-width: 36px; padding: 7px; }
+  /* block path (breadcrumbs): slim + horizontally scrollable */
+  .bottombar { padding: 8px 10px; max-width: 100vw; }
+  #breadcrumbs { overflow-x: auto; overflow-y: hidden; max-width: calc(100vw - 20px); scrollbar-width: none; }
+  #breadcrumbs::-webkit-scrollbar { display: none; }
+  .crumb { font-size: 13px; padding: 4px 6px; max-width: 110px; }
   .drawer { width: 100%; }
+  .drawer-body { padding: 14px; }
   .modal { padding: 12px; }
+  .modal-card { max-width: 100%; }
   .add-menu, .menu, .ctxmenu, .search-results { max-width: calc(100vw - 20px); }
   .ws-grid { grid-template-columns: 1fr; }
   .home-inner { padding: 22px 16px 90px; }
-  .home-hero { padding: 40px 16px 20px; }
+  .home-hero { padding: 34px 16px 16px; }
+  .hero-mark { width: 52px; height: 52px; border-radius: 15px; }
+  .hero-mark .ic { width: 28px; height: 28px; }
+  .hero-tag { font-size: 15px; margin-top: 18px; }
+  .home-title { font-size: 25px; }
+  .home-actions { width: 100%; }
+  .home-actions .btn { flex: 1; justify-content: center; }
+  .minimap { width: 130px; height: 90px; right: 8px; bottom: 64px; }
+  .list-view { padding: 18px 10px 100px; }
+}
+
+/* Short landscape phones: keep the canvas usable */
+@media (max-height: 480px) {
+  .home-hero { padding: 18px 16px 8px; }
+  .hero-tag { min-height: 0; }
+  .minimap { display: none; }
 }
 /* touch devices: bigger tap targets + always-visible affordances */
 @media (hover: none) {
