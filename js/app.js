@@ -2538,6 +2538,8 @@
     }
 
     const blockEl = e.target.closest('.block');
+    // clicked a different block (or empty canvas) while a table's cells were active → leave cell mode
+    if (editTableId && (!blockEl || blockEl.dataset.id !== editTableId)) closeTableEditor();
     if (blockEl) {
       const id = blockEl.dataset.id;
       // column-width / row-height grips on a table
@@ -2874,7 +2876,7 @@
     if (!$('#shape-drawer').hidden) closeShapeEditor();
     if (!$('#image-drawer').hidden) closeImageEditor();
     if (!$('#ink-drawer').hidden) closeInkEditor();
-    if (!$('#table-drawer').hidden) closeTableEditor();
+    if (!$('#table-drawer').hidden || editTableId) closeTableEditor();   // also exits drawer-less cell mode
     hideSearchResults();
     $('#menu').hidden = true;
   }

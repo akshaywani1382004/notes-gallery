@@ -515,8 +515,22 @@ input, textarea { font-size: 15px; }
 .row-resize:hover { opacity: 1 !important; }
 .data-table th { background: var(--panel-2); font-weight: 700; position: sticky; top: 0; z-index: 1; }
 .data-table tr:nth-child(even) td { background: color-mix(in srgb, var(--panel-2) 45%, transparent); }
-.block.block-table:hover .tnode-resize, .block.block-table.selected .tnode-resize { opacity: 1; }
-.block.block-table:hover .tnode-edge, .block.block-table.selected .tnode-edge { opacity: 1; }
+.block.block-table:hover .tnode-resize, .block.block-table.selected .tnode-resize,
+.block.block-table.editing .tnode-resize { opacity: 1; }
+.block.block-table:hover .tnode-edge, .block.block-table.selected .tnode-edge,
+.block.block-table.editing .tnode-edge { opacity: 1; }
+/* big, obvious stretch handles on tables */
+.block.block-table .tnode-resize {
+  width: 22px; height: 22px; right: -11px; bottom: -11px; border-radius: 7px;
+  display: grid; place-items: center;
+}
+.block.block-table .tnode-resize::after {
+  content: ""; width: 10px; height: 10px;
+  background:
+    linear-gradient(135deg, transparent 0 34%, #fff 34% 46%, transparent 46% 62%, #fff 62% 74%, transparent 74%);
+}
+.block.block-table .tnode-edge.e { width: 10px; height: 52px; right: -8px; }
+.block.block-table .tnode-edge.s { height: 10px; width: 52px; bottom: -8px; }
 /* edit mode: cells become selectable/typable */
 .block.block-table.editing .data-table th, .block.block-table.editing .data-table td { cursor: text; }
 .block.block-table.editing .data-table td:focus, .block.block-table.editing .data-table th:focus { outline: none; }
