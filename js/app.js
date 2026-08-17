@@ -2119,6 +2119,19 @@
     e.preventDefault(); e.stopPropagation();
   }
 
+  // touch: press-and-hold a cell (or the title) → open the edit panel for it,
+  // same as desktop right-click. Armed on pointerdown, cancelled by move/up.
+  function armCellPress(e, id, r, c, isTitle) {
+    if (e.pointerType !== 'touch') return;
+    lpFired = false; lpX = e.clientX; lpY = e.clientY;
+    clearTimeout(lpTimer);
+    lpTimer = setTimeout(() => {
+      lpTimer = null; lpFired = true;
+      openTableEditor(id);
+      if (isTitle) setFocusTitle(); else focusCell(id, r, c, false);
+    }, 500);
+  }
+
   // --- cell selection / editing ---
   function tableEl() { return editTableId ? state.els[editTableId] : null; }
   function cellEl(r, c) { const el = tableEl(); return el ? el.querySelector(`[data-r="${r}"][data-c="${c}"]`) : null; }
@@ -2594,15 +2607,16 @@
         if (cell) {
           const r = +cell.dataset.r, c = +cell.dataset.c;
           if (editTableId === id) {
+            armCellPress(e, id, r, c, false);
             if (e.shiftKey || tmultiMode) { toggleCellSel(id, r, c); return; }
             if (!(tsel && tsel.editing && tsel.r === r && tsel.c === c)) focusCell(id, r, c, false);
             return;
           }
-          if (state.selectedIds.has(id)) { enterTableCells(id); if (e.shiftKey || tmultiMode) toggleCellSel(id, r, c); else focusCell(id, r, c, false); return; }
+          if (state.selectedIds.has(id)) { enterTableCells(id); armCellPress(e, id, r, c, false); if (e.shiftKey || tmultiMode) toggleCellSel(id, r, c); else focusCell(id, r, c, false); return; }
           // otherwise fall through: first click selects the block (so it can be dragged)
         } else if (titleHit) {
-          if (editTableId === id) { if (!titleEditing) setFocusTitle(); return; }
-          if (state.selectedIds.has(id)) { enterTableCells(id); setFocusTitle(); return; }
+          if (editTableId === id) { armCellPress(e, id, 0, 0, true); if (!titleEditing) setFocusTitle(); return; }
+          if (state.selectedIds.has(id)) { enterTableCells(id); armCellPress(e, id, 0, 0, true); setFocusTitle(); return; }
           // else fall through: first click selects the block
         }
         // clicking the border/padding falls through → normal drag to move the block
@@ -2629,15 +2643,27 @@
       stage.classList.add('panning');
     }
 
-    // touch long-press → context menu (mouse uses right-click)
+    // touch long-press → context menu (mouse uses right-click);
+    // on a table cell/title it opens that cell's edit panel instead
     if (e.pointerType === 'touch') {
       lpFired = false; lpX = e.clientX; lpY = e.clientY;
       const cx = e.clientX, cy = e.clientY, tid = blockEl ? blockEl.dataset.id : null;
+      const lpCell = e.target.closest('.block-table .data-table [data-r]');
+      const lpTitle = e.target.closest('.block-table .table-title');
       clearTimeout(lpTimer);
       lpTimer = setTimeout(() => {
         lpTimer = null; lpFired = true;
         if (dragging) { state.els[dragging.primary]?.classList.remove('dragging'); dragging = null; }
         if (panning) { stage.classList.remove('panning'); panning = null; }
+        if (tid && (lpCell || lpTitle)) {
+          const bb = state.blocks.find(x => x.id === tid);
+          if (bb && bb.kind === 'table') {
+            openTableEditor(tid);
+            if (lpCell) focusCell(tid, +lpCell.dataset.r, +lpCell.dataset.c, false);
+            else setFocusTitle();
+            return;
+          }
+        }
         openContextMenu(cx, cy, tid);
       }, 500);
     }
