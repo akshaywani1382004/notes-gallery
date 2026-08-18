@@ -946,9 +946,11 @@ input, textarea { font-size: 15px; }
   #pen-size { width: 110px; }
 }
 
-/* Phones: edit panels become BOTTOM SHEETS — slide up from the bottom and cap
-   at ~half the screen so the workspace stays visible while editing */
-@media (max-width: 560px) {
+/* PHONES ONLY (touch + phone-sized in some dimension): edit panels become
+   BOTTOM SHEETS so the workspace stays visible while editing.
+   Tablets and desktops keep the normal right-side drawer. */
+@media (hover: none) and (pointer: coarse) and (max-width: 560px),
+       (hover: none) and (pointer: coarse) and (max-height: 560px) {
   .drawer {
     top: auto; bottom: 0; left: 0; right: 0; width: 100%;
     height: auto; max-height: 54vh;
