@@ -3584,10 +3584,18 @@
     if (!wsId) return;
     toast('Preparing export…');
     const payload = await workspacePayload(wsId, overrideName);
+    const fname = `${safeFileName(overrideName || payload.workspace.name)}.notesgallery.json`;
+    if (SHELL) {                                     // app shell: native Save-As
+      const p = await NGShell.saveDialog(fname);
+      if (!p) return;
+      try { await NGShell.writeFile(p, JSON.stringify(payload)); toast('Workspace exported'); }
+      catch (e) { console.error(e); toast('Could not write the file.'); }
+      return;
+    }
     const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `${safeFileName(overrideName || payload.workspace.name)}.notesgallery.json`;
+    a.download = fname;
     a.click();
     toast('Workspace exported');
   }
@@ -3602,10 +3610,14 @@
   }
 
   /* ---- write a workspace into its bound local file --------------------- */
+  // In the desktop/mobile app, NGShell (js/platform.js) provides native dialogs
+  // and direct file access — full paths, no browser permission prompts.
+  const SHELL = !!window.NGShell;
   // file:// exposes the method names but throws on call; require a secure http(s)/localhost context.
-  const FS_OK = ('showSaveFilePicker' in window) && ('showOpenFilePicker' in window)
-    && window.isSecureContext && location.protocol !== 'file:';
+  const FS_OK = SHELL || (('showSaveFilePicker' in window) && ('showOpenFilePicker' in window)
+    && window.isSecureContext && location.protocol !== 'file:');
   function fsStatus() {
+    if (SHELL) return { ok: true, why: 'workspaces are saved as files on this computer' };
     if (!('showSaveFilePicker' in window)) return { ok: false, why: 'this browser has no file access — use Chrome or Edge' };
     if (location.protocol === 'file:') return { ok: false, why: 'opened as a local file — open http://localhost:8765 via the launcher' };
     if (!window.isSecureContext) return { ok: false, why: 'not a secure page — open http://localhost:8765 via the launcher' };
@@ -3672,6 +3684,19 @@
 
   // Import via the File System Access API and BIND the file so edits save back.
   async function importViaPicker() {
+    if (SHELL) {                                     // app shell: native open dialog, keep the full path
+      const path = await NGShell.openDialog();
+      if (!path) return;
+      let data;
+      try { data = JSON.parse(await NGShell.readFile(path)); }
+      catch (_) { toast('That file is not valid JSON.'); return; }
+      if (!validWorkspaceData(data)) { toast('Not a Notes Gallery workspace file.'); return; }
+      const { wsId, name } = await createWorkspaceFromData(data);
+      await DB.savePathRec(wsId, path);
+      toast(`Imported “${name}” (linked to file)`);
+      await renderHome();
+      return;
+    }
     if (!FS_OK) { $('#import-input').click(); return; }
     let handle;
     try {
@@ -3709,6 +3734,18 @@
   async function saveCurrentWorkspace(manual) {
     if (state.ws == null) return;
     const rec = await DB.getHandleRec(state.ws);
+    if (SHELL && rec && rec.path) {                 // app shell: write straight to the path
+      try {
+        const payload = await workspacePayload(state.ws);
+        await NGShell.writeFile(rec.path, JSON.stringify(payload));
+        state.dirty = false; setSaveState();
+      } catch (e) {
+        console.error(e);
+        state.dirty = true; setSaveState();
+        if (manual) toast('Could not write the file.');
+      }
+      return;
+    }
     if (!rec || !rec.handle) {
       state.dirty = false;
       setSaveState();
@@ -3886,8 +3923,11 @@
     promptDialog('New Workspace', '', async (name, color, template) => {
       name = (name || '').trim() || 'Untitled workspace';
       const chosen = color || pickWsColor(count);
-      let handle = null;
-      if (FS_OK) {
+      let handle = null, path = null;
+      if (SHELL) {
+        path = await NGShell.saveDialog(safeFileName(name) + '.notesgallery.json');
+        if (path == null) return;                     // user cancelled the native dialog
+      } else if (FS_OK) {
         try {
           handle = await window.showSaveFilePicker({
             suggestedName: safeFileName(name) + '.notesgallery.json',
@@ -3904,10 +3944,11 @@
       const id = uid();
       const now = Date.now();
       await DB.saveWorkspace({ id, name, color: chosen, createdAt: now, updatedAt: now });
+      if (path) await DB.savePathRec(id, path);
       if (handle) await DB.saveHandleRec(id, handle);
       if (template && template !== 'blank') await seedTemplate(id, template);
       await openWorkspace(id);              // jump straight into the new workspace
-      if (handle) await saveCurrentWorkspace(false);   // write the initial file now
+      if (handle || path) await saveCurrentWorkspace(false);   // write the initial file now
     }, { colors: true, color: pickWsColor(count), okLabel: 'Create', templates: true });
   }
 
@@ -3966,8 +4007,12 @@
     renderPropsColors(propsColor);
     const rec = await DB.getHandleRec(id);
     const loc = $('#props-loc');
-    if (rec && rec.handle) loc.innerHTML = esc(rec.handle.name) + ' <span class="muted">(the folder is hidden by the browser)</span>';
-    else loc.innerHTML = '<span class="muted">Stored in this browser — not linked to a file</span>';
+    if (rec && rec.path) {
+      loc.innerHTML = `<a class="loc-link" title="Show in folder">${esc(rec.path)}</a>`;
+      loc.querySelector('.loc-link').addEventListener('click', () => NGShell.reveal(rec.path));
+    }
+    else if (rec && rec.handle) loc.innerHTML = esc(rec.handle.name) + ' <span class="muted">(the folder is hidden by the browser)</span>';
+    else loc.innerHTML = `<span class="muted">Stored in this ${SHELL ? 'app' : 'browser'} — not linked to a file</span>`;
     $('#props').hidden = false;
     setTimeout(() => { $('#props-name').focus(); $('#props-name').select(); }, 50);
   }
@@ -4200,9 +4245,11 @@
     const w = await DB.getWorkspace(state.ws);
     const blocks = await DB.allByWs('blocks', state.ws);
     const rec = await DB.getHandleRec(state.ws);
-    const loc = (rec && rec.handle)
-      ? esc(rec.handle.name) + ' <span class="muted">(folder hidden by the browser)</span>'
-      : '<span class="muted">Stored in this browser — no linked file</span>';
+    const loc = (rec && rec.path)
+      ? `<a class="loc-link" id="about-loc-link" title="Show in folder">${esc(rec.path)}</a>`
+      : (rec && rec.handle)
+        ? esc(rec.handle.name) + ' <span class="muted">(folder hidden by the browser)</span>'
+        : `<span class="muted">Stored in this ${SHELL ? 'app' : 'browser'} — no linked file</span>`;
     const created = w && w.createdAt ? new Date(w.createdAt).toLocaleString() : '—';
     let storage = 'not reported by this browser';
     try {
@@ -4221,8 +4268,10 @@
         <div><dt>Blocks</dt><dd>${blocks.length}</dd></div>
         <div><dt>Created</dt><dd>${esc(created)}</dd></div>
         <div><dt>File</dt><dd>${loc}</dd></div>
-        <div><dt>Storage</dt><dd>${esc(storage)} <span class="muted">— all workspaces in this browser</span></dd></div>
+        <div><dt>Storage</dt><dd>${esc(storage)} <span class="muted">— all workspaces in this ${SHELL ? 'app' : 'browser'}</span></dd></div>
       </dl>`;
+    const link = p.querySelector('#about-loc-link');
+    if (link && rec && rec.path) link.addEventListener('click', () => NGShell.reveal(rec.path));
   }
   async function openAbout(tab) {
     await fillAboutPanel();
@@ -4440,7 +4489,8 @@
     // keep touchpad pinch (ctrl+wheel) zooming the CANVAS, not the browser page,
     // even when the cursor drifts over the toolbar/drawers while a canvas is open
     window.addEventListener('wheel', (e) => {
-      if (e.ctrlKey && state.ws != null && state.levelLayout === 'canvas') e.preventDefault();
+      // in the app shell always block page zoom; in the browser only while a canvas is open
+      if (e.ctrlKey && (SHELL || (state.ws != null && state.levelLayout === 'canvas'))) e.preventDefault();
     }, { passive: false });
     // Safari/WebKit trackpads report pinch as gesture events instead of ctrl+wheel
     let gestureScale = 1;

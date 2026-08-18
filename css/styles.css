@@ -740,6 +740,8 @@ input, textarea { font-size: 15px; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
 .muted { color: var(--text-mute); font-weight: 400; }
+.loc-link { color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; word-break: break-all; }
+.loc-link:hover { filter: brightness(1.2); }
 
 /* ---------------------------- Workspaces landing ----------------------- */
 .home { flex: 1 1 auto; overflow-y: auto; position: relative; background: var(--bg); }
