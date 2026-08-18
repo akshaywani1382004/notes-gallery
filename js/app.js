@@ -4531,6 +4531,27 @@
     };
     window.addEventListener('blur', resetGestures);
     document.addEventListener('visibilitychange', () => { if (document.hidden) resetGestures(); });
+
+    // Phone bottom sheets: a drag grip at the top of every editor panel lets the
+    // user stretch the sheet taller or shorter. Height is shared across panels.
+    let sheetDrag = null;
+    document.querySelectorAll('.drawer').forEach(d => {
+      const g = document.createElement('div');
+      g.className = 'sheet-grip';
+      d.prepend(g);
+      g.addEventListener('pointerdown', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        sheetDrag = { startY: e.clientY, startH: d.getBoundingClientRect().height };
+        try { g.setPointerCapture(e.pointerId); } catch (_) {}
+      });
+    });
+    window.addEventListener('pointermove', (e) => {
+      if (!sheetDrag) return;
+      const h = clamp(sheetDrag.startH + (sheetDrag.startY - e.clientY), window.innerHeight * 0.18, window.innerHeight * 0.85);
+      document.documentElement.style.setProperty('--sheet-h', Math.round(h) + 'px');
+    });
+    window.addEventListener('pointerup', () => { sheetDrag = null; });
+    window.addEventListener('pointercancel', () => { sheetDrag = null; });
     stage.addEventListener('wheel', onWheel, { passive: false });
     // keep touchpad pinch (ctrl+wheel) zooming the CANVAS, not the browser page,
     // even when the cursor drifts over the toolbar/drawers while a canvas is open
