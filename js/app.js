@@ -561,6 +561,7 @@
     // Only scroll when a wrap width/height is set; otherwise use plain block flow so the
     // node grows to fit the whole table exactly (no flex rounding → nothing clipped).
     el.style.display = wrapped ? 'flex' : 'block';
+    el.classList.toggle('wrapped', wrapped);   // sticky header only applies in scroll mode
     el.style.overflow = 'visible';   // never clip the hover pencil/handles; .table-scroll does the clipping
     sc.style.overflow = wrapped ? 'auto' : 'visible';
     sc.style.flex = wrapped ? '1 1 auto' : 'none';

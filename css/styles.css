@@ -517,7 +517,10 @@ input, textarea { font-size: 15px; }
 .row-resize::after { content: ""; position: absolute; left: 0; top: 3px; height: 2px; width: 100%; background: var(--accent); }
 .block.block-table:hover .row-resize, .block.block-table.selected .row-resize { opacity: .35; }
 .row-resize:hover { opacity: 1 !important; }
-.data-table th { background: var(--panel-2); font-weight: 700; position: sticky; top: 0; z-index: 1; }
+.data-table th { background: var(--panel-2); font-weight: 700; }
+/* header sticks ONLY inside a scrolling (wrapped) table — a sticky header on an
+   unwrapped table would pin itself to the canvas and detach while panning */
+.block.block-table.wrapped .data-table th { position: sticky; top: 0; z-index: 1; }
 .data-table tr:nth-child(even) td { background: color-mix(in srgb, var(--panel-2) 45%, transparent); }
 .block.block-table:hover .tnode-resize, .block.block-table.selected .tnode-resize,
 .block.block-table.editing .tnode-resize { opacity: 1; }
