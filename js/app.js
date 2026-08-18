@@ -1558,6 +1558,17 @@
     else openEditor(id);
   }
 
+  // Close every editor panel (with proper session flushing) — called before any
+  // editor opens so exactly ONE panel is ever visible.
+  function closeOtherEditors() {
+    if (typeof editTableId !== 'undefined' && (editTableId || !$('#table-drawer').hidden)) closeTableEditor();
+    if (textBlock || !$('#text-drawer').hidden) closeTextEditor();
+    if (shapeBlock || !$('#shape-drawer').hidden) closeShapeEditor();
+    if (imageBlock || !$('#image-drawer').hidden) closeImageEditor();
+    if (inkBlock || !$('#ink-drawer').hidden) closeInkEditor();
+    if (drawerBlock || !$('#drawer').hidden) closeDrawer();
+  }
+
   // Commit a single undo entry for an editing session (if anything changed).
   function flushEdit() {
     if (!editBaseline) return;
@@ -1577,8 +1588,7 @@
 
   async function openDrawer(id, focusTitle) {
     flushEdit();
-    if (editTableId) closeTableEditor();
-    closeTextEditor(true);
+    closeOtherEditors();
     const b = state.blocks.find(x => x.id === id);
     if (!b) return;
     drawerBlock = b;
@@ -1747,11 +1757,10 @@
   }
   function openTextEditor(id) {
     flushEdit();
-    if (editTableId) closeTableEditor();
+    closeOtherEditors();
     const b = state.blocks.find(x => x.id === id);
     if (!b) return;
     selectBlock(id);
-    $('#drawer').hidden = true; drawerBlock = null;   // close block editor if open
     textBlock = b;
     editBaseline = snapshotFields(b);
     $('#t-content').value = b.text || '';
@@ -1831,12 +1840,10 @@
   }
   function openShapeEditor(id) {
     flushEdit();
-    if (editTableId) closeTableEditor();
+    closeOtherEditors();
     const b = state.blocks.find(x => x.id === id);
     if (!b) return;
     selectBlock(id);
-    $('#drawer').hidden = true; drawerBlock = null;
-    $('#text-drawer').hidden = true; textBlock = null;
     shapeBlock = b;
     editBaseline = snapshotFields(b);
     renderSType(b.shape || 'rectangle');
@@ -1918,13 +1925,10 @@
   }
   function openImageEditor(id) {
     flushEdit();
-    if (editTableId) closeTableEditor();
+    closeOtherEditors();
     const b = state.blocks.find(x => x.id === id);
     if (!b) return;
     selectBlock(id);
-    $('#drawer').hidden = true; drawerBlock = null;
-    $('#text-drawer').hidden = true; textBlock = null;
-    $('#shape-drawer').hidden = true; shapeBlock = null;
     imageBlock = b;
     editBaseline = snapshotFields(b);
     const pv = $('#i-preview'); pv.innerHTML = ''; const im = document.createElement('img'); im.src = b.src || ''; pv.appendChild(im);
@@ -2010,14 +2014,10 @@
   }
   function openInkEditor(id) {
     flushEdit();
-    if (editTableId) closeTableEditor();
+    closeOtherEditors();
     const b = state.blocks.find(x => x.id === id);
     if (!b) return;
     selectBlock(id);
-    $('#drawer').hidden = true; drawerBlock = null;
-    $('#text-drawer').hidden = true; textBlock = null;
-    $('#shape-drawer').hidden = true; shapeBlock = null;
-    $('#image-drawer').hidden = true; imageBlock = null;
     inkBlock = b;
     editBaseline = snapshotFields(b);
     renderKSwatches(b.color);
@@ -2054,13 +2054,13 @@
 
   function openTableEditor(id) {
     flushEdit();
+    const keepCells = (editTableId === id);   // reopening the panel for the table already in cell mode
+    if (!keepCells) closeOtherEditors();
+    else { if (drawerBlock || !$('#drawer').hidden) closeDrawer();
+           if (textBlock) closeTextEditor(); if (shapeBlock) closeShapeEditor();
+           if (imageBlock) closeImageEditor(); if (inkBlock) closeInkEditor(); }
     const b = state.blocks.find(x => x.id === id); if (!b) return;
     selectBlock(id);
-    $('#drawer').hidden = true; drawerBlock = null;
-    $('#text-drawer').hidden = true; textBlock = null;
-    $('#shape-drawer').hidden = true; shapeBlock = null;
-    $('#image-drawer').hidden = true; imageBlock = null;
-    $('#ink-drawer').hidden = true; inkBlock = null;
     tableBlock = b; editTableId = id; tfocus = 'cell'; titleEditing = false; tmultiMode = false;
     tableOrig = tableSnap(b);
     editBaseline = snapshotFields(b);   // lets the per-field font-size reset work
