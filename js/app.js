@@ -4247,6 +4247,14 @@
   }
 
   /* ---------------------------- about / help --------------------------- */
+  // Build number, read from the loaded script's cache-bust tag (?v=NN) — shown
+  // in About so it's always possible to tell which build is running.
+  function appBuild() {
+    const s = document.querySelector('script[src*="app.js"]');
+    const m = s && /\?v=(\d+)/.exec(s.src);
+    return m ? 'build ' + m[1] : 'build ?';
+  }
+
   function showAboutTab(tab) {
     $$('#about-tabs .tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
     $('#tab-about').classList.toggle('active', tab === 'about');
@@ -4284,6 +4292,7 @@
         <div><dt>Created</dt><dd>${esc(created)}</dd></div>
         <div><dt>File</dt><dd>${loc}</dd></div>
         <div><dt>Storage</dt><dd>${esc(storage)} <span class="muted">— all workspaces in this ${SHELL ? 'app' : 'browser'}</span></dd></div>
+        <div><dt>Build</dt><dd class="muted">${esc(appBuild())} · ${SHELL ? 'app' : 'web'}</dd></div>
       </dl>`;
     const link = p.querySelector('#about-loc-link');
     if (link && rec && rec.path) link.addEventListener('click', () => NGShell.reveal(rec.path));
