@@ -938,6 +938,12 @@ input, textarea { font-size: 15px; }
   .home-actions .btn { flex: 1; justify-content: center; }
   .minimap { width: 130px; height: 90px; right: 8px; bottom: 64px; }
   .list-view { padding: 18px 10px 100px; }
+  /* landing status note: centred, wraps cleanly */
+  .fs-note { padding: 0 16px; flex-wrap: wrap; text-align: center; line-height: 1.5; }
+  /* draw / link banners: wrap into rows instead of overflowing the screen */
+  .banner-stack { width: calc(100vw - 16px); left: 50%; }
+  .link-banner { flex-wrap: wrap; justify-content: center; max-width: 100%; border-radius: 18px; row-gap: 8px; padding: 9px 12px; }
+  #pen-size { width: 110px; }
 }
 
 /* Short landscape phones: keep the canvas usable */

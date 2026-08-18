@@ -4010,9 +4010,16 @@
     if (rec && rec.path) {
       loc.innerHTML = `<a class="loc-link" title="Show in folder">${esc(rec.path)}</a>`;
       loc.querySelector('.loc-link').addEventListener('click', () => NGShell.reveal(rec.path));
+    } else if (SHELL) {
+      // app shell: no real path yet (unlinked, or an old browser-style link) → offer to link now
+      loc.innerHTML = `<a class="loc-link">Choose a file location…</a> <span class="muted">(saves this workspace to a file)</span>`;
+      loc.querySelector('.loc-link').addEventListener('click', async () => {
+        const p = await relinkWorkspace(id);
+        if (p) openProperties(id);
+      });
     }
     else if (rec && rec.handle) loc.innerHTML = esc(rec.handle.name) + ' <span class="muted">(the folder is hidden by the browser)</span>';
-    else loc.innerHTML = `<span class="muted">Stored in this ${SHELL ? 'app' : 'browser'} — not linked to a file</span>`;
+    else loc.innerHTML = '<span class="muted">Stored in this browser — not linked to a file</span>';
     $('#props').hidden = false;
     setTimeout(() => { $('#props-name').focus(); $('#props-name').select(); }, 50);
   }
@@ -4099,8 +4106,14 @@
   function bindBrandMenu() {
     const brand = $('#brand');
     const menu = $('#brand-menu');
-    brand.addEventListener('mouseenter', () => { clearTimeout(brandHideTimer); openBrandMenu(); });
-    brand.addEventListener('mouseleave', () => { brandHideTimer = setTimeout(hideBrandMenu, 180); });
+    // the workspace switcher is a HOVER affordance — on touch devices a tap
+    // already navigates home, so don't pop the menu there
+    const canHover = window.matchMedia('(hover: hover)').matches;
+    if (canHover) {
+      brand.addEventListener('mouseenter', () => { clearTimeout(brandHideTimer); openBrandMenu(); });
+      brand.addEventListener('mouseleave', () => { brandHideTimer = setTimeout(hideBrandMenu, 180); });
+    }
+    brand.addEventListener('click', hideBrandMenu);
     menu.addEventListener('mouseenter', () => clearTimeout(brandHideTimer));
     menu.addEventListener('mouseleave', () => { brandHideTimer = setTimeout(hideBrandMenu, 180); });
     menu.addEventListener('click', (e) => {
@@ -4247,9 +4260,11 @@
     const rec = await DB.getHandleRec(state.ws);
     const loc = (rec && rec.path)
       ? `<a class="loc-link" id="about-loc-link" title="Show in folder">${esc(rec.path)}</a>`
-      : (rec && rec.handle)
-        ? esc(rec.handle.name) + ' <span class="muted">(folder hidden by the browser)</span>'
-        : `<span class="muted">Stored in this ${SHELL ? 'app' : 'browser'} — no linked file</span>`;
+      : SHELL
+        ? `<a class="loc-link" id="about-loc-link">Choose a file location…</a> <span class="muted">(saves this workspace to a file)</span>`
+        : (rec && rec.handle)
+          ? esc(rec.handle.name) + ' <span class="muted">(folder hidden by the browser)</span>'
+          : '<span class="muted">Stored in this browser — no linked file</span>';
     const created = w && w.createdAt ? new Date(w.createdAt).toLocaleString() : '—';
     let storage = 'not reported by this browser';
     try {
@@ -4272,6 +4287,19 @@
       </dl>`;
     const link = p.querySelector('#about-loc-link');
     if (link && rec && rec.path) link.addEventListener('click', () => NGShell.reveal(rec.path));
+    else if (link && SHELL) link.addEventListener('click', async () => { const p2 = await relinkWorkspace(state.ws); if (p2) fillAboutPanel(); });
+  }
+
+  // App shell: bind (or re-bind) a workspace to a real file via the native dialog.
+  async function relinkWorkspace(id) {
+    const w = await DB.getWorkspace(id);
+    const path = await NGShell.saveDialog(safeFileName((w && w.name) || 'workspace') + '.notesgallery.json');
+    if (!path) return null;
+    await DB.savePathRec(id, path);
+    try { await NGShell.writeFile(path, JSON.stringify(await workspacePayload(id))); toast('Workspace linked to file'); }
+    catch (e) { console.error(e); toast('Could not write the file.'); }
+    if (state.ws === id) setSaveState();
+    return path;
   }
   async function openAbout(tab) {
     await fillAboutPanel();
@@ -4485,6 +4513,18 @@
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointercancel', onPointerUp);
+    // If the app/tab loses focus mid-gesture (notification, app switch, edge swipe),
+    // a touch pointer can leak — the next single finger then reads as a 2-finger
+    // pinch and panning "stops working". Reset all gesture state on interruption.
+    const resetGestures = () => {
+      pointers.clear(); pinch = null;
+      if (dragging) { state.els[dragging.primary]?.classList.remove('dragging'); dragging = null; }
+      if (panning) { stage.classList.remove('panning'); panning = null; }
+      clearTimeout(lpTimer); lpTimer = null; lpFired = false;
+      colResize = null; rowResize = null; erasing = false;
+    };
+    window.addEventListener('blur', resetGestures);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) resetGestures(); });
     stage.addEventListener('wheel', onWheel, { passive: false });
     // keep touchpad pinch (ctrl+wheel) zooming the CANVAS, not the browser page,
     // even when the cursor drifts over the toolbar/drawers while a canvas is open
