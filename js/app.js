@@ -4436,11 +4436,15 @@
   function bindAddMenu() {
     const btn = $('#btn-add');
     const menu = $('#add-menu');
-    // hover (desktop) + click/tap (touch) both reveal it
-    btn.addEventListener('mouseenter', () => { cancelHideAdd(); openAddMenu(btn); });
-    btn.addEventListener('mouseleave', scheduleHideAdd);
-    menu.addEventListener('mouseenter', cancelHideAdd);
-    menu.addEventListener('mouseleave', scheduleHideAdd);
+    // hover reveals it on mouse devices only — on touch a tap toggles it (a
+    // synthetic hover would open-then-toggle-close, needing two taps)
+    const addCanHover = window.matchMedia('(hover: hover)').matches;
+    if (addCanHover) {
+      btn.addEventListener('mouseenter', () => { cancelHideAdd(); openAddMenu(btn); });
+      btn.addEventListener('mouseleave', scheduleHideAdd);
+      menu.addEventListener('mouseenter', cancelHideAdd);
+      menu.addEventListener('mouseleave', scheduleHideAdd);
+    }
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       if (menu.hidden) openAddMenu(btn); else hideAddMenu();
@@ -4448,8 +4452,10 @@
     // Import submenu opens to the side on hover (desktop) and on click/tap (touch)
     const importWrap = $('#am-import-wrap');
     let importHideTimer = null;
-    importWrap.addEventListener('mouseenter', () => { clearTimeout(importHideTimer); showImportFlyout(true); });
-    importWrap.addEventListener('mouseleave', () => { clearTimeout(importHideTimer); importHideTimer = setTimeout(() => showImportFlyout(false), 180); });
+    if (addCanHover) {
+      importWrap.addEventListener('mouseenter', () => { clearTimeout(importHideTimer); showImportFlyout(true); });
+      importWrap.addEventListener('mouseleave', () => { clearTimeout(importHideTimer); importHideTimer = setTimeout(() => showImportFlyout(false), 180); });
+    }
     menu.addEventListener('click', (e) => {
       const item = e.target.closest('[data-add]'); if (!item) return;
       const kind = item.dataset.add;

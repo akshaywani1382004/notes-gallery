@@ -946,6 +946,45 @@ input, textarea { font-size: 15px; }
   #pen-size { width: 110px; }
 }
 
+/* Phones: edit panels become BOTTOM SHEETS — slide up from the bottom and cap
+   at ~half the screen so the workspace stays visible while editing */
+@media (max-width: 560px) {
+  .drawer {
+    top: auto; bottom: 0; left: 0; right: 0; width: 100%;
+    height: auto; max-height: 54vh;
+    border-left: none; border-top: 1px solid var(--line);
+    border-radius: 18px 18px 0 0;
+    box-shadow: 0 -12px 40px rgba(0,0,0,.35);
+    transform: translateY(0);
+  }
+  .drawer[hidden] { display: flex !important; transform: translateY(106%); pointer-events: none; }
+  .drawer::before {                 /* grab handle */
+    content: ""; position: absolute; top: 6px; left: 50%; transform: translateX(-50%);
+    width: 42px; height: 4px; border-radius: 999px; background: var(--line);
+  }
+  .drawer-head { padding: 14px 12px 8px 16px; }
+  .drawer-body { padding: 8px 14px; gap: 5px; }
+  .drawer-foot { padding: 9px 14px calc(9px + env(safe-area-inset-bottom)); }
+  .drawer .field-label { margin-top: 4px; font-size: 10.5px; }
+  .drawer .notes-field { min-height: 56px; max-height: 96px; }
+  .drawer .swatches { gap: 6px; }
+  .drawer .swatch { width: 24px; height: 24px; }
+  .drawer .seg button { padding: 7px 10px; font-size: 13px; }
+  .drawer .btn.small { padding: 6px 10px; font-size: 12.5px; }
+  /* bulky extras have no place on a small sheet */
+  #i-preview, .drawer .dropzone, .drawer div[style*="11.5px"] { display: none; }
+  /* image editor: rounded corners / outline / replace on one compact row
+     (block flow so inline elements can actually share a line) */
+  #image-drawer .drawer-body { display: block; }
+  #image-drawer .drawer-body > * { margin-top: 6px; }
+  #image-drawer .t-glow-row { display: inline-flex; width: auto; margin-right: 14px; }
+  #i-replace { display: inline-flex; margin-top: 6px !important; }
+  /* shape editor: fill + outline toggles share a row */
+  #shape-drawer .t-glow-row { display: inline-flex; width: auto; margin-right: 14px; }
+  /* table editor: tighter formatting rows */
+  #table-drawer .tbl-grid-btns { grid-template-columns: repeat(4, 1fr); }
+}
+
 /* Short landscape phones: keep the canvas usable */
 @media (max-height: 480px) {
   .home-hero { padding: 18px 16px 8px; }
