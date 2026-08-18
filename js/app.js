@@ -3098,7 +3098,14 @@
     if (state.levelLayout === 'list') return;   // let the list scroll
     e.preventDefault();
     const r = stage.getBoundingClientRect();
-    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    let factor;
+    if (e.ctrlKey) {
+      // touchpad pinch: browsers deliver it as ctrl+wheel with small fractional
+      // deltas — scale smoothly by magnitude instead of a fixed step
+      factor = clamp(Math.exp(-e.deltaY * 0.012), 0.6, 1.7);
+    } else {
+      factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    }
     zoomAt(e.clientX - r.left, e.clientY - r.top, factor);
   }
 
@@ -4262,6 +4269,14 @@
       }
       if (typing) return;
       if (state.ws == null) return;   // no canvas shortcuts on the landing screen
+      // Ctrl +/− / Ctrl+0 zoom the canvas (also catches touchpads whose pinch sends keystrokes)
+      if ((e.ctrlKey || e.metaKey) && ['+', '=', '-', '_', '0'].includes(e.key)) {
+        if (state.levelLayout !== 'canvas') return;
+        e.preventDefault();
+        if (e.key === '0') resetZoom();
+        else { const r = stage.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, (e.key === '-' || e.key === '_') ? 1 / 1.15 : 1.15); }
+        return;
+      }
       if ((e.key === 's' || e.key === 'S') && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveCurrentWorkspace(true); return; }
       if ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey) && !e.shiftKey) { e.preventDefault(); undo(); return; }
       if (((e.key === 'y' || e.key === 'Y') && (e.ctrlKey || e.metaKey)) ||
@@ -4422,6 +4437,23 @@
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointercancel', onPointerUp);
     stage.addEventListener('wheel', onWheel, { passive: false });
+    // keep touchpad pinch (ctrl+wheel) zooming the CANVAS, not the browser page,
+    // even when the cursor drifts over the toolbar/drawers while a canvas is open
+    window.addEventListener('wheel', (e) => {
+      if (e.ctrlKey && state.ws != null && state.levelLayout === 'canvas') e.preventDefault();
+    }, { passive: false });
+    // Safari/WebKit trackpads report pinch as gesture events instead of ctrl+wheel
+    let gestureScale = 1;
+    stage.addEventListener('gesturestart', (e) => { e.preventDefault(); gestureScale = e.scale || 1; });
+    stage.addEventListener('gesturechange', (e) => {
+      e.preventDefault();
+      if (state.levelLayout !== 'canvas') return;
+      const r = stage.getBoundingClientRect();
+      const s = e.scale || 1;
+      zoomAt((e.clientX || r.width / 2) - r.left, (e.clientY || r.height / 2) - r.top, s / (gestureScale || 1));
+      gestureScale = s;
+    });
+    stage.addEventListener('gestureend', (e) => e.preventDefault());
     stage.addEventListener('click', onStageClick);
     stage.addEventListener('dblclick', onDblClick);
     stage.addEventListener('contextmenu', (e) => e.preventDefault());
