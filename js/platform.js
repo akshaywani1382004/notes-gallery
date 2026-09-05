@@ -55,6 +55,13 @@
       } catch (e) { console.warn('reveal failed:', e); }
     },
 
+    // Handwriting -> text via the OS recogniser (Windows Ink analysis today).
+    // Returns null when this build has no recogniser, so the app can say so.
+    async recognizeInk(strokes) {
+      try { return await inv('recognize_ink', { strokes }); }
+      catch (e) { console.warn('ink recognition unavailable:', e); return null; }
+    },
+
     basename(path) { return String(path).split(/[\\/]/).pop(); },
   };
 })();

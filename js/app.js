@@ -276,6 +276,11 @@
     }
     return true;                                              // mouse / trackpad
   }
+  function updateShapeSnapBtn() {
+    const b = $('#pen-snap'); if (!b) return;
+    b.classList.toggle('active', shapeSnap);
+    b.title = shapeSnap ? 'Shape snapping: on' : 'Shape snapping: off';
+  }
   function updatePenTouchBtn() {
     const b = $('#pen-touch'); if (!b) return;
     const drawing = fingerDraw === 'on' || (fingerDraw === 'auto' && !sawStylus);
@@ -2140,6 +2145,8 @@
     editBaseline = snapshotFields(b);
     renderKSwatches(b.color);
     renderInkStylePicker(b);
+    const toText = $('#k-to-text');
+    if (toText) toText.hidden = !inkRecognizerKind();     // hide where unsupported
     $('#k-width').value = b.width || 3; $('#k-width-val').value = (b.width || 3);
     $('#ink-drawer').hidden = false;
     $('#ink-save').textContent = '';
@@ -2170,6 +2177,7 @@
   }
   function bindInkEditor() {
     wireParam('k-width-val', 'k-width', (v) => { if (!inkBlock) return; inkBlock.width = Math.max(1, Math.round(v)); refreshItem(inkBlock.id); queueInkSave(); });
+    $('#k-to-text').addEventListener('click', () => { if (inkBlock) convertInkToText([inkBlock.id]); });
     $('#ink-close').addEventListener('click', closeInkEditor);
     $('#k-done').addEventListener('click', closeInkEditor);
     $('#k-reset').addEventListener('click', resetActiveEditor);
@@ -2664,6 +2672,193 @@
     if (hits.length) toast(hits.length + (hits.length === 1 ? ' item selected — drag to move, Delete to remove' : ' items selected — drag to move, Delete to remove'));
   }
 
+  /* --------------------- handwriting -> text --------------------------- *
+   * Recognition itself is done by the platform: the desktop/mobile app hands
+   * the strokes to the OS recogniser through NGShell, and Chromium's own
+   * handwriting API is used where it exists (ChromeOS). Nothing is sent to a
+   * server, so where neither is available we say so rather than guess.     */
+  function inkRecognizerKind() {
+    if (window.NGShell && NGShell.recognizeInk) return 'native';
+    if (navigator.createHandwritingRecognizer) return 'web';
+    return null;
+  }
+
+  // strokes: [[[x,y],...], ...] in world units -> recognised text
+  async function recognizeHandwriting(strokes) {
+    const kind = inkRecognizerKind();
+    if (kind === 'native') return await NGShell.recognizeInk(strokes);
+    if (kind === 'web') {
+      const rec = await navigator.createHandwritingRecognizer({ languages: ['en'] });
+      const drawing = rec.startDrawing({ recognitionType: 'text' });
+      strokes.forEach(pts => {
+        const st = new HandwritingStroke();
+        pts.forEach(([x, y], i) => st.addPoint({ x, y, t: i * 12 }));
+        drawing.addStroke(st);
+      });
+      const out = await drawing.getPrediction();
+      drawing.clear(); rec.finish();
+      return (out && out[0] && out[0].text) || '';
+    }
+    return null;
+  }
+
+  // Turn the selected handwriting into a text block in its place.
+  async function convertInkToText(ids) {
+    const inks = (ids || [...state.selectedIds])
+      .map(id => state.blocks.find(b => b.id === id))
+      .filter(b => b && b.kind === 'ink');
+    if (!inks.length) { toast('Select some handwriting first.'); return; }
+    if (!inkRecognizerKind()) {
+      toast('Handwriting recognition is not available on this platform yet.');
+      return;
+    }
+    toast('Reading handwriting…');
+    const strokes = inks.map(b => (b.pts || []).map(([x, y]) => [x + (b.x || 0), y + (b.y || 0)]));
+    let text = '';
+    try { text = await recognizeHandwriting(strokes); }
+    catch (e) { console.error(e); toast('Could not read that handwriting.'); return; }
+    if (!text || !text.trim()) { toast('No text found in that handwriting.'); return; }
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    inks.forEach(b => {
+      minX = Math.min(minX, b.x || 0); minY = Math.min(minY, b.y || 0);
+      maxX = Math.max(maxX, (b.x || 0) + (b.w || 0)); maxY = Math.max(maxY, (b.y || 0) + (b.h || 0));
+    });
+    const tb = {
+      id: uid(), ws: state.ws, parentId: state.level, kind: 'text',
+      text: text.trim(), title: '', color: inks[0].color || '',
+      size: Math.max(14, Math.min(48, Math.round((maxY - minY) * 0.8))),
+      bold: false, italic: false, align: 'left', rot: 0,
+      w: Math.max(80, Math.round(maxX - minX)), h: Math.max(30, Math.round(maxY - minY)),
+      x: Math.round(minX), y: Math.round(minY),
+      z: 0, createdAt: Date.now(), updatedAt: Date.now(),
+    };
+    const removal = await gatherRemoval(inks.map(b => b.id));
+    for (const b of inks) { await DB.deleteBlockDeep(b.id); }
+    await DB.saveBlock(tb);
+    recordChange(removal, { blocks: [tb], edges: [], files: [] });
+    await loadLevel(state.level);
+    setSelection([tb.id]);
+    toast('Converted to text');
+  }
+
+  /* ---------------------- shape recognition ---------------------------- *
+   * A finished stroke is measured against a few simple geometric tests. If
+   * one clearly matches, the stroke becomes a real vector shape instead of
+   * ink — the same trick Samsung Notes and OneNote use. Anything ambiguous
+   * (handwriting, sketches) is left exactly as drawn.                      */
+  let shapeSnap = false;
+  try { shapeSnap = localStorage.getItem('ng-shape-snap') === '1'; } catch (_) {}
+
+  // Ramer-Douglas-Peucker: reduce a stroke to its defining corners.
+  function simplifyPts(pts, tol) {
+    if (pts.length < 3) return pts.slice();
+    const [x1, y1] = pts[0], [x2, y2] = pts[pts.length - 1];
+    let idx = -1, max = 0;
+    const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const d = Math.abs((pts[i][0] - x1) * dy - (pts[i][1] - y1) * dx) / len;
+      if (d > max) { max = d; idx = i; }
+    }
+    if (max <= tol) return [pts[0], pts[pts.length - 1]];
+    return simplifyPts(pts.slice(0, idx + 1), tol).slice(0, -1).concat(simplifyPts(pts.slice(idx), tol));
+  }
+
+  // Returns { shape, x, y, w, h } when the stroke is clearly a shape.
+  function recognizeShape(pts) {
+    if (pts.length < 6) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, pathLen = 0;
+    for (let i = 0; i < pts.length; i++) {
+      minX = Math.min(minX, pts[i][0]); maxX = Math.max(maxX, pts[i][0]);
+      minY = Math.min(minY, pts[i][1]); maxY = Math.max(maxY, pts[i][1]);
+      if (i) pathLen += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    }
+    const w = maxX - minX, h = maxY - minY;
+    const size = Math.max(w, h);
+    if (size < 28 || pathLen < 40) return null;              // too small to judge
+    const a = pts[0], b = pts[pts.length - 1];
+    const gap = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const closed = gap < size * 0.28;
+    const box = { x: minX, y: minY, w: Math.max(w, 6), h: Math.max(h, 6) };
+
+    if (!closed) {
+      // straight line: the path barely deviates from the direct route
+      const direct = gap;
+      if (direct > 0 && pathLen / direct < 1.12 && Math.min(w, h) < size * 0.3) {
+        return { shape: 'line', ...box, from: a, to: b };
+      }
+      return null;
+    }
+
+    // closed: circle if every point sits at a similar distance from centre
+    const cx = minX + w / 2, cy = minY + h / 2;
+    const rx = w / 2 || 1, ry = h / 2 || 1;
+    let err = 0;
+    for (const [px, py] of pts) {
+      const d = Math.hypot((px - cx) / rx, (py - cy) / ry);   // 1 on a perfect ellipse
+      err += Math.abs(d - 1);
+    }
+    err /= pts.length;
+    if (err < 0.13) return { shape: 'circle', ...box };
+
+    // Otherwise count corners. A closed loop is split at the point farthest
+    // from the start first: simplifying a path whose ends meet would collapse
+    // it to a single segment (both ends sit on the same spot).
+    const tol = size * 0.075;
+    let far = 0, farD = -1;
+    for (let i = 1; i < pts.length; i++) {
+      const d = Math.hypot(pts[i][0] - a[0], pts[i][1] - a[1]);
+      if (d > farD) { farD = d; far = i; }
+    }
+    const half1 = simplifyPts(pts.slice(0, far + 1), tol);
+    const half2 = simplifyPts(pts.slice(far), tol);
+    let corners = half1.concat(half2.slice(1));
+    // the loop closes back on itself: drop the repeated point
+    if (corners.length > 1) {
+      const first = corners[0], last = corners[corners.length - 1];
+      if (Math.hypot(first[0] - last[0], first[1] - last[1]) < size * 0.2) corners = corners.slice(0, -1);
+    }
+    if (corners.length === 3) return { shape: 'triangle', ...box };
+    if (corners.length === 4) {
+      // rectangle only when the corners really sit near the bounding box
+      const near = corners.filter(([px, py]) =>
+        (Math.abs(px - minX) < size * 0.2 || Math.abs(px - maxX) < size * 0.2) &&
+        (Math.abs(py - minY) < size * 0.2 || Math.abs(py - maxY) < size * 0.2));
+      if (near.length === 4) return { shape: 'rectangle', ...box };
+    }
+    return null;
+  }
+
+  // Build the vector block a recognised stroke turns into.
+  async function createRecognizedShape(hit, colour, strokeW) {
+    const pad = 2;
+    const b = {
+      id: uid(), ws: state.ws, parentId: state.level, kind: 'shape',
+      title: '', shape: hit.shape,
+      x: Math.round(hit.x - pad), y: Math.round(hit.y - pad),
+      w: Math.round(Math.max(hit.shape === 'line' ? 8 : 16, hit.w + pad * 2)),
+      h: Math.round(Math.max(hit.shape === 'line' ? 8 : 16, hit.h + pad * 2)),
+      color: colour, fill: false, outline: true,
+      outlineW: Math.max(2, Math.round(strokeW)), outlineColor: colour,
+      rot: 0, points: null, z: 0, createdAt: Date.now(), updatedAt: Date.now(),
+    };
+    if (hit.shape === 'line') {                                // keep the drawn angle
+      const dx = hit.to[0] - hit.from[0], dy = hit.to[1] - hit.from[1];
+      const len = Math.hypot(dx, dy);
+      b.w = Math.round(Math.max(8, len)); b.h = Math.round(Math.max(8, strokeW * 2 + 6));
+      b.x = Math.round((hit.from[0] + hit.to[0]) / 2 - b.w / 2);
+      b.y = Math.round((hit.from[1] + hit.to[1]) / 2 - b.h / 2);
+      b.rot = Math.round(Math.atan2(dy, dx) * 180 / Math.PI);
+      b.outlineW = Math.max(2, Math.round(strokeW));
+    }
+    await DB.saveBlock(b);
+    state.blocks.push(b);
+    state.childCounts[b.id] = { blocks: 0, files: 0 };
+    world.appendChild(makeBlockEl(b));
+    recordChange(emptySet(), { blocks: [b], edges: [], files: [] });
+    return b;
+  }
+
   // Smooth ink path (midpoint quadratic curves) — pen strokes render as fluid
   // curves instead of jagged segment chains, live and once saved.
   function inkPathD(pts) {
@@ -3061,7 +3256,15 @@
       const stroke = inking; inking = null;
       stroke.path.remove();
       const pts = stroke.pts;
-      if (pts.length >= 2) await finalizeInk(pts, stroke);
+      if (pts.length >= 2) {
+        const hit = shapeSnap ? recognizeShape(pts) : null;
+        if (hit) {
+          await createRecognizedShape(hit, stroke.color || penColor, stroke.width || 3);
+          toast('Snapped to ' + (hit.shape === 'rectangle' ? 'rectangle' : hit.shape));
+        } else {
+          await finalizeInk(pts, stroke);
+        }
+      }
       return;
     }
     clearTimeout(lpTimer); lpTimer = null;
@@ -3207,6 +3410,7 @@
         { sep: true },
         { icon: 'upload', label: 'Export workspace', fn: () => exportWorkspaceFlow(state.ws) },
         { icon: 'filetext', label: 'Export as PDF', fn: () => exportWorkspacePdfFlow(state.ws) },
+        { icon: 'type', label: 'Convert handwriting to text', fn: () => convertInkToText() },
         { icon: 'info', label: 'About', fn: () => openAbout('about') },
         { icon: 'help', label: 'Help', fn: () => openAbout('help') },
       ];
@@ -3256,6 +3460,7 @@
         { g: 'Edit', icon: 'arrow-right', title: 'Redo', fn: () => redo() },
         { g: 'Workspace', icon: 'upload', title: 'Export workspace', fn: () => exportWorkspaceFlow(state.ws) },
         { g: 'Workspace', icon: 'filetext', title: 'Export as PDF', fn: () => exportWorkspacePdfFlow(state.ws) },
+        { g: 'Ink', icon: 'type', title: 'Convert handwriting to text', fn: () => convertInkToText() },
         { g: 'Workspace', icon: 'sliders', title: 'Workspace properties', fn: () => openProperties(state.ws) },
         { g: 'Workspace', icon: 'frame', title: 'Snap to grid: ' + (snapOn ? 'on → turn off' : 'off → turn on'), fn: () => { snapOn = !snapOn; try { localStorage.setItem('ng-snap', snapOn ? '1' : '0'); } catch (_) {} updateSnapLabel(); toast(snapOn ? 'Snap on' : 'Snap off'); } },
       );
@@ -3418,7 +3623,8 @@
     $('#pen-bar').hidden = !on;
     if (on) {
       setLinkMode(false); closeDrawerIfOpen(); clearSelection(); setSelectMode(false);
-      renderPenColors(); renderPenStyles(); syncPenSize(); updatePenTouchBtn(); loadPenBarPos();
+      renderPenColors(); renderPenStyles(); syncPenSize(); updatePenTouchBtn();
+      updateShapeSnapBtn(); loadPenBarPos();
     } else { setEraser(false); setPenSelect(false); }
     $('#btn-pen')?.classList.toggle('active', on && !state.penEraser);
     $('#btn-eraser')?.classList.toggle('active', on && state.penEraser);
@@ -5337,6 +5543,13 @@
       toast(fingerDraw === 'auto' ? 'Finger drawing: auto' : fingerDraw === 'on' ? 'Finger drawing: always on' : 'Finger drawing: off — stylus only');
     });
     $('#pen-select').addEventListener('click', () => setPenSelect(!state.penSelect));
+    $('#pen-snap').addEventListener('click', () => {
+      shapeSnap = !shapeSnap;
+      try { localStorage.setItem('ng-shape-snap', shapeSnap ? '1' : '0'); } catch (_) {}
+      updateShapeSnapBtn();
+      toast(shapeSnap ? 'Shape snapping on — draw a circle, box, triangle or line'
+                      : 'Shape snapping off');
+    });
     $('#btn-select').addEventListener('click', () => setSelectMode(!state.selectTool));
     $('#btn-delete').addEventListener('click', () => {
       if (!state.selectedIds.size) { toast('Select something first.'); return; }
