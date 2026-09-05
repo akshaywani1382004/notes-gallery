@@ -4203,8 +4203,27 @@
       const x = X(b.x || 0), y = Y(b.y || 0), w = bw * s, h = bh * s;
       drawPdfBlock(page, b, x, y, w, h, s, imgCache, countOf, TH);
       const target = pageOf[b.id];
-      if (target != null) page.link(x, y, w, h, target);      // jump into its page
+      if (target != null) {
+        page.link(x, y, w, h, target);                        // jump into its page
+        drawPdfPageTag(page, b, x, y, w, h, s, target + 1, TH);
+      }
     }
+  }
+
+  // A block that opens into its own page wears that page number, so the link
+  // is visible on paper too: "p.4" in the block's accent colour.
+  function drawPdfPageTag(page, b, x, y, w, h, s, pageNo, TH) {
+    const label = 'p.' + pageNo;
+    const fs = Math.max(5.5, Math.min(8.5, 9 * s));
+    const tw = NGPdf.textWidth(label, fs, true) + fs * 0.9;
+    const th = fs * 1.7;
+    const bx = x + w - tw - Math.max(1.5, 3 * s);
+    const by = y + Math.max(1.5, 3 * s);
+    const accent = b.color || PALETTE[0];
+    page.rect(bx, by, tw, th, { fill: accent, radius: th / 2 });
+    page.text(label, bx, by + (th - fs * 1.1) / 2, {
+      size: fs, bold: true, color: '#ffffff', maxWidth: tw, align: 'center', maxLines: 1,
+    });
   }
 
   function drawPdfBlock(page, b, x, y, w, h, s, imgCache, countOf, TH) {
