@@ -353,7 +353,24 @@ input, textarea { font-size: 15px; }
 .pen-colors { display: inline-flex; gap: 5px; align-items: center; }
 .pen-colors .pen-dot { width: 16px; height: 16px; border-radius: 999px; cursor: pointer; border: 2px solid transparent; }
 .pen-colors .pen-dot.active { border-color: var(--text); }
-#pen-size { width: 80px; accent-color: var(--accent); }
+#pen-size { width: 96px; accent-color: var(--accent); }
+
+/* ---- draw panel: styles, thickness, drag handle ---- */
+.pen-styles { display: inline-flex; gap: 4px; align-items: center; }
+.pen-sep { width: 1px; height: 22px; background: var(--line); flex: none; }
+.pen-grip { display: inline-flex; align-items: center; color: var(--text-mute);
+  cursor: grab; touch-action: none; margin: -4px 2px -4px -6px; padding: 4px 2px; flex: none; }
+.pen-grip:hover { color: var(--text); }
+#pen-bar.dragging { cursor: grabbing; box-shadow: 0 18px 46px rgba(0,0,0,.45); }
+#pen-bar.dragging .pen-grip { cursor: grabbing; }
+.pen-size-wrap { display: inline-flex; align-items: center; gap: 7px; }
+.pen-size-val { font-size: 12px; color: var(--text-mute); min-width: 34px; text-align: right;
+  font-variant-numeric: tabular-nums; }
+/* the panel is a direct child of #app so it can be dragged freely */
+#pen-bar { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+  z-index: 40; pointer-events: auto; max-width: calc(100vw - 12px); flex-wrap: wrap; }
+#pen-bar.moved { top: 0; bottom: auto; transform: none; }
+#pen-bar[hidden] { display: none; }
 @media (max-width: 560px) { .minimap { width: 130px; height: 90px; right: 8px; bottom: 64px; } }
 
 /* tag chips on cards */
@@ -953,7 +970,14 @@ input, textarea { font-size: 15px; }
   /* draw / link banners: wrap into rows instead of overflowing the screen */
   .banner-stack { width: calc(100vw - 16px); left: 50%; }
   .link-banner { flex-wrap: wrap; justify-content: center; max-width: 100%; border-radius: 18px; row-gap: 8px; padding: 9px 12px; }
-  #pen-size { width: 110px; }
+  /* draw panel: tighter on a phone so it stays a small floating bar */
+  #pen-bar { gap: 7px; padding: 8px 10px; }
+  #pen-size { width: 92px; }
+  #pen-bar .pen-tool { width: 27px; height: 27px; }
+  #pen-bar .pen-colors { gap: 4px; }
+  #pen-bar .pen-colors .pen-dot { width: 15px; height: 15px; }
+  #pen-bar .pen-sep { display: none; }
+  #pen-bar .pen-size-val { min-width: 30px; }
 }
 
 /* PHONES ONLY (touch + phone-sized in some dimension): edit panels become

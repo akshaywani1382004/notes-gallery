@@ -128,6 +128,11 @@
     image: '<rect x="3.5" y="5" width="17" height="14" rx="2.2"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M4 17l4.5-4.5 3 3L15 12l5 5"/>',
     pen: '<path d="M4 20l1-4L16 5a2 2 0 0 1 3 3L8 19l-4 1Z"/><line x1="14" y1="7" x2="17" y2="10"/>',
     eraser: '<path d="M9 20H20"/><path d="M15.5 5.5l3 3a2 2 0 0 1 0 2.8L11 19l-4.5-4.5a2 2 0 0 1 0-2.8l6.2-6.2a2 2 0 0 1 2.8 0Z"/><line x1="8" y1="9" x2="14" y2="15"/>',
+    brush: '<path d="M6.5 15.5 15 7a2.1 2.1 0 0 1 3 3l-8.5 8.5"/><path d="M6.5 15.5c-1.6.5-2 2-2 3.2 0 .7-.4 1.2-1 1.5 1.6.9 4.4.8 5.4-1.2.5-1 .2-2.3-.9-3.1a2 2 0 0 0-1.5-.4Z"/>',
+    highlighter: '<path d="M4 20h6"/><path d="M12.5 18.5H8l-1.5-3 7-7a1.8 1.8 0 0 1 2.6 0l1.4 1.4a1.8 1.8 0 0 1 0 2.6Z"/><line x1="12" y1="7.5" x2="16.5" y2="12"/>',
+    marker: '<path d="M4.5 19.5h7"/><path d="M9 16.5 6.8 14.3l7.5-7.5a2.4 2.4 0 0 1 3.4 0l.5.5a2.4 2.4 0 0 1 0 3.4L10.7 18.2Z"/>',
+    hand: '<path d="M9 11V5.6a1.6 1.6 0 0 1 3.2 0V11m0-1.2V4.8a1.6 1.6 0 0 1 3.2 0V11m0-.8a1.6 1.6 0 0 1 3.2 0v4.4a5.6 5.6 0 0 1-5.6 5.6h-1a5 5 0 0 1-3.8-1.7L5 17.4a1.6 1.6 0 0 1 2.2-2.3L9 16.6V7.6a1.6 1.6 0 0 0-3.2 0V13"/>',
+    grip: '<circle cx="9" cy="6" r="1.3"/><circle cx="15" cy="6" r="1.3"/><circle cx="9" cy="12" r="1.3"/><circle cx="15" cy="12" r="1.3"/><circle cx="9" cy="18" r="1.3"/><circle cx="15" cy="18" r="1.3"/>',
     map: '<path d="M9 4 4 6v14l5-2 6 2 5-2V4l-5 2-6-2Z"/><line x1="9" y1="4" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="20"/>',
     undo: '<path d="M4 8h9.5a5.5 5.5 0 0 1 0 11H8"/><polyline points="7.5 4 4 8 7.5 12"/>',
     front: '<rect x="8" y="8" width="12" height="12" rx="2" fill="currentColor" stroke="none"/><path d="M4 14V5.5A1.5 1.5 0 0 1 5.5 4H14"/>',
@@ -172,6 +177,117 @@
   const GRID = 26;   // world-units grid step (matches the dot grid)
   let penColor = PALETTE[0], penWidth = 3;
   try { penColor = localStorage.getItem('ng-pen-color') || penColor; penWidth = +(localStorage.getItem('ng-pen-width')) || penWidth; } catch (_) {}
+
+  /* --------------------------- pen styles ------------------------------ *
+   * Each style maps the thickness slider (1-100%) onto a real stroke width
+   * and its own look. `taper` styles render as a filled outline whose width
+   * follows drawing speed (brush/marker feel); the rest are stroked paths.  */
+  const PEN_STYLES = {
+    pen:         { label: 'Ink pen',     icon: 'pen',         mul: 1,    min: 1,   opacity: 1,    cap: 'round',  taper: 0,    blend: '' },
+    brush:       { label: 'Brush',       icon: 'brush',       mul: 2.1,  min: 1.5, opacity: .95,  cap: 'round',  taper: .55,  blend: '' },
+    pencil:      { label: 'Pencil',      icon: 'pencil',      mul: .75,  min: 1,   opacity: .72,  cap: 'round',  taper: 0,    blend: '', grain: true },
+    marker:      { label: 'Marker',      icon: 'marker',      mul: 1.7,  min: 2,   opacity: .92,  cap: 'square', taper: .18,  blend: '' },
+    highlighter: { label: 'Highlighter', icon: 'highlighter', mul: 3.4,  min: 6,   opacity: .32,  cap: 'butt',   taper: 0,    blend: 'multiply' },
+  };
+  let penStyle = 'pen', penSize = 12;          // penSize is the 1-100% slider
+  try {
+    const ps = localStorage.getItem('ng-pen-style'); if (ps && PEN_STYLES[ps]) penStyle = ps;
+    const sz = +(localStorage.getItem('ng-pen-size')); if (sz >= 1 && sz <= 100) penSize = sz;
+  } catch (_) {}
+
+  // slider % -> px for a style (1% is hairline, 100% is a broad sweep)
+  function styleWidth(style, pct) {
+    const s = PEN_STYLES[style] || PEN_STYLES.pen;
+    return Math.max(s.min, Math.round((0.6 + (pct / 100) * 22) * s.mul * 10) / 10);
+  }
+  const curWidth = () => styleWidth(penStyle, penSize);
+
+  // Apply a style's look to an SVG element (used live while drawing and when
+  // repainting a saved stroke, so both always match exactly).
+  function applyInkStyle(el, style, color, width) {
+    const s = PEN_STYLES[style] || PEN_STYLES.pen;
+    const filled = s.taper > 0;
+    el.setAttribute('fill', filled ? color : 'none');
+    el.setAttribute('stroke', filled ? 'none' : color);
+    if (!filled) {
+      el.setAttribute('stroke-width', width);
+      el.setAttribute('stroke-linecap', s.cap);
+      el.setAttribute('stroke-linejoin', 'round');
+      if (s.grain) el.setAttribute('stroke-dasharray', (width * 1.1).toFixed(2) + ' ' + (width * 0.55).toFixed(2));
+      else el.removeAttribute('stroke-dasharray');
+    }
+    el.setAttribute('opacity', s.opacity);
+    el.style.mixBlendMode = s.blend || '';
+  }
+
+  // Filled outline for tapered styles: half-width follows stroke speed, so
+  // fast strokes thin out and stroke ends taper like a real brush.
+  function inkTaperD(pts, width, taper) {
+    if (pts.length < 2) return '';
+    const half = width / 2, n = pts.length;
+    const w = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
+      const speed = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      const f = 1 - taper * Math.min(1, speed / 26);          // faster -> thinner
+      const ends = Math.min(1, Math.min(i, n - 1 - i) / 3);   // taper both ends
+      w[i] = half * f * (0.35 + 0.65 * ends);
+    }
+    for (let k = 0; k < 2; k++)                                // smooth the widths
+      for (let i = 1; i < n - 1; i++) w[i] = (w[i - 1] + w[i] * 2 + w[i + 1]) / 4;
+    const L = [], R = [];
+    for (let i = 0; i < n; i++) {
+      const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
+      let dx = b[0] - a[0], dy = b[1] - a[1];
+      const len = Math.hypot(dx, dy) || 1; dx /= len; dy /= len;
+      L.push([pts[i][0] - dy * w[i], pts[i][1] + dx * w[i]]);
+      R.push([pts[i][0] + dy * w[i], pts[i][1] - dx * w[i]]);
+    }
+    const seg = (arr) => arr.map((p, i) => (i ? 'L' : '') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
+    return 'M' + seg(L) + ' L' + seg(R.reverse()) + ' Z';
+  }
+
+  /* ------------------- palm + finger detection (Samsung-style) ---------- *
+   * A palm resting on the screen makes a big, low-pressure contact — those
+   * are dropped outright so they neither draw nor pan. Fingers draw until a
+   * stylus is seen; from then on the stylus writes and fingers pan/zoom
+   * instead (the "auto" mode most note apps use). The toolbar button forces
+   * finger drawing on or off when auto isn't what you want.                */
+  let sawStylus = false;                       // a real pen/stylus has been used
+  let fingerDraw = 'auto';                     // 'auto' | 'on' | 'off'
+  try { const f = localStorage.getItem('ng-finger-draw'); if (f) fingerDraw = f; } catch (_) {}
+
+  function isPalm(e) {
+    if (e.pointerType !== 'touch') return false;
+    const w = e.width || 0, h = e.height || 0;
+    if (w > 42 || h > 42) return true;                    // broad contact = palm/knuckle
+    return w * h > 1500;                                  // large area, any shape
+  }
+  // Should this pointer lay down ink?
+  function inkAccepts(e) {
+    if (e.pointerType === 'pen') { sawStylus = true; updatePenTouchBtn(); return true; }
+    if (e.pointerType === 'touch') {
+      if (isPalm(e)) return false;
+      if (fingerDraw === 'off') return false;
+      if (fingerDraw === 'auto' && sawStylus) return false;   // stylus present: fingers navigate
+      return true;
+    }
+    return true;                                              // mouse / trackpad
+  }
+  function updatePenTouchBtn() {
+    const b = $('#pen-touch'); if (!b) return;
+    const drawing = fingerDraw === 'on' || (fingerDraw === 'auto' && !sawStylus);
+    b.classList.toggle('active', drawing);
+    b.title = fingerDraw === 'auto'
+      ? (sawStylus ? 'Finger drawing: auto (stylus detected — fingers pan)' : 'Finger drawing: auto (fingers draw)')
+      : (fingerDraw === 'on' ? 'Finger drawing: always on' : 'Finger drawing: off (stylus only)');
+  }
+
+  // The path data for a stroke, in whichever form its style needs.
+  function inkStrokeD(pts, style, width) {
+    const s = PEN_STYLES[style] || PEN_STYLES.pen;
+    return s.taper > 0 ? inkTaperD(pts, width, s.taper) : inkPathD(pts);
+  }
   let minimapOn = true;
   try { const v = localStorage.getItem('ng-minimap'); if (v != null) minimapOn = v === '1'; } catch (_) {}
   let snapOn = false;
@@ -485,10 +601,13 @@
     const w = (b.w || 1) + pad * 2, h = (b.h || 1) + pad * 2;
     el.style.width = w + 'px'; el.style.height = h + 'px';
     const pts = (b.pts || []).map(p => [p[0] + pad, p[1] + pad]);
+    const style = PEN_STYLES[b.style] ? b.style : 'pen';
+    const width = b.width || 3;
     el.innerHTML =
       `<svg class="ink-svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">` +
-      `<path d="${inkPathD(pts)}" fill="none" stroke="${esc(b.color || penColor)}" stroke-width="${b.width || 3}" stroke-linecap="round" stroke-linejoin="round"/></svg>` +
+      `<path d="${inkStrokeD(pts, style, width)}"/></svg>` +
       `<div class="block-actions"><button class="blk-btn" data-blk="edit" title="Edit ink">${ic('pencil')}</button></div>`;
+    applyInkStyle(el.querySelector('path'), style, b.color || penColor, width);
   }
 
   // table node (kind === 'table'); rows is an array of arrays of cell strings.
@@ -1492,7 +1611,7 @@
   const saveState = $('#save-state');
   let saveTimer = null;
   // superset covering both the block editor and the text editor
-  const EDIT_FIELDS = ['title', 'description', 'notes', 'tags', 'color', 'layout', 'text', 'font', 'size', 'bold', 'italic', 'align', 'orient', 'rot', 'glow', 'glowColor', 'shape', 'w', 'h', 'fill', 'outline', 'outlineW', 'outlineColor', 'src', 'round', 'width', 'nowrap'];
+  const EDIT_FIELDS = ['title', 'description', 'notes', 'tags', 'color', 'layout', 'text', 'font', 'size', 'bold', 'italic', 'align', 'orient', 'rot', 'glow', 'glowColor', 'shape', 'w', 'h', 'fill', 'outline', 'outlineW', 'outlineColor', 'src', 'round', 'width', 'nowrap', 'style'];
 
   function snapshotFields(b) {
     const o = { id: b.id };
@@ -2020,9 +2139,28 @@
     inkBlock = b;
     editBaseline = snapshotFields(b);
     renderKSwatches(b.color);
+    renderInkStylePicker(b);
     $('#k-width').value = b.width || 3; $('#k-width-val').value = (b.width || 3);
     $('#ink-drawer').hidden = false;
     $('#ink-save').textContent = '';
+  }
+  // restyle a stroke that's already on the page
+  function renderInkStylePicker(b) {
+    const wrap = $('#k-styles'); if (!wrap) return;
+    wrap.innerHTML = '';
+    const cur = PEN_STYLES[b.style] ? b.style : 'pen';
+    Object.keys(PEN_STYLES).forEach(key => {
+      const btn = document.createElement('button');
+      btn.className = 'pen-tool' + (key === cur ? ' active' : '');
+      btn.title = PEN_STYLES[key].label;
+      btn.innerHTML = ic(PEN_STYLES[key].icon);
+      btn.addEventListener('click', () => {
+        if (!inkBlock) return;
+        inkBlock.style = key;
+        refreshItem(inkBlock.id); queueInkSave(); renderInkStylePicker(inkBlock);
+      });
+      wrap.appendChild(btn);
+    });
   }
   function closeInkEditor() {
     if ($('#ink-drawer').hidden && !inkBlock) return;
@@ -2545,6 +2683,9 @@
     }
     if (e.button !== 0) return;
 
+    // a palm resting on the page while writing does nothing at all
+    if (state.penMode && isPalm(e)) return;
+
     // pen eraser: wipe any ink stroke touched (drag continues in onPointerMove)
     if (state.penMode && state.penEraser && !inking) {
       erasing = true;
@@ -2556,7 +2697,8 @@
     // draws — over empty canvas, over blocks, over earlier strokes. Nothing gets
     // selected or dragged. Two fingers = pan/zoom the page.
     if (state.penMode && !state.penEraser && state.levelLayout === 'canvas'
-        && !e.target.closest('.banner-stack') && !e.target.closest('#minimap')) {
+        && !e.target.closest('.banner-stack') && !e.target.closest('#pen-bar') && !e.target.closest('#minimap')
+        && inkAccepts(e)) {
       if (inking) {
         // a second finger landed mid-stroke → discard the stroke, navigate instead
         inking.path.remove();
@@ -2570,11 +2712,12 @@
       const r = stage.getBoundingClientRect();
       const p = screenToWorld(e.clientX - r.left, e.clientY - r.top);
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path.setAttribute('fill', 'none'); path.setAttribute('stroke', penColor);
-      path.setAttribute('stroke-width', penWidth); path.setAttribute('stroke-linecap', 'round'); path.setAttribute('stroke-linejoin', 'round');
+      const width = curWidth();
+      applyInkStyle(path, penStyle, penColor, width);
       svg.appendChild(path);
-      inking = { pts: [[p.x, p.y]], path, pointerId: e.pointerId, lastX: e.clientX, lastY: e.clientY };
-      path.setAttribute('d', inkPathD(inking.pts));
+      inking = { pts: [[p.x, p.y]], path, pointerId: e.pointerId, lastX: e.clientX, lastY: e.clientY,
+                 style: penStyle, color: penColor, width };
+      path.setAttribute('d', inkStrokeD(inking.pts, penStyle, width));
       return;
     }
 
@@ -2707,7 +2850,7 @@
       const last = inking.pts[inking.pts.length - 1];
       if (!last || Math.hypot(p.x - last[0], p.y - last[1]) * state.view.scale > 1) {
         inking.pts.push([Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10]);
-        inking.path.setAttribute('d', inkPathD(inking.pts));
+        inking.path.setAttribute('d', inkStrokeD(inking.pts, inking.style, inking.width));
       }
       return;
     }
@@ -2850,7 +2993,7 @@
       const stroke = inking; inking = null;
       stroke.path.remove();
       const pts = stroke.pts;
-      if (pts.length >= 2) await finalizeInk(pts);
+      if (pts.length >= 2) await finalizeInk(pts, stroke);
       return;
     }
     clearTimeout(lpTimer); lpTimer = null;
@@ -3200,13 +3343,19 @@
     $('#btn-pen').classList.toggle('active', on);
     stage.classList.toggle('penning', on);
     $('#pen-bar').hidden = !on;
-    if (on) { setLinkMode(false); closeDrawerIfOpen(); clearSelection(); renderPenColors(); $('#pen-size').value = penWidth; }
-    else setEraser(false);
+    if (on) {
+      setLinkMode(false); closeDrawerIfOpen(); clearSelection();
+      renderPenColors(); renderPenStyles(); syncPenSize(); updatePenTouchBtn(); loadPenBarPos();
+    } else setEraser(false);
+    $('#btn-pen')?.classList.toggle('active', on && !state.penEraser);
+    $('#btn-eraser')?.classList.toggle('active', on && state.penEraser);
   }
   function setEraser(on) {
     state.penEraser = !!on;
     const btn = $('#pen-eraser'); if (btn) btn.classList.toggle('active', state.penEraser);
     stage.classList.toggle('erasing', state.penEraser);
+    $('#btn-eraser')?.classList.toggle('active', state.penMode && state.penEraser);
+    $('#btn-pen')?.classList.toggle('active', state.penMode && !state.penEraser);
   }
   // Remove any ink stroke under the pointer (whole-stroke eraser). Undoable.
   async function eraseInkAt(clientX, clientY) {
@@ -3224,6 +3373,84 @@
     delete state.els[id];
     node.remove();
   }
+  // pen style picker (ink pen / brush / pencil / marker / highlighter)
+  function renderPenStyles() {
+    const wrap = $('#pen-styles'); if (!wrap) return;
+    wrap.innerHTML = '';
+    Object.keys(PEN_STYLES).forEach(key => {
+      const s = PEN_STYLES[key];
+      const b = document.createElement('button');
+      b.className = 'pen-tool' + (key === penStyle ? ' active' : '');
+      b.title = s.label;
+      b.innerHTML = ic(s.icon);
+      b.addEventListener('click', () => {
+        penStyle = key;
+        try { localStorage.setItem('ng-pen-style', key); } catch (_) {}
+        renderPenStyles(); syncPenSize();
+      });
+      wrap.appendChild(b);
+    });
+  }
+  function syncPenSize() {
+    const sl = $('#pen-size'), lab = $('#pen-size-val');
+    if (sl) sl.value = penSize;
+    if (lab) lab.textContent = penSize + '%';
+    const prev = $('#pen-size-wrap-preview');
+    if (prev) prev.style.height = Math.min(22, curWidth()) + 'px';
+  }
+
+  /* ------------------- draggable draw panel ---------------------------- *
+   * The bar lives outside .banner-stack (a transformed parent would trap a
+   * fixed child), so it can be dragged anywhere and its spot remembered.   */
+  function penBarHost() { return $('#app') || document.body; }
+  function loadPenBarPos() {
+    const bar = $('#pen-bar'); if (!bar) return;
+    if (bar.parentElement !== penBarHost()) penBarHost().appendChild(bar);
+    let pos = null;
+    try { pos = JSON.parse(localStorage.getItem('ng-pen-bar-pos') || 'null'); } catch (_) {}
+    if (pos && typeof pos.left === 'number') placePenBar(pos.left, pos.top);
+    else resetPenBarPos();
+  }
+  function placePenBar(left, top) {
+    const bar = $('#pen-bar'); if (!bar) return;
+    const r = bar.getBoundingClientRect();
+    const w = r.width || 320, h = r.height || 46;
+    left = clamp(left, 6, Math.max(6, window.innerWidth - w - 6));
+    top = clamp(top, 6, Math.max(6, window.innerHeight - h - 6));
+    bar.classList.add('moved');
+    bar.style.left = Math.round(left) + 'px';
+    bar.style.top = Math.round(top) + 'px';
+    try { localStorage.setItem('ng-pen-bar-pos', JSON.stringify({ left: Math.round(left), top: Math.round(top) })); } catch (_) {}
+  }
+  function resetPenBarPos() {
+    const bar = $('#pen-bar'); if (!bar) return;
+    bar.classList.remove('moved');
+    bar.style.left = bar.style.top = '';
+    try { localStorage.removeItem('ng-pen-bar-pos'); } catch (_) {}
+  }
+  function bindPenBarDrag() {
+    const bar = $('#pen-bar'), grip = $('#pen-grip');
+    if (!bar || !grip) return;
+    let drag = null;
+    grip.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const r = bar.getBoundingClientRect();
+      drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+      bar.classList.add('dragging');
+      try { grip.setPointerCapture(e.pointerId); } catch (_) {}
+    });
+    grip.addEventListener('dblclick', (e) => { e.preventDefault(); resetPenBarPos(); });
+    const move = (e) => { if (drag) placePenBar(e.clientX - drag.dx, e.clientY - drag.dy); };
+    const end = () => { if (drag) { drag = null; bar.classList.remove('dragging'); } };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+    window.addEventListener('resize', () => {
+      if (!bar.classList.contains('moved')) return;
+      placePenBar(parseFloat(bar.style.left) || 0, parseFloat(bar.style.top) || 0);
+    });
+  }
+
   function renderPenColors() {
     const wrap = $('#pen-colors'); if (!wrap) return;
     wrap.innerHTML = '';
@@ -3235,15 +3462,18 @@
       wrap.appendChild(d);
     });
   }
-  async function finalizeInk(pts) {
+  async function finalizeInk(pts, stroke) {
+    const style = (stroke && stroke.style) || penStyle;
+    const color = (stroke && stroke.color) || penColor;
+    const width = (stroke && stroke.width) || curWidth();
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const [x, y] of pts) { minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); }
     const rel = pts.map(([x, y]) => [Math.round((x - minX) * 10) / 10, Math.round((y - minY) * 10) / 10]);
     const b = {
       id: uid(), ws: state.ws, parentId: state.level, kind: 'ink',
-      title: '', color: penColor, width: penWidth,
+      title: '', color, width, style,
       pts: rel, w: Math.round(maxX - minX), h: Math.round(maxY - minY),
-      x: Math.round(minX - penWidth - 2), y: Math.round(minY - penWidth - 2),
+      x: Math.round(minX - width - 2), y: Math.round(minY - width - 2),
       z: 0, createdAt: Date.now(), updatedAt: Date.now(),
     };
     await DB.saveBlock(b);
@@ -4541,7 +4771,25 @@
     $('#btn-pen').addEventListener('click', () => setPenMode(!state.penMode));
     $('#pen-exit').addEventListener('click', () => setPenMode(false));
     $('#pen-eraser').addEventListener('click', () => setEraser(!state.penEraser));
-    $('#pen-size').addEventListener('input', (e) => { penWidth = parseInt(e.target.value, 10) || 3; try { localStorage.setItem('ng-pen-width', penWidth); } catch (_) {} });
+    $('#pen-size').addEventListener('input', (e) => {
+      penSize = clamp(parseInt(e.target.value, 10) || 12, 1, 100);
+      try { localStorage.setItem('ng-pen-size', penSize); } catch (_) {}
+      syncPenSize();
+    });
+    // eraser button in the toolbar, right of the pen button
+    $('#btn-eraser').addEventListener('click', () => {
+      if (state.penMode && state.penEraser) { setPenMode(false); return; }   // toggle off
+      if (!state.penMode) setPenMode(true);
+      setEraser(true);
+    });
+    // finger drawing: auto (default) -> always on -> off (stylus only)
+    $('#pen-touch').addEventListener('click', () => {
+      fingerDraw = fingerDraw === 'auto' ? 'on' : (fingerDraw === 'on' ? 'off' : 'auto');
+      try { localStorage.setItem('ng-finger-draw', fingerDraw); } catch (_) {}
+      updatePenTouchBtn();
+      toast(fingerDraw === 'auto' ? 'Finger drawing: auto' : fingerDraw === 'on' ? 'Finger drawing: always on' : 'Finger drawing: off — stylus only');
+    });
+    bindPenBarDrag();
     $('#btn-fit').addEventListener('click', fitToView);
     $('#btn-help').addEventListener('click', () => openAbout('help'));
     $('#btn-theme').addEventListener('click', () =>
