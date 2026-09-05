@@ -161,22 +161,35 @@
     });
   }
 
+  // Grouped by hue so the swatch grid reads as a spectrum rather than a jumble.
   const PALETTE = [
-    '#2b7fff', // blue
-    '#4353ff', // indigo
-    '#7c5cff', // violet
-    '#a855f7', // purple
-    '#ec4899', // pink
-    '#f43f5e', // rose
-    '#ef4444', // red
-    '#f97316', // orange
-    '#f5b83d', // amber / yellow
-    '#22d3ee', // neon cyan
-    '#22c38f', // neon green
-    '#14b8a6', // teal
+    '#2b7fff', // blue        (the app's own accent — keep first)
     '#0ea5e9', // sky
+    '#22d3ee', // cyan
+    '#14b8a6', // teal
+    '#10b981', // emerald
+    '#22c38f', // green
+    '#4ade80', // spring green
+    '#84cc16', // lime
+    '#a3b18a', // sage
+    '#facc15', // yellow
+    '#e9c46a', // honey
+    '#f59e0b', // amber
+    '#f97316', // orange
+    '#e76f51', // terracotta
+    '#ef4444', // red
+    '#f43f5e', // rose
+    '#ec4899', // pink
+    '#d946ef', // magenta
+    '#a855f7', // purple
+    '#7c5cff', // violet
+    '#4353ff', // indigo
     '#8a94a6', // slate
+    '#b08968', // mocha
   ];
+  // A spread across the spectrum for the draw panel, where space is tight.
+  const PEN_COLORS = ['#2b7fff', '#22d3ee', '#10b981', '#84cc16', '#facc15',
+                      '#f97316', '#ef4444', '#ec4899', '#a855f7', '#8a94a6'];
   const BLOCK_W = 210;
   const BLOCK_H_GUESS = 130;
   const GRID = 26;   // world-units grid step (matches the dot grid)
@@ -906,7 +919,7 @@
       description: '',
       notes: '',
       layout,
-      color: isText ? '' : PALETTE[state.blocks.length % PALETTE.length],
+      color: isText ? '' : PALETTE[(state.blocks.length * 7) % PALETTE.length],
       icon: '',
       x: 0, y: 0,
       createdAt: Date.now(),
@@ -3964,7 +3977,7 @@
   function renderPenColors() {
     const wrap = $('#pen-colors'); if (!wrap) return;
     wrap.innerHTML = '';
-    PALETTE.slice(0, 8).concat(['#ffffff', '#0a0b0d']).forEach(col => {
+    PEN_COLORS.concat(['#ffffff', '#0a0b0d']).forEach(col => {
       const d = document.createElement('span');
       d.className = 'pen-dot' + (col === penColor ? ' active' : '');
       d.style.background = col;
