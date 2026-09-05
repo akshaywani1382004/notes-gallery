@@ -317,6 +317,7 @@
     penMode: false,          // freehand ink drawing mode
     penEraser: false,        // eraser sub-tool within pen mode (removes ink strokes)
     penSelect: false,        // lasso select sub-tool within pen mode
+    selectTool: false,       // toolbar Select tool: lasso-pick on the canvas
     view: { scale: 1, tx: 60, ty: 40 },
     linkMode: false,
     linkSrc: null,
@@ -1446,9 +1447,7 @@
   // multi-selection; right-drag marquee-selects. Editing is via the edit
   // button / openEditor(); opening the inner canvas is double-click / open btn.
   function syncSelectionButtons() {
-    const any = state.selectedIds.size > 0;
-    $('#btn-delete-sel')?.classList.toggle('dimmed', !any);
-    $('#btn-select-all')?.classList.toggle('active', any);
+    $('#btn-delete')?.classList.toggle('dimmed', state.selectedIds.size === 0);
   }
   function applySelectionClasses() {
     $$('.block, .list-row').forEach(n => n.classList.toggle('selected', state.selectedIds.has(n.dataset.id)));
@@ -2715,9 +2714,13 @@
 
     // lasso select: circle anything freehand to pick it up. Starting on top of
     // something already selected drags the whole selection instead.
-    if (state.penMode && state.penSelect && !lasso) {
-      const onPicked = e.target.closest('.block') && state.selectedIds.has(e.target.closest('.block').dataset.id);
-      if (!onPicked && !e.target.closest('#pen-bar') && !e.target.closest('.banner-stack')) {
+    if (lassoActive() && !lasso) {
+      const hitBlock = e.target.closest('.block');
+      const onPicked = hitBlock && state.selectedIds.has(hitBlock.dataset.id);
+      // In the toolbar's Select tool a block still behaves normally (tap to
+      // pick, drag to move); the lasso starts from empty canvas.
+      const skip = onPicked || (state.selectTool && !state.penMode && hitBlock);
+      if (!skip && !e.target.closest('#pen-bar') && !e.target.closest('.banner-stack')) {
         const r = stage.getBoundingClientRect();
         const p = screenToWorld(e.clientX - r.left, e.clientY - r.top);
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -3414,12 +3417,25 @@
     stage.classList.toggle('penning', on);
     $('#pen-bar').hidden = !on;
     if (on) {
-      setLinkMode(false); closeDrawerIfOpen(); clearSelection();
+      setLinkMode(false); closeDrawerIfOpen(); clearSelection(); setSelectMode(false);
       renderPenColors(); renderPenStyles(); syncPenSize(); updatePenTouchBtn(); loadPenBarPos();
     } else { setEraser(false); setPenSelect(false); }
     $('#btn-pen')?.classList.toggle('active', on && !state.penEraser);
     $('#btn-eraser')?.classList.toggle('active', on && state.penEraser);
   }
+  // Is a freehand selection loop available right now?
+  const lassoActive = () => (state.penMode && state.penSelect) || (!state.penMode && state.selectTool);
+
+  // Toolbar Select tool: circle things on the canvas to pick them up.
+  function setSelectMode(on) {
+    state.selectTool = !!on;
+    $('#btn-select')?.classList.toggle('active', state.selectTool);
+    stage.classList.toggle('lassoing', state.selectTool);
+    if (!state.selectTool && lasso) { lasso.path.remove(); lasso = null; }
+    if (state.selectTool) toast('Select: circle anything to pick it up');
+    syncSelectionButtons();
+  }
+
   // lasso select sub-tool (mutually exclusive with the eraser)
   function setPenSelect(on) {
     state.penSelect = !!on;
@@ -3565,16 +3581,11 @@
     });
   }
 
-  // Select everything on this level (toolbar button + Ctrl+A). Pressing it
-  // again clears, so the one button toggles.
+  // Ctrl+A — select everything on this level.
   function selectAllOnLevel() {
     if (state.levelLayout !== 'canvas') { toast('Switch to canvas view to select blocks.'); return; }
     const ids = state.blocks.filter(b => b.parentId === state.level).map(b => b.id);
     if (!ids.length) { toast('Nothing here to select.'); return; }
-    if (state.selectedIds.size >= ids.length && ids.every(id => state.selectedIds.has(id))) {
-      clearSelection(); toast('Selection cleared');
-      return;
-    }
     setSelection(ids);
     toast(ids.length + (ids.length === 1 ? ' item selected' : ' items selected'));
   }
@@ -5181,7 +5192,15 @@
     $('#btn-link').addEventListener('click', () => setLinkMode(!state.linkMode));
     $('#link-exit').addEventListener('click', () => setLinkMode(false));
     $('#tag-filter-clear').addEventListener('click', () => setTagFilter(state.tagFilter));
-    $('#btn-pen').addEventListener('click', () => setPenMode(!state.penMode));
+    $('#btn-pen').addEventListener('click', () => {
+      // While the eraser or lasso is up, the pen button means "back to the pen"
+      // (with whatever style was last used) — not "leave draw mode".
+      if (state.penMode && (state.penEraser || state.penSelect)) {
+        setEraser(false); setPenSelect(false);
+        return;
+      }
+      setPenMode(!state.penMode);
+    });
     $('#pen-exit').addEventListener('click', () => setPenMode(false));
     $('#pen-eraser').addEventListener('click', () => setEraser(!state.penEraser));
     $('#pen-size').addEventListener('input', (e) => {
@@ -5202,8 +5221,8 @@
       toast(fingerDraw === 'auto' ? 'Finger drawing: auto' : fingerDraw === 'on' ? 'Finger drawing: always on' : 'Finger drawing: off — stylus only');
     });
     $('#pen-select').addEventListener('click', () => setPenSelect(!state.penSelect));
-    $('#btn-select-all').addEventListener('click', selectAllOnLevel);
-    $('#btn-delete-sel').addEventListener('click', () => {
+    $('#btn-select').addEventListener('click', () => setSelectMode(!state.selectTool));
+    $('#btn-delete').addEventListener('click', () => {
       if (!state.selectedIds.size) { toast('Select something first.'); return; }
       deleteSelected();
     });
