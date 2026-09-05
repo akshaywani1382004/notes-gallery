@@ -3569,6 +3569,41 @@
     toast(ids.length + (ids.length === 1 ? ' item selected' : ' items selected'));
   }
 
+  /* Two fingers tapped = undo the last stroke, three = redo. Only while
+     drawing, and only for a real tap: no movement, no long hold — so it can
+     never be confused with a pinch or a two-finger pan.                    */
+  function bindDrawTapGestures() {
+    const TAP_MS = 400, SLOP = 14;
+    let g = null;
+    const done = () => { g = null; };
+    stage.addEventListener('pointerdown', (e) => {
+      if (!state.penMode || e.pointerType !== 'touch' || isPalm(e)) return;
+      const now = Date.now();
+      if (!g || now - g.start > 700) g = { start: now, max: 0, moved: false, pts: new Map() };
+      g.pts.set(e.pointerId, { x: e.clientX, y: e.clientY, live: true });
+      g.max = Math.max(g.max, [...g.pts.values()].filter(p => p.live).length);
+    }, true);
+    window.addEventListener('pointermove', (e) => {
+      if (!g) return;
+      const p = g.pts.get(e.pointerId); if (!p) return;
+      if (Math.hypot(e.clientX - p.x, e.clientY - p.y) > SLOP) g.moved = true;
+    }, true);
+    const lift = (e) => {
+      if (!g) return;
+      const p = g.pts.get(e.pointerId); if (!p) return;
+      p.live = false;
+      if ([...g.pts.values()].some(q => q.live)) return;      // fingers still down
+      const quick = Date.now() - g.start <= TAP_MS;
+      const taps = g.max, moved = g.moved;
+      done();
+      if (!quick || moved || taps < 2 || taps > 3) return;   // a pan/pinch is not a tap
+      if (taps === 2) { undo(); toast('Undo'); }
+      else { redo(); toast('Redo'); }
+    };
+    window.addEventListener('pointerup', lift, true);
+    window.addEventListener('pointercancel', (e) => { if (g && g.pts.has(e.pointerId)) done(); }, true);
+  }
+
   function renderPenColors() {
     const wrap = $('#pen-colors'); if (!wrap) return;
     wrap.innerHTML = '';
@@ -5141,9 +5176,8 @@
     });
     // eraser button in the toolbar, right of the pen button
     $('#btn-eraser').addEventListener('click', () => {
-      if (state.penMode && state.penEraser) { setPenMode(false); return; }   // toggle off
-      if (!state.penMode) setPenMode(true);
-      setEraser(true);
+      if (!state.penMode) setPenMode(true);          // opens draw mode with the eraser
+      setEraser(!state.penEraser);                   // off -> back to the pen, still drawing
     });
     // finger drawing: auto (default) -> always on -> off (stylus only)
     $('#pen-touch').addEventListener('click', () => {
@@ -5155,6 +5189,7 @@
     $('#pen-select').addEventListener('click', () => setPenSelect(!state.penSelect));
     $('#btn-select-all').addEventListener('click', selectAllOnLevel);
     bindPenBarDrag();
+    bindDrawTapGestures();
     $('#btn-fit').addEventListener('click', fitToView);
     $('#btn-help').addEventListener('click', () => openAbout('help'));
     $('#btn-theme').addEventListener('click', () =>
