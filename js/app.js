@@ -133,6 +133,9 @@
     marker: '<path d="M4.5 19.5h7"/><path d="M9 16.5 6.8 14.3l7.5-7.5a2.4 2.4 0 0 1 3.4 0l.5.5a2.4 2.4 0 0 1 0 3.4L10.7 18.2Z"/>',
     hand: '<path d="M9 11V5.6a1.6 1.6 0 0 1 3.2 0V11m0-1.2V4.8a1.6 1.6 0 0 1 3.2 0V11m0-.8a1.6 1.6 0 0 1 3.2 0v4.4a5.6 5.6 0 0 1-5.6 5.6h-1a5 5 0 0 1-3.8-1.7L5 17.4a1.6 1.6 0 0 1 2.2-2.3L9 16.6V7.6a1.6 1.6 0 0 0-3.2 0V13"/>',
     select: '<path d="M4 8.5V6.5A2.5 2.5 0 0 1 6.5 4h2M15.5 4h2A2.5 2.5 0 0 1 20 6.5v2M20 15.5v2a2.5 2.5 0 0 1-2.5 2.5h-2M8.5 20h-2A2.5 2.5 0 0 1 4 17.5v-2"/><rect x="8.5" y="8.5" width="7" height="7" rx="1.2"/>',
+    diamond: '<path d="M12 3.5 20.5 12 12 20.5 3.5 12Z"/>',
+    pentagon: '<path d="M12 3.5 20.5 9.7 17.2 19.8H6.8L3.5 9.7Z"/>',
+    hexagon: '<path d="M8.2 4h7.6l3.8 8-3.8 8H8.2L4.4 12Z"/>',
     lasso: '<path d="M12 5.2c4.4 0 8 2.1 8 4.8s-3.6 4.8-8 4.8c-1.4 0-2.8-.2-4-.6"/><path d="M8 14.2C5.5 13.4 4 11.9 4 10c0-1.7 1.3-3.2 3.4-4.1"/><path d="M7.7 14.4c-.6 1.6-.4 3.1.5 3.9"/><circle cx="9" cy="19.6" r="1.5"/>',
     grip: '<circle cx="9" cy="6" r="1.3"/><circle cx="15" cy="6" r="1.3"/><circle cx="9" cy="12" r="1.3"/><circle cx="15" cy="12" r="1.3"/><circle cx="9" cy="18" r="1.3"/><circle cx="15" cy="18" r="1.3"/>',
     map: '<path d="M9 4 4 6v14l5-2 6 2 5-2V4l-5 2-6-2Z"/><line x1="9" y1="4" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="20"/>',
@@ -476,7 +479,8 @@
       const y = h / 2;
       const lw = Math.max(1, b.outlineW || 4);
       const col = b.outlineColor || b.color || PALETTE[0];
-      inner = `<line x1="${(lw / 2 + 0.5).toFixed(1)}" y1="${y}" x2="${Math.max(lw / 2 + 0.5, w - lw / 2 - 0.5).toFixed(1)}" y2="${y}" stroke="${col}" stroke-width="${lw}" stroke-linecap="round"/>`;
+      const dash = b.dash ? ` stroke-dasharray="${(lw * 0.2).toFixed(1)} ${(lw * 1.9).toFixed(1)}"` : '';
+      inner = `<line x1="${(lw / 2 + 0.5).toFixed(1)}" y1="${y}" x2="${Math.max(lw / 2 + 0.5, w - lw / 2 - 0.5).toFixed(1)}" y2="${y}" stroke="${col}" stroke-width="${lw}" stroke-linecap="round"${dash}/>`;
     } else if (b.shape === 'circle') {
       inner = `<ellipse cx="${w / 2}" cy="${h / 2}" rx="${Math.max(1, w / 2 - pad)}" ry="${Math.max(1, h / 2 - pad)}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
     } else if (pts) {
@@ -1616,7 +1620,7 @@
   const saveState = $('#save-state');
   let saveTimer = null;
   // superset covering both the block editor and the text editor
-  const EDIT_FIELDS = ['title', 'description', 'notes', 'tags', 'color', 'layout', 'text', 'font', 'size', 'bold', 'italic', 'align', 'orient', 'rot', 'glow', 'glowColor', 'shape', 'w', 'h', 'fill', 'outline', 'outlineW', 'outlineColor', 'src', 'round', 'width', 'nowrap', 'style'];
+  const EDIT_FIELDS = ['title', 'description', 'notes', 'tags', 'color', 'layout', 'text', 'font', 'size', 'bold', 'italic', 'align', 'orient', 'rot', 'glow', 'glowColor', 'shape', 'w', 'h', 'fill', 'outline', 'outlineW', 'outlineColor', 'src', 'round', 'width', 'nowrap', 'style', 'points', 'dash'];
 
   function snapshotFields(b) {
     const o = { id: b.id };
@@ -1927,7 +1931,25 @@
   /* ---------------------------- shape editor --------------------------- */
   let shapeBlock = null;
   let shapeSaveTimer = null;
-  function renderSType(active) { $$('#s-type button').forEach(b => b.classList.toggle('active', b.dataset.shape === active)); }
+  function renderSType(active, block) {
+    const poly = block && block.points ? polyNameOf(block.points) : null;
+    $$('#s-type button').forEach(b => {
+      const on = b.dataset.shape === active && (active !== 'polygon' || !poly || b.dataset.poly === poly);
+      b.classList.toggle('active', on);
+    });
+    const dashRow = $('#s-dash-row');
+    if (dashRow) {
+      dashRow.hidden = active !== 'line';
+      const cb = $('#s-dash'); if (cb && block) cb.checked = !!block.dash;
+    }
+  }
+  // Which named polygon do these points match?
+  function polyNameOf(points) {
+    if (!Array.isArray(points)) return null;
+    return Object.keys(POLY_SHAPES).find(k =>
+      POLY_SHAPES[k].length === points.length &&
+      POLY_SHAPES[k].every((p, i) => Math.abs(p[0] - points[i][0]) < 0.02 && Math.abs(p[1] - points[i][1]) < 0.02)) || null;
+  }
   function renderSFill(active) {
     const wrap = $('#s-swatches'); wrap.innerHTML = '';
     PALETTE.forEach(col => {
@@ -1969,7 +1991,7 @@
     selectBlock(id);
     shapeBlock = b;
     editBaseline = snapshotFields(b);
-    renderSType(b.shape || 'rectangle');
+    renderSType(b.shape || 'rectangle', b);
     $('#s-w').value = b.w || 150; $('#s-w-val').value = (b.w || 150);
     $('#s-h').value = b.h || 100; $('#s-h-val').value = (b.h || 100);
     $('#s-rot').value = b.rot || 0; $('#s-rot-val').value = (b.rot || 0);
@@ -1990,11 +2012,17 @@
     shapeBlock = null;
   }
   function bindShapeEditor() {
+    $('#s-dash').addEventListener('change', (e) => {
+      if (!shapeBlock) return;
+      shapeBlock.dash = e.target.checked;
+      refreshItem(shapeBlock.id); queueShapeSave();
+    });
     $$('#s-type button').forEach(btn => btn.addEventListener('click', () => {
       if (!shapeBlock) return;
       const shape = btn.dataset.shape;
       shapeBlock.shape = shape;
       if (shape !== 'polygon') shapeBlock.points = null;
+      else shapeBlock.points = POLY_SHAPES[btn.dataset.poly] || null;
       if (shape === 'line') {                       // a line is stroke-only: no fill, drive it via the outline controls
         shapeBlock.fill = false;
         shapeBlock.outline = true;
@@ -2005,7 +2033,7 @@
         $('#s-ow').value = shapeBlock.outlineW; $('#s-ow-val').value = shapeBlock.outlineW;
         renderSOutline(shapeBlock.outlineColor);
       }
-      renderSType(shape);
+      renderSType(shape, shapeBlock);
       refreshItem(shapeBlock.id); queueShapeSave();
     }));
     wireParam('s-w-val', 's-w', (v) => { if (!shapeBlock) return; shapeBlock.w = Math.max(1, Math.round(v)); refreshItem(shapeBlock.id); queueShapeSave(); });
@@ -2750,21 +2778,101 @@
   let shapeSnap = false;
   try { shapeSnap = localStorage.getItem('ng-shape-snap') === '1'; } catch (_) {}
 
-  // Ramer-Douglas-Peucker: reduce a stroke to its defining corners.
-  function simplifyPts(pts, tol) {
-    if (pts.length < 3) return pts.slice();
-    const [x1, y1] = pts[0], [x2, y2] = pts[pts.length - 1];
-    let idx = -1, max = 0;
-    const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1;
-    for (let i = 1; i < pts.length - 1; i++) {
-      const d = Math.abs((pts[i][0] - x1) * dy - (pts[i][1] - y1) * dx) / len;
-      if (d > max) { max = d; idx = i; }
+  // Resample a stroke to evenly spaced points — corner maths needs an even
+  // sampling, not the uneven spacing a fast hand produces.
+  function resamplePts(pts, count) {
+    let total = 0;
+    for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    if (total <= 0) return pts.slice();
+    const step = total / (count - 1);
+    const out = [pts[0].slice()];
+    let acc = 0;
+    for (let i = 1; i < pts.length; i++) {
+      let [x0, y0] = pts[i - 1], [x1, y1] = pts[i];
+      let d = Math.hypot(x1 - x0, y1 - y0);
+      while (acc + d >= step && out.length < count) {
+        const t = (step - acc) / d;
+        const nx = x0 + (x1 - x0) * t, ny = y0 + (y1 - y0) * t;
+        out.push([nx, ny]);
+        x0 = nx; y0 = ny; d = Math.hypot(x1 - x0, y1 - y0); acc = 0;
+      }
+      acc += d;
     }
-    if (max <= tol) return [pts[0], pts[pts.length - 1]];
-    return simplifyPts(pts.slice(0, idx + 1), tol).slice(0, -1).concat(simplifyPts(pts.slice(idx), tol));
+    while (out.length < count) out.push(pts[pts.length - 1].slice());
+    return out;
   }
 
-  // Returns { shape, x, y, w, h } when the stroke is clearly a shape.
+  // Corners = points where the stroke turns sharply. Measured as the angle
+  // between the directions a few samples either side, then thinned so one
+  // corner is reported once.
+  function findCorners(rs, closed) {
+    const N = rs.length, span = Math.max(2, Math.round(N * 0.05));
+    const turn = new Array(N).fill(0);
+    for (let i = 0; i < N; i++) {
+      const a = closed ? rs[(i - span + N) % N] : rs[Math.max(0, i - span)];
+      const b = rs[i];
+      const c = closed ? rs[(i + span) % N] : rs[Math.min(N - 1, i + span)];
+      const a1 = Math.atan2(b[1] - a[1], b[0] - a[0]);
+      const a2 = Math.atan2(c[1] - b[1], c[0] - b[0]);
+      let d = Math.abs(a2 - a1);
+      if (d > Math.PI) d = Math.PI * 2 - d;
+      turn[i] = d;
+    }
+    const MIN_TURN = 0.62;                       // ~35 degrees counts as a corner
+    const picks = [];
+    for (let i = 0; i < N; i++) {
+      if (turn[i] < MIN_TURN) continue;
+      if (!closed && (i < span || i > N - 1 - span)) continue;    // ends are not corners
+      let best = true;
+      for (let k = -span; k <= span; k++) {
+        const j = closed ? (i + k + N) % N : i + k;
+        if (j < 0 || j >= N || j === i) continue;
+        if (turn[j] > turn[i]) { best = false; break; }
+      }
+      if (best) picks.push(i);
+    }
+    // merge picks that sit on the same corner
+    const merged = [];
+    for (const i of picks) {
+      const near = merged.length && (closed
+        ? Math.min(Math.abs(i - merged[merged.length - 1]), N - Math.abs(i - merged[merged.length - 1])) < span * 1.6
+        : i - merged[merged.length - 1] < span * 1.6);
+      if (!near) merged.push(i);
+    }
+    if (closed && merged.length > 1) {
+      const gap = Math.min(Math.abs(merged[0] - merged[merged.length - 1]),
+                           N - Math.abs(merged[0] - merged[merged.length - 1]));
+      if (gap < span * 1.6) merged.pop();
+    }
+    return merged.map(i => rs[i]);
+  }
+
+  // Normalised polygon outlines (0..1 inside the block box).
+  const POLY_SHAPES = {
+    diamond:  [[0.5, 0], [1, 0.5], [0.5, 1], [0, 0.5]],
+    pentagon: [[0.5, 0], [1, 0.38], [0.82, 1], [0.18, 1], [0, 0.38]],
+    hexagon:  [[0.25, 0], [0.75, 0], [1, 0.5], [0.75, 1], [0.25, 1], [0, 0.5]],
+    star:     (() => {
+      const pts = [];
+      for (let i = 0; i < 10; i++) {
+        const r = i % 2 ? 0.21 : 0.5;
+        const a = -Math.PI / 2 + i * Math.PI / 5;
+        pts.push([0.5 + Math.cos(a) * r, 0.5 + Math.sin(a) * r]);
+      }
+      return pts;
+    })(),
+  };
+
+  // Does the stroke stay close to a perfect ellipse in its own bounding box?
+  function ellipseError(pts, minX, minY, w, h) {
+    const cx = minX + w / 2, cy = minY + h / 2;
+    const rx = (w / 2) || 1, ry = (h / 2) || 1;
+    let err = 0;
+    for (const [px, py] of pts) err += Math.abs(Math.hypot((px - cx) / rx, (py - cy) / ry) - 1);
+    return err / pts.length;
+  }
+
+  // Returns { shape, points?, x, y, w, h } when the stroke is clearly a shape.
   function recognizeShape(pts) {
     if (pts.length < 6) return null;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, pathLen = 0;
@@ -2775,73 +2883,86 @@
     }
     const w = maxX - minX, h = maxY - minY;
     const size = Math.max(w, h);
-    if (size < 28 || pathLen < 40) return null;              // too small to judge
+    if (size < 28 || pathLen < 40) return null;               // too small to judge
     const a = pts[0], b = pts[pts.length - 1];
     const gap = Math.hypot(b[0] - a[0], b[1] - a[1]);
-    const closed = gap < size * 0.28;
+    const closed = gap < Math.max(size * 0.3, pathLen * 0.13);
     const box = { x: minX, y: minY, w: Math.max(w, 6), h: Math.max(h, 6) };
 
     if (!closed) {
-      // straight line: the path barely deviates from the direct route
-      const direct = gap;
-      if (direct > 0 && pathLen / direct < 1.12 && Math.min(w, h) < size * 0.3) {
-        return { shape: 'line', ...box, from: a, to: b };
+      // straight when the stroke hugs the direct route: no detour, and no
+      // point wandering far off the chord (works at any angle).
+      if (gap > 0 && pathLen / gap < 1.16) {
+        const dx = b[0] - a[0], dy = b[1] - a[1];
+        let dev = 0;
+        for (const [px, py] of pts) {
+          dev = Math.max(dev, Math.abs((px - a[0]) * dy - (py - a[1]) * dx) / gap);
+        }
+        if (dev < gap * 0.09) return { shape: 'line', ...box, from: a, to: b };
       }
-      return null;
+      return null;                                            // open scribble: leave as ink
     }
 
-    // closed: circle if every point sits at a similar distance from centre
-    const cx = minX + w / 2, cy = minY + h / 2;
-    const rx = w / 2 || 1, ry = h / 2 || 1;
-    let err = 0;
-    for (const [px, py] of pts) {
-      const d = Math.hypot((px - cx) / rx, (py - cy) / ry);   // 1 on a perfect ellipse
-      err += Math.abs(d - 1);
-    }
-    err /= pts.length;
-    if (err < 0.13) return { shape: 'circle', ...box };
+    // ---- closed: corners decide what it is ----
+    const rs = resamplePts(pts, 96);
+    const corners = findCorners(rs, true);
+    const c = corners.length;
+    const near = (v, t, tol) => Math.abs(v - t) < tol;
 
-    // Otherwise count corners. A closed loop is split at the point farthest
-    // from the start first: simplifying a path whose ends meet would collapse
-    // it to a single segment (both ends sit on the same spot).
-    const tol = size * 0.075;
-    let far = 0, farD = -1;
-    for (let i = 1; i < pts.length; i++) {
-      const d = Math.hypot(pts[i][0] - a[0], pts[i][1] - a[1]);
-      if (d > farD) { farD = d; far = i; }
+    if (c === 3) return { shape: 'triangle', ...box };
+    if (c === 4) {
+      // diamond when the corners sit at the middles of the box's sides
+      const mids = corners.filter(([px, py]) =>
+        (near(px, minX + w / 2, w * 0.22) && (near(py, minY, h * 0.25) || near(py, maxY, h * 0.25))) ||
+        (near(py, minY + h / 2, h * 0.22) && (near(px, minX, w * 0.25) || near(px, maxX, w * 0.25))));
+      if (mids.length === 4) return { shape: 'polygon', points: POLY_SHAPES.diamond, ...box };
+      const square = Math.min(w, h) / Math.max(w, h) > 0.82;
+      return { shape: square ? 'square' : 'rectangle', ...box };
     }
-    const half1 = simplifyPts(pts.slice(0, far + 1), tol);
-    const half2 = simplifyPts(pts.slice(far), tol);
-    let corners = half1.concat(half2.slice(1));
-    // the loop closes back on itself: drop the repeated point
-    if (corners.length > 1) {
-      const first = corners[0], last = corners[corners.length - 1];
-      if (Math.hypot(first[0] - last[0], first[1] - last[1]) < size * 0.2) corners = corners.slice(0, -1);
+    if (c === 5) return { shape: 'polygon', points: POLY_SHAPES.pentagon, ...box };
+    if (c === 6) return { shape: 'polygon', points: POLY_SHAPES.hexagon, ...box };
+    if (c >= 9 && c <= 11) {
+      // star: corners alternate far from / close to the middle
+      const cx = minX + w / 2, cy = minY + h / 2;
+      const rad = corners.map(([px, py]) => Math.hypot((px - cx) / (w / 2 || 1), (py - cy) / (h / 2 || 1)));
+      const mean = rad.reduce((x, y) => x + y, 0) / rad.length;
+      const outer = rad.filter(r => r > mean), inner = rad.filter(r => r <= mean);
+      if (outer.length >= 4 && inner.length >= 4) {
+        const om = outer.reduce((x, y) => x + y, 0) / outer.length;
+        const im = inner.reduce((x, y) => x + y, 0) / inner.length;
+        if (im / om < 0.72) return { shape: 'polygon', points: POLY_SHAPES.star, ...box };
+      }
     }
-    if (corners.length === 3) return { shape: 'triangle', ...box };
-    if (corners.length === 4) {
-      // rectangle only when the corners really sit near the bounding box
-      const near = corners.filter(([px, py]) =>
-        (Math.abs(px - minX) < size * 0.2 || Math.abs(px - maxX) < size * 0.2) &&
-        (Math.abs(py - minY) < size * 0.2 || Math.abs(py - maxY) < size * 0.2));
-      if (near.length === 4) return { shape: 'rectangle', ...box };
-    }
-    return null;
+    // no clear corners: a circle if it really is round
+    if (c <= 2 && ellipseError(rs, minX, minY, w, h) < 0.16) return { shape: 'circle', ...box };
+    return null;                                              // ambiguous: keep the ink
   }
+
+  const shapeSnapName = (hit) => {
+    if (hit.shape !== 'polygon') return hit.shape;
+    const key = Object.keys(POLY_SHAPES).find(k => POLY_SHAPES[k] === hit.points);
+    return key || 'polygon';
+  };
 
   // Build the vector block a recognised stroke turns into.
   async function createRecognizedShape(hit, colour, strokeW) {
     const pad = 2;
     const b = {
       id: uid(), ws: state.ws, parentId: state.level, kind: 'shape',
-      title: '', shape: hit.shape,
+      title: '', shape: hit.shape === 'square' ? 'rectangle' : hit.shape,
+      points: hit.points || null,
       x: Math.round(hit.x - pad), y: Math.round(hit.y - pad),
       w: Math.round(Math.max(hit.shape === 'line' ? 8 : 16, hit.w + pad * 2)),
       h: Math.round(Math.max(hit.shape === 'line' ? 8 : 16, hit.h + pad * 2)),
       color: colour, fill: false, outline: true,
       outlineW: Math.max(2, Math.round(strokeW)), outlineColor: colour,
-      rot: 0, points: null, z: 0, createdAt: Date.now(), updatedAt: Date.now(),
+      rot: 0, z: 0, createdAt: Date.now(), updatedAt: Date.now(),
     };
+    if (hit.shape === 'square') {                              // even sides
+      const side = Math.round((b.w + b.h) / 2);
+      b.x += Math.round((b.w - side) / 2); b.y += Math.round((b.h - side) / 2);
+      b.w = b.h = side;
+    }
     if (hit.shape === 'line') {                                // keep the drawn angle
       const dx = hit.to[0] - hit.from[0], dy = hit.to[1] - hit.from[1];
       const len = Math.hypot(dx, dy);
@@ -3260,7 +3381,7 @@
         const hit = shapeSnap ? recognizeShape(pts) : null;
         if (hit) {
           await createRecognizedShape(hit, stroke.color || penColor, stroke.width || 3);
-          toast('Snapped to ' + (hit.shape === 'rectangle' ? 'rectangle' : hit.shape));
+          toast('Snapped to ' + shapeSnapName(hit));
         } else {
           await finalizeInk(pts, stroke);
         }
@@ -4513,8 +4634,15 @@
       const o = { fill: b.fill === false ? null : (b.color || accent), stroke: b.outline ? (b.outlineColor || TH.text) : null, lineWidth: Math.max(.4, (b.outlineW || 2) * s) };
       if (b.shape === 'circle') page.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, o);
       else if (b.shape === 'triangle') page.path([[x + w / 2, y], [x + w, y + h], [x, y + h]], Object.assign({ closed: true }, o));
-      else if (b.shape === 'line') page.path([[x, y + h / 2], [x + w, y + h / 2]], { stroke: b.color || accent, width: Math.max(.5, (b.outlineW || 3) * s) });
-      else page.rect(x, y, w, h, Object.assign({ radius: 4 * s }, o));
+      else if (b.shape === 'line') {
+        const lw = Math.max(.5, (b.outlineW || 3) * s);
+        page.path([[x, y + h / 2], [x + w, y + h / 2]], {
+          stroke: b.outlineColor || b.color || accent, width: lw,
+          dash: b.dash ? (lw * 0.2).toFixed(1) + ' ' + (lw * 1.9).toFixed(1) : null,
+        });
+      } else if (b.shape === 'polygon' && Array.isArray(b.points) && b.points.length >= 3) {
+        page.path(b.points.map(([px, py]) => [x + px * w, y + py * h]), Object.assign({ closed: true }, o));
+      } else page.rect(x, y, w, h, Object.assign({ radius: 4 * s }, o));
       return;
     }
     if (b.kind === 'table') {
