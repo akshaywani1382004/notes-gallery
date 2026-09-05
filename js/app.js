@@ -4052,6 +4052,12 @@
    * block that has its own page becomes a clickable link to it, so the PDF
    * navigates like the app does.                                           */
   const PDF_PAGE = { w: 842, h: 595, margin: 34 };          // A4 landscape, points
+  const PDF_THEMES = {
+    light: { page: '#ffffff', text: '#12151c', dim: '#5b6472', faint: '#8b93a1', rule: '#d8dde5',
+             card: '#ffffff', cardLine: '#d8dde5', tableHead: '#f1f4f8', grid: '#dbe1e9', ph: '#eef1f5' },
+    dark:  { page: '#12151b', text: '#e9edf4', dim: '#a8b1c0', faint: '#7c8798', rule: '#2b313c',
+             card: '#191d25', cardLine: '#2b313c', tableHead: '#1e242e', grid: '#2b313c', ph: '#1e242e' },
+  };
 
   // Does this block open into its own page?
   function hasOwnPage(b, kids) {
@@ -4061,7 +4067,7 @@
   }
 
   // Convert any image source to raw JPEG bytes for embedding.
-  async function srcToJpeg(src, maxPx) {
+  async function srcToJpeg(src, maxPx, bg) {
     const img = await new Promise((res, rej) => {
       const i = new Image();
       i.onload = () => res(i); i.onerror = rej;
@@ -4073,7 +4079,7 @@
     const cv = document.createElement('canvas');
     cv.width = cw; cv.height = ch;
     const ctx = cv.getContext('2d');
-    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, cw, ch);   // PDF JPEGs have no alpha
+    ctx.fillStyle = bg || '#ffffff'; ctx.fillRect(0, 0, cw, ch);   // PDF JPEGs have no alpha
     ctx.drawImage(img, 0, 0, cw, ch);
     const url = cv.toDataURL('image/jpeg', 0.86);
     const bin = atob(url.slice(url.indexOf(',') + 1));
@@ -4082,7 +4088,8 @@
     return { bytes, w: cw, h: ch };
   }
 
-  async function exportWorkspacePdf(wsId, overrideName) {
+  async function exportWorkspacePdf(wsId, overrideName, mode) {
+    const TH = PDF_THEMES[mode === 'dark' ? 'dark' : 'light'];
     wsId = wsId || state.ws;
     if (!wsId || !window.NGPdf) { toast('PDF export is unavailable here.'); return; }
     toast('Building PDF…');
@@ -4113,7 +4120,7 @@
     const doc = NGPdf.createDoc({ width: PDF_PAGE.w, height: PDF_PAGE.h });
     for (const b of blocks) {
       if (b.kind === 'image' && b.src && !imgCache[b.id]) {
-        try { const j = await srcToJpeg(b.src); imgCache[b.id] = doc.addImage(j.bytes, j.w, j.h); }
+        try { const j = await srcToJpeg(b.src, 1400, TH.page); imgCache[b.id] = doc.addImage(j.bytes, j.w, j.h); }
         catch (_) { /* unreadable image: it just draws as a placeholder */ }
       }
     }
@@ -4121,8 +4128,9 @@
     // 3. draw the pages
     levels.forEach((lvl, idx) => {
       const page = doc.page();
-      drawPdfHeader(page, lvl, idx + 1, levels.length);
-      drawPdfLevel(page, lvl, pageOf, countOf, imgCache);
+      page.rect(0, 0, PDF_PAGE.w, PDF_PAGE.h, { fill: TH.page });     // page ground
+      drawPdfHeader(page, lvl, idx + 1, levels.length, TH);
+      drawPdfLevel(page, lvl, pageOf, countOf, imgCache, TH);
     });
 
     const bytes = doc.build();
@@ -4154,20 +4162,20 @@
     return 'Untitled';
   };
 
-  function drawPdfHeader(page, lvl, no, total) {
+  function drawPdfHeader(page, lvl, no, total, TH) {
     const M = PDF_PAGE.margin;
-    page.text(lvl.path.join('  >  '), M, 20, { size: 9, color: '#7a8190', maxWidth: PDF_PAGE.w - M * 2 - 60, maxLines: 1 });
-    page.text(`${no} / ${total}`, PDF_PAGE.w - M - 60, 20, { size: 9, color: '#7a8190', maxWidth: 60, align: 'right' });
-    page.text(lvl.title, M, 32, { size: 15, bold: true, color: '#12151c', maxWidth: PDF_PAGE.w - M * 2, maxLines: 1 });
-    page.path([[M, 58], [PDF_PAGE.w - M, 58]], { stroke: '#d8dde5', width: 0.7 });
+    page.text(lvl.path.join('  >  '), M, 20, { size: 9, color: TH.dim, maxWidth: PDF_PAGE.w - M * 2 - 60, maxLines: 1 });
+    page.text(`${no} / ${total}`, PDF_PAGE.w - M - 60, 20, { size: 9, color: TH.dim, maxWidth: 60, align: 'right' });
+    page.text(lvl.title, M, 32, { size: 15, bold: true, color: TH.text, maxWidth: PDF_PAGE.w - M * 2, maxLines: 1 });
+    page.path([[M, 58], [PDF_PAGE.w - M, 58]], { stroke: TH.rule, width: 0.7 });
   }
 
   // Draw one level's blocks, scaled so everything fits inside the page.
-  function drawPdfLevel(page, lvl, pageOf, countOf, imgCache) {
+  function drawPdfLevel(page, lvl, pageOf, countOf, imgCache, TH) {
     const M = PDF_PAGE.margin, top = 68;
     const areaW = PDF_PAGE.w - M * 2, areaH = PDF_PAGE.h - top - M;
     if (!lvl.blocks.length) {
-      page.text('(empty)', M, top + 10, { size: 10, color: '#9aa1ad' });
+      page.text('(empty)', M, top + 10, { size: 10, color: TH.faint });
       return;
     }
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -4193,17 +4201,17 @@
     for (const b of lvl.blocks) {
       const [bw, bh] = sizeOf(b);
       const x = X(b.x || 0), y = Y(b.y || 0), w = bw * s, h = bh * s;
-      drawPdfBlock(page, b, x, y, w, h, s, imgCache, countOf);
+      drawPdfBlock(page, b, x, y, w, h, s, imgCache, countOf, TH);
       const target = pageOf[b.id];
       if (target != null) page.link(x, y, w, h, target);      // jump into its page
     }
   }
 
-  function drawPdfBlock(page, b, x, y, w, h, s, imgCache, countOf) {
+  function drawPdfBlock(page, b, x, y, w, h, s, imgCache, countOf, TH) {
     const accent = b.color || PALETTE[0];
     if (b.kind === 'text') {
       page.text(b.text || '', x, y, {
-        size: Math.max(5, (b.size || 16) * s), bold: !!b.bold, color: b.color || '#12151c',
+        size: Math.max(5, (b.size || 16) * s), bold: !!b.bold, color: b.color || TH.text,
         maxWidth: w, maxLines: Math.max(1, Math.floor(h / Math.max(6, (b.size || 16) * s * 1.28))),
         align: b.align === 'center' ? 'center' : b.align === 'right' ? 'right' : 'left',
       });
@@ -4212,8 +4220,8 @@
     if (b.kind === 'image') {
       const img = imgCache[b.id];
       if (img) page.image(img, x, y, w, h);
-      else page.rect(x, y, w, h, { fill: '#eef1f5', stroke: '#d8dde5', radius: 4 * s });
-      if (b.outline) page.rect(x, y, w, h, { stroke: b.outlineColor || '#12151c', lineWidth: Math.max(.4, (b.outlineW || 2) * s), radius: (b.round ? 10 : 0) * s });
+      else page.rect(x, y, w, h, { fill: TH.ph, stroke: TH.cardLine, radius: 4 * s });
+      if (b.outline) page.rect(x, y, w, h, { stroke: b.outlineColor || TH.text, lineWidth: Math.max(.4, (b.outlineW || 2) * s), radius: (b.round ? 10 : 0) * s });
       return;
     }
     if (b.kind === 'ink') {
@@ -4236,7 +4244,7 @@
       return;
     }
     if (b.kind === 'shape') {
-      const o = { fill: b.fill === false ? null : (b.color || accent), stroke: b.outline ? (b.outlineColor || '#12151c') : null, lineWidth: Math.max(.4, (b.outlineW || 2) * s) };
+      const o = { fill: b.fill === false ? null : (b.color || accent), stroke: b.outline ? (b.outlineColor || TH.text) : null, lineWidth: Math.max(.4, (b.outlineW || 2) * s) };
       if (b.shape === 'circle') page.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, o);
       else if (b.shape === 'triangle') page.path([[x + w / 2, y], [x + w, y + h], [x, y + h]], Object.assign({ closed: true }, o));
       else if (b.shape === 'line') page.path([[x, y + h / 2], [x + w, y + h / 2]], { stroke: b.color || accent, width: Math.max(.5, (b.outlineW || 3) * s) });
@@ -4248,44 +4256,44 @@
       const cols = Math.max(1, Math.max(...rows.map(r => r.length), 1));
       const rh = h / Math.max(1, rows.length);
       const cwid = w / cols;
-      page.rect(x, y, w, h, { fill: '#ffffff', stroke: '#c9d0da', lineWidth: .6 });
+      page.rect(x, y, w, h, { fill: TH.card, stroke: TH.cardLine, lineWidth: .6 });
       rows.forEach((row, r) => {
-        if (b.header !== false && r === 0) page.rect(x, y + r * rh, w, rh, { fill: '#f1f4f8' });
+        if (b.header !== false && r === 0) page.rect(x, y + r * rh, w, rh, { fill: TH.tableHead });
         for (let c = 0; c < cols; c++) {
-          page.rect(x + c * cwid, y + r * rh, cwid, rh, { stroke: '#dbe1e9', lineWidth: .4 });
+          page.rect(x + c * cwid, y + r * rh, cwid, rh, { stroke: TH.grid, lineWidth: .4 });
           const t = (row[c] == null ? '' : String(row[c]));
           if (t) page.text(t, x + c * cwid + 2 * s, y + r * rh + rh * 0.22, {
             size: Math.max(4, Math.min(9, rh * 0.5)), bold: (b.header !== false && r === 0),
-            color: '#12151c', maxWidth: cwid - 4 * s, maxLines: 1,
+            color: TH.text, maxWidth: cwid - 4 * s, maxLines: 1,
           });
         }
       });
-      if (b.title) page.text(b.title, x, y - 12 * s, { size: Math.max(5, 9 * s), bold: true, color: '#12151c', maxWidth: w, maxLines: 1 });
+      if (b.title) page.text(b.title, x, y - 12 * s, { size: Math.max(5, 9 * s), bold: true, color: TH.text, maxWidth: w, maxLines: 1 });
       return;
     }
     // default card
-    page.rect(x, y, w, h, { fill: '#ffffff', stroke: '#d8dde5', lineWidth: .8, radius: 9 * s });
+    page.rect(x, y, w, h, { fill: TH.card, stroke: TH.cardLine, lineWidth: .8, radius: 9 * s });
     page.rect(x, y, Math.max(2, 3 * s), h, { fill: accent });
     const pad = 10 * s;
     let ty = page.text(blockLabel(b), x + pad + 4 * s, y + pad, {
-      size: Math.max(6, 11 * s), bold: true, color: '#12151c', maxWidth: w - pad * 2 - 4 * s, maxLines: 2,
+      size: Math.max(6, 11 * s), bold: true, color: TH.text, maxWidth: w - pad * 2 - 4 * s, maxLines: 2,
     });
     if (b.description) {
       ty = page.text(b.description, x + pad + 4 * s, ty + 3 * s, {
-        size: Math.max(5, 8.5 * s), color: '#5b6472', maxWidth: w - pad * 2 - 4 * s, maxLines: 3,
+        size: Math.max(5, 8.5 * s), color: TH.dim, maxWidth: w - pad * 2 - 4 * s, maxLines: 3,
       });
     }
     const kids = countOf[b.id] || 0;
-    if (kids) page.text(`${kids} inside`, x + pad + 4 * s, y + h - pad - 8 * s, { size: Math.max(5, 7.5 * s), color: '#8b93a1', maxWidth: w - pad * 2 });
+    if (kids) page.text(`${kids} inside`, x + pad + 4 * s, y + h - pad - 8 * s, { size: Math.max(5, 7.5 * s), color: TH.faint, maxWidth: w - pad * 2 });
   }
 
   function exportWorkspacePdfFlow(wsId) {
     const id = wsId || state.ws;
     if (!id) { toast('Open a workspace first.'); return; }
     DB.getWorkspace(id).then(w => {
-      promptDialog('Export PDF', (w && w.name) || 'Workspace', (name) => {
-        exportWorkspacePdf(id, (name || '').trim() || (w && w.name) || 'Workspace');
-      });
+      promptDialog('Export PDF', (w && w.name) || 'Workspace', (name, _c, _t, theme) => {
+        exportWorkspacePdf(id, (name || '').trim() || (w && w.name) || 'Workspace', theme);
+      }, { themes: true, theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light', okLabel: 'Export' });
     });
   }
 
@@ -4825,6 +4833,7 @@
   let promptCb = null;
   let promptColor = null;
   let promptTemplate = 'blank';
+  let promptTheme = 'light';        // light / dark page style (PDF export)
   function renderPromptColors(active) {
     const wrap = $('#prompt-colors');
     wrap.innerHTML = '';
@@ -4846,6 +4855,12 @@
     $('#prompt-color-wrap').hidden = !wantColors;
     if (wantColors) { promptColor = opts.color || PALETTE[0]; renderPromptColors(promptColor); }
     else promptColor = null;
+    const wantTheme = !!opts.themes;
+    $('#prompt-theme-wrap').hidden = !wantTheme;
+    if (wantTheme) {
+      promptTheme = opts.theme || 'light';
+      $$('#prompt-themes button').forEach(b => b.classList.toggle('active', b.dataset.pdftheme === promptTheme));
+    }
     const wantTpl = !!opts.templates;
     $('#prompt-template-wrap').hidden = !wantTpl;
     if (wantTpl) { promptTemplate = 'blank'; $$('#prompt-templates button').forEach(b => b.classList.toggle('active', b.dataset.tpl === 'blank')); }
@@ -4855,11 +4870,16 @@
   }
   function bindPrompt() {
     $('#prompt-cancel').addEventListener('click', () => { $('#prompt').hidden = true; promptCb = null; });
+    $('#prompt-themes').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-pdftheme]'); if (!b) return;
+      promptTheme = b.dataset.pdftheme;
+      $$('#prompt-themes button').forEach(x => x.classList.toggle('active', x === b));
+    });
     $('#prompt-ok').addEventListener('click', () => {
       const v = $('#prompt-input').value;
       $('#prompt').hidden = true;
       const cb = promptCb; promptCb = null;
-      if (cb) cb(v, promptColor, promptTemplate);
+      if (cb) cb(v, promptColor, promptTemplate, promptTheme);
     });
     $('#prompt-templates').addEventListener('click', (e) => {
       const b = e.target.closest('[data-tpl]'); if (!b) return;
