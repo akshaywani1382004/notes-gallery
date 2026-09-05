@@ -333,6 +333,14 @@ input, textarea { font-size: 15px; }
 .ink-svg path { pointer-events: stroke; }
 #stage.penning { cursor: crosshair; }
 #stage.penning.erasing { cursor: cell; }
+/* Samsung-Notes-style draw mode: the page is just paper — blocks/strokes are
+   inert (no hover chrome, no selection, no dragging), the pen only draws.
+   Eraser mode keeps hit-testing on so it can find strokes to wipe. */
+#stage.penning:not(.erasing) #world .block { pointer-events: none; }
+#stage.penning #world .block .block-actions,
+#stage.penning #world .tnode-rotate, #stage.penning #world .tnode-resize,
+#stage.penning #world .tnode-edge, #stage.penning #world .col-resize,
+#stage.penning #world .row-resize { display: none; }
 .pen-tool { display: inline-flex; align-items: center; justify-content: center; padding: 6px !important; width: 30px; height: 30px;
   background: transparent !important; color: var(--text-mute) !important; border: 1px solid var(--line) !important; }
 .pen-tool span[data-icon] { display: inline-flex; }

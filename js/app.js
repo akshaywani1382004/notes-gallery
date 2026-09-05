@@ -484,11 +484,10 @@
     const pad = (b.width || 3) + 2;
     const w = (b.w || 1) + pad * 2, h = (b.h || 1) + pad * 2;
     el.style.width = w + 'px'; el.style.height = h + 'px';
-    const pts = b.pts || [];
-    const d = pts.map((p, i) => `${(p[0] + pad).toFixed(1)},${(p[1] + pad).toFixed(1)}`).join(' ');
+    const pts = (b.pts || []).map(p => [p[0] + pad, p[1] + pad]);
     el.innerHTML =
       `<svg class="ink-svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">` +
-      `<polyline points="${d}" fill="none" stroke="${esc(b.color || penColor)}" stroke-width="${b.width || 3}" stroke-linecap="round" stroke-linejoin="round"/></svg>` +
+      `<path d="${inkPathD(pts)}" fill="none" stroke="${esc(b.color || penColor)}" stroke-width="${b.width || 3}" stroke-linecap="round" stroke-linejoin="round"/></svg>` +
       `<div class="block-actions"><button class="blk-btn" data-blk="edit" title="Edit ink">${ic('pencil')}</button></div>`;
   }
 
@@ -2500,8 +2499,22 @@
   let lpTimer = null, lpFired = false, lpX = 0, lpY = 0;   // long-press (touch → context menu)
   let gizmo = null;                    // rotate/resize handle drag {id, mode, ...}
   let lastPointer = null;              // last pointer position (screen coords) for paste-at-cursor
-  let inking = null;                   // active freehand stroke {pts:[[x,y]], path}
+  let inking = null;                   // active freehand stroke {pts, path, pointerId, lastX, lastY}
   let erasing = false;                 // pen eraser drag in progress
+
+  // Smooth ink path (midpoint quadratic curves) — pen strokes render as fluid
+  // curves instead of jagged segment chains, live and once saved.
+  function inkPathD(pts) {
+    if (!pts.length) return '';
+    if (pts.length < 3) return 'M' + pts.map(p => p[0] + ' ' + p[1]).join(' L');
+    let d = `M${pts[0][0]} ${pts[0][1]}`;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const mx = (pts[i][0] + pts[i + 1][0]) / 2, my = (pts[i][1] + pts[i + 1][1]) / 2;
+      d += ` Q${pts[i][0]} ${pts[i][1]} ${mx} ${my}`;
+    }
+    const l = pts[pts.length - 1];
+    return d + ` L${l[0]} ${l[1]}`;
+  }
 
   function onPointerDown(e) {
     if (state.levelLayout === 'list') return;   // list view handles its own clicks/scroll
@@ -2539,16 +2552,29 @@
       return;
     }
 
-    // freehand pen: start a stroke on empty canvas (ignore extra fingers mid-stroke)
-    if (state.penMode && !inking && !e.target.closest('.block') && !e.target.closest('[data-blk]')) {
+    // freehand pen (Samsung-Notes model): while draw mode is on, the pen ALWAYS
+    // draws — over empty canvas, over blocks, over earlier strokes. Nothing gets
+    // selected or dragged. Two fingers = pan/zoom the page.
+    if (state.penMode && !state.penEraser && state.levelLayout === 'canvas'
+        && !e.target.closest('.banner-stack') && !e.target.closest('#minimap')) {
+      if (inking) {
+        // a second finger landed mid-stroke → discard the stroke, navigate instead
+        inking.path.remove();
+        pointers.set(inking.pointerId, { x: inking.lastX, y: inking.lastY });
+        inking = null;
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        const [a, b] = [...pointers.values()];
+        pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y) };
+        return;
+      }
       const r = stage.getBoundingClientRect();
       const p = screenToWorld(e.clientX - r.left, e.clientY - r.top);
-      const path = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('fill', 'none'); path.setAttribute('stroke', penColor);
       path.setAttribute('stroke-width', penWidth); path.setAttribute('stroke-linecap', 'round'); path.setAttribute('stroke-linejoin', 'round');
       svg.appendChild(path);
-      inking = { pts: [[p.x, p.y]], path };
-      path.setAttribute('points', `${p.x},${p.y}`);
+      inking = { pts: [[p.x, p.y]], path, pointerId: e.pointerId, lastX: e.clientX, lastY: e.clientY };
+      path.setAttribute('d', inkPathD(inking.pts));
       return;
     }
 
@@ -2674,12 +2700,14 @@
     lastPointer = { x: e.clientX, y: e.clientY };   // for paste-at-cursor
     if (erasing) { eraseInkAt(e.clientX, e.clientY); return; }
     if (inking) {
+      if (e.pointerId !== inking.pointerId) return;   // ignore stray pointers mid-stroke
+      inking.lastX = e.clientX; inking.lastY = e.clientY;
       const r = stage.getBoundingClientRect();
       const p = screenToWorld(e.clientX - r.left, e.clientY - r.top);
       const last = inking.pts[inking.pts.length - 1];
-      if (!last || Math.hypot(p.x - last[0], p.y - last[1]) * state.view.scale > 2) {
-        inking.pts.push([p.x, p.y]);
-        inking.path.setAttribute('points', inking.pts.map(q => `${q[0]},${q[1]}`).join(' '));
+      if (!last || Math.hypot(p.x - last[0], p.y - last[1]) * state.view.scale > 1) {
+        inking.pts.push([Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10]);
+        inking.path.setAttribute('d', inkPathD(inking.pts));
       }
       return;
     }
@@ -2818,6 +2846,7 @@
     }
     if (erasing) { erasing = false; pointers.delete(e.pointerId); return; }
     if (inking) {
+      if (e.pointerId !== inking.pointerId) { pointers.delete(e.pointerId); return; }
       const stroke = inking; inking = null;
       stroke.path.remove();
       const pts = stroke.pts;
@@ -3171,7 +3200,7 @@
     $('#btn-pen').classList.toggle('active', on);
     stage.classList.toggle('penning', on);
     $('#pen-bar').hidden = !on;
-    if (on) { setLinkMode(false); closeDrawerIfOpen(); renderPenColors(); $('#pen-size').value = penWidth; }
+    if (on) { setLinkMode(false); closeDrawerIfOpen(); clearSelection(); renderPenColors(); $('#pen-size').value = penWidth; }
     else setEraser(false);
   }
   function setEraser(on) {
@@ -4537,6 +4566,7 @@
       if (panning) { stage.classList.remove('panning'); panning = null; }
       clearTimeout(lpTimer); lpTimer = null; lpFired = false;
       colResize = null; rowResize = null; erasing = false;
+      if (inking) { inking.path.remove(); inking = null; }   // drop a half-drawn stroke
     };
     window.addEventListener('blur', resetGestures);
     document.addEventListener('visibilitychange', () => { if (document.hidden) resetGestures(); });
