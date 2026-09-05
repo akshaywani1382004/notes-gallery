@@ -4047,8 +4047,8 @@
   }
   /* ------------------------- export as PDF ------------------------------ *
    * One page per level of the workspace: the root canvas, then a page for
-   * every block that can be opened (a container, or anything holding
-   * children). Each page draws that level's contents scaled to fit, and a
+   * every block that actually holds something (empty blocks are skipped).
+   * Each page draws that level's contents scaled to fit, and a
    * block that has its own page becomes a clickable link to it, so the PDF
    * navigates like the app does.                                           */
   const PDF_PAGE = { w: 842, h: 595, margin: 34 };          // A4 landscape, points
@@ -4059,12 +4059,9 @@
              card: '#191d25', cardLine: '#2b313c', tableHead: '#1e242e', grid: '#2b313c', ph: '#1e242e' },
   };
 
-  // Does this block open into its own page?
-  function hasOwnPage(b, kids) {
-    if (kids > 0) return true;                              // holds something
-    return b.kind !== 'text' && b.kind !== 'shape' && b.kind !== 'image'
-        && b.kind !== 'ink' && b.kind !== 'table';          // plain cards are containers
-  }
+  // A block earns its own page only when there is something inside it —
+  // an empty block would just be a blank page, so it stays on its parent's.
+  function hasOwnPage(b, kids) { return kids > 0; }
 
   // Convert any image source to raw JPEG bytes for embedding.
   async function srcToJpeg(src, maxPx, bg) {
