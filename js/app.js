@@ -4094,9 +4094,13 @@
 
     const w = await DB.getWorkspace(wsId);
     const blocks = await DB.allByWs('blocks', wsId);
+    const edges = await DB.allByWs('edges', wsId);
+    const wsFiles = await DB.allByWs('files', wsId);
     const kidsOf = (id) => blocks.filter(b => b.parentId === id);
     const countOf = {};
     blocks.forEach(b => { countOf[b.parentId] = (countOf[b.parentId] || 0) + 1; });
+    countOf.__files = {};
+    wsFiles.forEach(f => { countOf.__files[f.blockId] = (countOf.__files[f.blockId] || 0) + 1; });
 
     // 1. walk the tree depth-first so pages read in navigation order
     const levels = [];                                       // { id, title, path, blocks }
@@ -4130,7 +4134,7 @@
       const page = doc.page();
       page.rect(0, 0, PDF_PAGE.w, PDF_PAGE.h, { fill: TH.page });     // page ground
       drawPdfHeader(page, lvl, idx + 1, levels.length, TH);
-      drawPdfLevel(page, lvl, pageOf, countOf, imgCache, TH);
+      drawPdfLevel(page, lvl, pageOf, countOf, imgCache, TH, edges);
     });
 
     doc.setOutline(outline);                                 // sidebar navigation
@@ -4172,7 +4176,7 @@
   }
 
   // Draw one level's blocks, scaled so everything fits inside the page.
-  function drawPdfLevel(page, lvl, pageOf, countOf, imgCache, TH) {
+  function drawPdfLevel(page, lvl, pageOf, countOf, imgCache, TH, edges) {
     const M = PDF_PAGE.margin, top = 68;
     const areaW = PDF_PAGE.w - M * 2, areaH = PDF_PAGE.h - top - M;
     if (!lvl.blocks.length) {
@@ -4199,6 +4203,18 @@
     const offY = top + (areaH - ch * s) / 2 - minY * s;
     const X = (x) => offX + x * s, Y = (y) => offY + y * s;
 
+    // connector arrows first, so blocks sit on top of them
+    const box = {};
+    for (const b of lvl.blocks) {
+      const [bw, bh] = sizeOf(b);
+      box[b.id] = { x: X(b.x || 0), y: Y(b.y || 0), w: bw * s, h: bh * s };
+    }
+    for (const e of (edges || [])) {
+      const A = box[e.from], B = box[e.to];
+      if (!A || !B) continue;                       // both ends must be on this page
+      drawPdfEdge(page, A, B, TH);
+    }
+
     for (const b of lvl.blocks) {
       const [bw, bh] = sizeOf(b);
       const x = X(b.x || 0), y = Y(b.y || 0), w = bw * s, h = bh * s;
@@ -4209,6 +4225,30 @@
         drawPdfPageTag(page, b, x, y, w, h, s, target + 1, TH);
       }
     }
+  }
+
+  // Connector between two blocks: meets each box on its edge, arrow at the end.
+  function drawPdfEdge(page, A, B, TH) {
+    const c1 = { x: A.x + A.w / 2, y: A.y + A.h / 2 };
+    const c2 = { x: B.x + B.w / 2, y: B.y + B.h / 2 };
+    const edgePoint = (box, from, to) => {
+      const dx = to.x - from.x, dy = to.y - from.y;
+      if (!dx && !dy) return from;
+      const hw = box.w / 2, hh = box.h / 2;
+      const t = Math.min(Math.abs(dx) > 1e-6 ? hw / Math.abs(dx) : Infinity,
+                         Math.abs(dy) > 1e-6 ? hh / Math.abs(dy) : Infinity);
+      return { x: from.x + dx * t, y: from.y + dy * t };
+    };
+    const p1 = edgePoint(A, c1, c2), p2 = edgePoint(B, c2, c1);
+    const col = TH.dim;
+    page.path([[p1.x, p1.y], [p2.x, p2.y]], { stroke: col, width: 1.1 });
+    // arrow head at p2
+    const ang = Math.atan2(p2.y - p1.y, p2.x - p1.x), size = 6.5, spread = 0.42;
+    page.path([
+      [p2.x, p2.y],
+      [p2.x - size * Math.cos(ang - spread), p2.y - size * Math.sin(ang - spread)],
+      [p2.x - size * Math.cos(ang + spread), p2.y - size * Math.sin(ang + spread)],
+    ], { fill: col, closed: true });
   }
 
   // A block that opens into its own page wears that page number, so the link
@@ -4298,13 +4338,40 @@
     let ty = page.text(blockLabel(b), x + pad + 4 * s, y + pad, {
       size: Math.max(6, 11 * s), bold: true, color: TH.text, maxWidth: w - pad * 2 - 4 * s, maxLines: 2,
     });
-    if (b.description) {
+    const bodySize = Math.max(5, 8.5 * s);
+    const innerW = w - pad * 2 - 4 * s;
+    const bottom = y + h - pad - 9 * s;                       // keep clear of the meta line
+    const roomLines = () => Math.max(0, Math.floor((bottom - ty) / (bodySize * 1.28)));
+    if (b.description && roomLines()) {
       ty = page.text(b.description, x + pad + 4 * s, ty + 3 * s, {
-        size: Math.max(5, 8.5 * s), color: TH.dim, maxWidth: w - pad * 2 - 4 * s, maxLines: 3,
+        size: bodySize, color: TH.dim, maxWidth: innerW, maxLines: Math.min(3, roomLines()),
+      });
+    }
+    // the block's own typed notes (markdown body) — shown as plain text
+    if (b.notes && String(b.notes).trim() && roomLines()) {
+      const plain = String(b.notes)
+        .replace(/^#{1,6}\s*/gm, '')
+        .replace(/[*_`>]/g, '')
+        .replace(/^\s*[-+]\s+\[( |x|X)\]\s*/gm, (m, c) => (c === ' ' ? '[ ] ' : '[x] '))
+        .replace(/^\s*[-+]\s+/gm, '- ')
+        .trim();
+      ty = page.text(plain, x + pad + 4 * s, ty + 3 * s, {
+        size: bodySize, color: TH.dim, maxWidth: innerW, maxLines: Math.min(6, roomLines()),
+      });
+    }
+    const tags = String(b.tags || '').split(/[,\s]+/).filter(Boolean).map(t => (t[0] === '#' ? t : '#' + t));
+    if (tags.length && roomLines()) {
+      ty = page.text(tags.join('  '), x + pad + 4 * s, ty + 3 * s, {
+        size: Math.max(4.5, 7.5 * s), color: b.color || PALETTE[0], maxWidth: innerW, maxLines: 2,
       });
     }
     const kids = countOf[b.id] || 0;
-    if (kids) page.text(`${kids} inside`, x + pad + 4 * s, y + h - pad - 8 * s, { size: Math.max(5, 7.5 * s), color: TH.faint, maxWidth: w - pad * 2 });
+    const files = (countOf.__files && countOf.__files[b.id]) || 0;
+    const meta = [];
+    if (kids) meta.push(kids + ' inside');
+    if (files) meta.push(files + (files === 1 ? ' file' : ' files'));
+    if (meta.length) page.text(meta.join('  •  '), x + pad + 4 * s, y + h - pad - 8 * s,
+      { size: Math.max(5, 7.5 * s), color: TH.faint, maxWidth: innerW, maxLines: 1 });
   }
 
   function exportWorkspacePdfFlow(wsId) {
