@@ -74,6 +74,7 @@
     const W = opts.width, H = opts.height;
     const pages = [];
     const images = [];                 // { bytes, w, h, id }
+    let outline = null;                // bookmark tree: [{ title, page, children }]
     const alphas = new Set([1]);       // ExtGState alpha values in use
 
     function page() {
@@ -228,6 +229,19 @@
         p._links.forEach(() => rec.annots.push(objNo++));
         perPage.push(rec);
       });
+      // bookmarks get object numbers before anything is written, so the
+      // catalog can reference the outline root.
+      const flatOutline = [];
+      if (outline) {
+        (function number(items, parent) {
+          items.forEach((it) => {
+            it.obj = objNo++; it.parent = parent; flatOutline.push(it);
+            if (it.children && it.children.length) number(it.children, it);
+          });
+        })(outline, null);
+      }
+      const outlinesObj = outline ? objNo++ : 0;
+      const kidCount = (items) => items.reduce((a, it) => a + 1 + (it.children ? kidCount(it.children) : 0), 0);
 
       const offsets = {};
       const beginObj = (num) => { offsets[num] = len; push(`${num} 0 obj\n`); };
@@ -235,7 +249,10 @@
 
       push('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
 
-      beginObj(1); push(`<</Type/Catalog/Pages 2 0 R>>\n`); endObj();
+      beginObj(1);
+      push(`<</Type/Catalog/Pages 2 0 R` +
+           (outline ? `/Outlines ${outlinesObj} 0 R/PageMode/UseOutlines` : '') + `>>\n`);
+      endObj();
       beginObj(2);
       push(`<</Type/Pages/Count ${pages.length}/Kids[${perPage.map(r => r.page + ' 0 R').join(' ')}]>>\n`);
       endObj();
@@ -282,11 +299,31 @@
           const target = perPage[lk.page];
           if (!target) return;
           beginObj(rec.annots[li]);
-          push(`<</Type/Annot/Subtype/Link/Border[0 0 0]/Rect[${n(lk.x)} ${n(H - lk.y - lk.h)} ${n(lk.x + lk.w)} ${n(H - lk.y)}]` +
-               `/Dest[${target.page} 0 R /XYZ 0 ${n(H)} 0]>>\n`);
+          push(`<</Type/Annot/Subtype/Link/F 4/Border[0 0 0]/BS<</W 0/S/S>>` +
+               `/Rect[${n(lk.x)} ${n(H - lk.y - lk.h)} ${n(lk.x + lk.w)} ${n(H - lk.y)}]` +
+               `/A<</S/GoTo/D[${target.page} 0 R /XYZ null null null]>>>>\n`);
           endObj();
         });
       });
+
+      if (outline) {
+        flatOutline.forEach((it) => {
+          const sibs = it.parent ? it.parent.children : outline;
+          const i = sibs.indexOf(it);
+          const parentRef = it.parent ? it.parent.obj : outlinesObj;
+          const kids = it.children || [];
+          beginObj(it.obj);
+          push(`<</Title (${pdfString(it.title)})/Parent ${parentRef} 0 R` +
+               (i > 0 ? `/Prev ${sibs[i - 1].obj} 0 R` : '') +
+               (i < sibs.length - 1 ? `/Next ${sibs[i + 1].obj} 0 R` : '') +
+               (kids.length ? `/First ${kids[0].obj} 0 R/Last ${kids[kids.length - 1].obj} 0 R/Count ${kidCount(kids)}` : '') +
+               `/A<</S/GoTo/D[${perPage[it.page].page} 0 R /XYZ null null null]>>>>\n`);
+          endObj();
+        });
+        beginObj(outlinesObj);
+        push(`<</Type/Outlines/First ${outline[0].obj} 0 R/Last ${outline[outline.length - 1].obj} 0 R/Count ${kidCount(outline)}>>\n`);
+        endObj();
+      }
 
       const maxObj = objNo - 1;
       const xrefAt = len;
@@ -302,7 +339,9 @@
       return all;
     }
 
-    return { page, addImage, build, width: W, height: H, textWidth, wrapText };
+    function setOutline(items) { outline = items && items.length ? items : null; }
+
+    return { page, addImage, setOutline, build, width: W, height: H, textWidth, wrapText };
   }
 
   window.NGPdf = { createDoc, textWidth, wrapText };

@@ -4101,16 +4101,19 @@
     // 1. walk the tree depth-first so pages read in navigation order
     const levels = [];                                       // { id, title, path, blocks }
     const pageOf = {};                                       // level id -> page index
-    (function walk(id, title, trail) {
+    const outline = [];                                      // bookmarks, same shape as the tree
+    (function walk(id, title, trail, into) {
       pageOf[id] = levels.length;
+      const node = { title, page: levels.length, children: [] };
+      into.push(node);
       const kids = kidsOf(id);
       levels.push({ id, title, path: trail, blocks: kids });
       kids.slice()
         .sort((a, b) => (a.y - b.y) || (a.x - b.x))
         .forEach(k => {
-          if (hasOwnPage(k, countOf[k.id] || 0)) walk(k.id, blockLabel(k), trail.concat(blockLabel(k)));
+          if (hasOwnPage(k, countOf[k.id] || 0)) walk(k.id, blockLabel(k), trail.concat(blockLabel(k)), node.children);
         });
-    })(DB.ROOT, (w && w.name) || 'Workspace', [(w && w.name) || 'Workspace']);
+    })(DB.ROOT, (w && w.name) || 'Workspace', [(w && w.name) || 'Workspace'], outline);
 
     // 2. pre-render every image once
     const imgCache = {};
@@ -4130,6 +4133,7 @@
       drawPdfLevel(page, lvl, pageOf, countOf, imgCache, TH);
     });
 
+    doc.setOutline(outline);                                 // sidebar navigation
     const bytes = doc.build();
     const fname = `${safeFileName(overrideName || (w && w.name))}.pdf`;
     if (SHELL) {
