@@ -3756,10 +3756,17 @@
     stage.classList.toggle('penning', on);
     $('#pen-bar').hidden = !on;
     if (on) {
-      setLinkMode(false); closeDrawerIfOpen(); clearSelection(); setSelectMode(false);
+      setLinkMode(false); closeDrawerIfOpen(); clearSelection();
+      const keepLasso = state.selectTool;
+      setSelectMode(false);
+      if (keepLasso) setPenSelect(true);          // the lasso follows you in
       renderPenColors(); renderPenStyles(); syncPenSize(); updatePenTouchBtn();
       updateShapeSnapBtn(); loadPenBarPos();
-    } else { setEraser(false); setPenSelect(false); }
+    } else {
+      const keepLasso = state.penSelect;
+      setEraser(false); setPenSelect(false);
+      if (keepLasso) setSelectMode(true);         // ...and follows you back out
+    }
     $('#btn-pen')?.classList.toggle('active', on && !state.penEraser);
     $('#btn-eraser')?.classList.toggle('active', on && state.penEraser);
   }
@@ -3781,6 +3788,7 @@
     state.penSelect = !!on;
     if (state.penSelect) setEraser(false);
     $('#pen-select')?.classList.toggle('active', state.penSelect);
+    $('#btn-select')?.classList.toggle('active', state.penSelect || state.selectTool);
     stage.classList.toggle('selecting', state.penSelect);
     renderPenStyles();
     if (!state.penSelect) { clearSelection(); if (lasso) { lasso.path.remove(); lasso = null; } }
@@ -5691,7 +5699,12 @@
       toast(shapeSnap ? 'Shape snapping on — draw a circle, box, triangle or line'
                       : 'Shape snapping off');
     });
-    $('#btn-select').addEventListener('click', () => setSelectMode(!state.selectTool));
+    $('#btn-select').addEventListener('click', () => {
+      // Works in draw mode too: there it drives the pen panel's lasso, so the
+      // one button always means "circle things to pick them up".
+      if (state.penMode) setPenSelect(!state.penSelect);
+      else setSelectMode(!state.selectTool);
+    });
     $('#btn-delete').addEventListener('click', () => {
       if (!state.selectedIds.size) { toast('Select something first.'); return; }
       deleteSelected();
