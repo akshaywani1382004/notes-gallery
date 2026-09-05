@@ -7,14 +7,18 @@
   if (!T || !T.core) return;
   const inv = (cmd, args) => T.core.invoke(cmd, args);
   const FILTERS = [{ name: 'Notes Gallery workspace', extensions: ['json'] }];
+  const filtersFor = (name) => (/\.pdf$/i.test(name || '')
+    ? [{ name: 'PDF document', extensions: ['pdf'] }]
+    : FILTERS);
 
   window.NGShell = {
     isApp: true,
 
     // native Save-As dialog → full path (or null on cancel)
     async saveDialog(suggestedName) {
-      if (T.dialog && T.dialog.save) return T.dialog.save({ defaultPath: suggestedName, filters: FILTERS });
-      return inv('plugin:dialog|save', { options: { defaultPath: suggestedName, filters: FILTERS } });
+      const filters = filtersFor(suggestedName);
+      if (T.dialog && T.dialog.save) return T.dialog.save({ defaultPath: suggestedName, filters });
+      return inv('plugin:dialog|save', { options: { defaultPath: suggestedName, filters } });
     },
 
     // native Open dialog → full path (or null on cancel)
@@ -25,9 +29,17 @@
       return Array.isArray(r) ? r[0] : r;
     },
 
-    async writeFile(path, text) {
-      if (T.fs && T.fs.writeTextFile) return T.fs.writeTextFile(path, text);
-      return inv('plugin:fs|write_text_file', { path, contents: text });
+    // Text or binary: a Uint8Array (a PDF, say) must not go through the text
+    // writer, which would re-encode the bytes and corrupt the file.
+    async writeFile(path, data) {
+      const binary = data instanceof Uint8Array || data instanceof ArrayBuffer;
+      if (binary) {
+        const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
+        if (T.fs && T.fs.writeFile) return T.fs.writeFile(path, bytes);
+        throw new Error('binary write unavailable');
+      }
+      if (T.fs && T.fs.writeTextFile) return T.fs.writeTextFile(path, data);
+      return inv('plugin:fs|write_text_file', { path, contents: data });
     },
 
     async readFile(path) {

@@ -132,6 +132,7 @@
     highlighter: '<path d="M4 20h6"/><path d="M12.5 18.5H8l-1.5-3 7-7a1.8 1.8 0 0 1 2.6 0l1.4 1.4a1.8 1.8 0 0 1 0 2.6Z"/><line x1="12" y1="7.5" x2="16.5" y2="12"/>',
     marker: '<path d="M4.5 19.5h7"/><path d="M9 16.5 6.8 14.3l7.5-7.5a2.4 2.4 0 0 1 3.4 0l.5.5a2.4 2.4 0 0 1 0 3.4L10.7 18.2Z"/>',
     hand: '<path d="M9 11V5.6a1.6 1.6 0 0 1 3.2 0V11m0-1.2V4.8a1.6 1.6 0 0 1 3.2 0V11m0-.8a1.6 1.6 0 0 1 3.2 0v4.4a5.6 5.6 0 0 1-5.6 5.6h-1a5 5 0 0 1-3.8-1.7L5 17.4a1.6 1.6 0 0 1 2.2-2.3L9 16.6V7.6a1.6 1.6 0 0 0-3.2 0V13"/>',
+    select: '<path d="M4 8.5V6.5A2.5 2.5 0 0 1 6.5 4h2M15.5 4h2A2.5 2.5 0 0 1 20 6.5v2M20 15.5v2a2.5 2.5 0 0 1-2.5 2.5h-2M8.5 20h-2A2.5 2.5 0 0 1 4 17.5v-2"/><rect x="8.5" y="8.5" width="7" height="7" rx="1.2"/>',
     lasso: '<path d="M12 5.2c4.4 0 8 2.1 8 4.8s-3.6 4.8-8 4.8c-1.4 0-2.8-.2-4-.6"/><path d="M8 14.2C5.5 13.4 4 11.9 4 10c0-1.7 1.3-3.2 3.4-4.1"/><path d="M7.7 14.4c-.6 1.6-.4 3.1.5 3.9"/><circle cx="9" cy="19.6" r="1.5"/>',
     grip: '<circle cx="9" cy="6" r="1.3"/><circle cx="15" cy="6" r="1.3"/><circle cx="9" cy="12" r="1.3"/><circle cx="15" cy="12" r="1.3"/><circle cx="9" cy="18" r="1.3"/><circle cx="15" cy="18" r="1.3"/>',
     map: '<path d="M9 4 4 6v14l5-2 6 2 5-2V4l-5 2-6-2Z"/><line x1="9" y1="4" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="20"/>',
@@ -3197,6 +3198,7 @@
         { icon: 'frame', label: 'Fit to view', fn: () => fitToView() },
         { sep: true },
         { icon: 'upload', label: 'Export workspace', fn: () => exportWorkspaceFlow(state.ws) },
+        { icon: 'filetext', label: 'Export as PDF', fn: () => exportWorkspacePdfFlow(state.ws) },
         { icon: 'info', label: 'About', fn: () => openAbout('about') },
         { icon: 'help', label: 'Help', fn: () => openAbout('help') },
       ];
@@ -3245,6 +3247,7 @@
         { g: 'Edit', icon: 'arrow-left', title: 'Undo', fn: () => undo() },
         { g: 'Edit', icon: 'arrow-right', title: 'Redo', fn: () => redo() },
         { g: 'Workspace', icon: 'upload', title: 'Export workspace', fn: () => exportWorkspaceFlow(state.ws) },
+        { g: 'Workspace', icon: 'filetext', title: 'Export as PDF', fn: () => exportWorkspacePdfFlow(state.ws) },
         { g: 'Workspace', icon: 'sliders', title: 'Workspace properties', fn: () => openProperties(state.ws) },
         { g: 'Workspace', icon: 'frame', title: 'Snap to grid: ' + (snapOn ? 'on → turn off' : 'off → turn on'), fn: () => { snapOn = !snapOn; try { localStorage.setItem('ng-snap', snapOn ? '1' : '0'); } catch (_) {} updateSnapLabel(); toast(snapOn ? 'Snap on' : 'Snap off'); } },
       );
@@ -3550,6 +3553,20 @@
       const dock = PEN_DOCKS.find(c => bar.classList.contains(c)) || null;
       placePenBar(parseFloat(bar.style.left) || 0, parseFloat(bar.style.top) || 0, dock);
     });
+  }
+
+  // Select everything on this level (toolbar button + Ctrl+A). Pressing it
+  // again clears, so the one button toggles.
+  function selectAllOnLevel() {
+    if (state.levelLayout !== 'canvas') { toast('Switch to canvas view to select blocks.'); return; }
+    const ids = state.blocks.filter(b => b.parentId === state.level).map(b => b.id);
+    if (!ids.length) { toast('Nothing here to select.'); return; }
+    if (state.selectedIds.size >= ids.length && ids.every(id => state.selectedIds.has(id))) {
+      clearSelection(); toast('Selection cleared');
+      return;
+    }
+    setSelection(ids);
+    toast(ids.length + (ids.length === 1 ? ' item selected' : ' items selected'));
   }
 
   function renderPenColors() {
@@ -3958,6 +3975,250 @@
     a.click();
     toast('Workspace exported');
   }
+  /* ------------------------- export as PDF ------------------------------ *
+   * One page per level of the workspace: the root canvas, then a page for
+   * every block that can be opened (a container, or anything holding
+   * children). Each page draws that level's contents scaled to fit, and a
+   * block that has its own page becomes a clickable link to it, so the PDF
+   * navigates like the app does.                                           */
+  const PDF_PAGE = { w: 842, h: 595, margin: 34 };          // A4 landscape, points
+
+  // Does this block open into its own page?
+  function hasOwnPage(b, kids) {
+    if (kids > 0) return true;                              // holds something
+    return b.kind !== 'text' && b.kind !== 'shape' && b.kind !== 'image'
+        && b.kind !== 'ink' && b.kind !== 'table';          // plain cards are containers
+  }
+
+  // Convert any image source to raw JPEG bytes for embedding.
+  async function srcToJpeg(src, maxPx) {
+    const img = await new Promise((res, rej) => {
+      const i = new Image();
+      i.onload = () => res(i); i.onerror = rej;
+      i.src = src;
+    });
+    const scale = Math.min(1, (maxPx || 1400) / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+    const cw = Math.max(1, Math.round((img.naturalWidth || 1) * scale));
+    const ch = Math.max(1, Math.round((img.naturalHeight || 1) * scale));
+    const cv = document.createElement('canvas');
+    cv.width = cw; cv.height = ch;
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, cw, ch);   // PDF JPEGs have no alpha
+    ctx.drawImage(img, 0, 0, cw, ch);
+    const url = cv.toDataURL('image/jpeg', 0.86);
+    const bin = atob(url.slice(url.indexOf(',') + 1));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return { bytes, w: cw, h: ch };
+  }
+
+  async function exportWorkspacePdf(wsId, overrideName) {
+    wsId = wsId || state.ws;
+    if (!wsId || !window.NGPdf) { toast('PDF export is unavailable here.'); return; }
+    toast('Building PDF…');
+    await new Promise(r => setTimeout(r, 30));               // let the toast paint
+
+    const w = await DB.getWorkspace(wsId);
+    const blocks = await DB.allByWs('blocks', wsId);
+    const kidsOf = (id) => blocks.filter(b => b.parentId === id);
+    const countOf = {};
+    blocks.forEach(b => { countOf[b.parentId] = (countOf[b.parentId] || 0) + 1; });
+
+    // 1. walk the tree depth-first so pages read in navigation order
+    const levels = [];                                       // { id, title, path, blocks }
+    const pageOf = {};                                       // level id -> page index
+    (function walk(id, title, trail) {
+      pageOf[id] = levels.length;
+      const kids = kidsOf(id);
+      levels.push({ id, title, path: trail, blocks: kids });
+      kids.slice()
+        .sort((a, b) => (a.y - b.y) || (a.x - b.x))
+        .forEach(k => {
+          if (hasOwnPage(k, countOf[k.id] || 0)) walk(k.id, blockLabel(k), trail.concat(blockLabel(k)));
+        });
+    })(DB.ROOT, (w && w.name) || 'Workspace', [(w && w.name) || 'Workspace']);
+
+    // 2. pre-render every image once
+    const imgCache = {};
+    const doc = NGPdf.createDoc({ width: PDF_PAGE.w, height: PDF_PAGE.h });
+    for (const b of blocks) {
+      if (b.kind === 'image' && b.src && !imgCache[b.id]) {
+        try { const j = await srcToJpeg(b.src); imgCache[b.id] = doc.addImage(j.bytes, j.w, j.h); }
+        catch (_) { /* unreadable image: it just draws as a placeholder */ }
+      }
+    }
+
+    // 3. draw the pages
+    levels.forEach((lvl, idx) => {
+      const page = doc.page();
+      drawPdfHeader(page, lvl, idx + 1, levels.length);
+      drawPdfLevel(page, lvl, pageOf, countOf, imgCache);
+    });
+
+    const bytes = doc.build();
+    const fname = `${safeFileName(overrideName || (w && w.name))}.pdf`;
+    if (SHELL) {
+      const p = await NGShell.saveDialog(fname);
+      if (!p) return;
+      try { await NGShell.writeFile(p, bytes); toast(`PDF exported — ${levels.length} page${levels.length === 1 ? '' : 's'}`); }
+      catch (e) { console.error(e); toast('Could not write the PDF.'); }
+      return;
+    }
+    const blob = new Blob([bytes], { type: 'application/pdf' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = fname;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast(`PDF exported — ${levels.length} page${levels.length === 1 ? '' : 's'}`);
+  }
+
+  const blockLabel = (b) => {
+    const t = (b.title || '').trim();
+    if (t) return t;
+    if (b.kind === 'text') return (b.text || '').trim().split('\n')[0].slice(0, 40) || 'Text';
+    if (b.kind === 'table') return 'Table';
+    if (b.kind === 'image') return 'Image';
+    if (b.kind === 'ink') return 'Drawing';
+    if (b.kind === 'shape') return b.shape ? b.shape[0].toUpperCase() + b.shape.slice(1) : 'Shape';
+    return 'Untitled';
+  };
+
+  function drawPdfHeader(page, lvl, no, total) {
+    const M = PDF_PAGE.margin;
+    page.text(lvl.path.join('  >  '), M, 20, { size: 9, color: '#7a8190', maxWidth: PDF_PAGE.w - M * 2 - 60, maxLines: 1 });
+    page.text(`${no} / ${total}`, PDF_PAGE.w - M - 60, 20, { size: 9, color: '#7a8190', maxWidth: 60, align: 'right' });
+    page.text(lvl.title, M, 32, { size: 15, bold: true, color: '#12151c', maxWidth: PDF_PAGE.w - M * 2, maxLines: 1 });
+    page.path([[M, 58], [PDF_PAGE.w - M, 58]], { stroke: '#d8dde5', width: 0.7 });
+  }
+
+  // Draw one level's blocks, scaled so everything fits inside the page.
+  function drawPdfLevel(page, lvl, pageOf, countOf, imgCache) {
+    const M = PDF_PAGE.margin, top = 68;
+    const areaW = PDF_PAGE.w - M * 2, areaH = PDF_PAGE.h - top - M;
+    if (!lvl.blocks.length) {
+      page.text('(empty)', M, top + 10, { size: 10, color: '#9aa1ad' });
+      return;
+    }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const sizeOf = (b) => {
+      const el = state.els[b.id];
+      let w = b.w || (el && el.offsetWidth) || 240;
+      let h = b.h || (el && el.offsetHeight) || 120;
+      if (b.kind === 'ink') { w = (b.w || 1) + (b.width || 3) * 2 + 4; h = (b.h || 1) + (b.width || 3) * 2 + 4; }
+      if (!b.kind || b.kind === 'block') { w = b.w || 260; h = b.h || 128; }
+      return [w, h];
+    };
+    lvl.blocks.forEach(b => {
+      const [w, h] = sizeOf(b);
+      minX = Math.min(minX, b.x || 0); minY = Math.min(minY, b.y || 0);
+      maxX = Math.max(maxX, (b.x || 0) + w); maxY = Math.max(maxY, (b.y || 0) + h);
+    });
+    const cw = Math.max(1, maxX - minX), ch = Math.max(1, maxY - minY);
+    const s = Math.min(areaW / cw, areaH / ch, 1.6);
+    const offX = M + (areaW - cw * s) / 2 - minX * s;
+    const offY = top + (areaH - ch * s) / 2 - minY * s;
+    const X = (x) => offX + x * s, Y = (y) => offY + y * s;
+
+    for (const b of lvl.blocks) {
+      const [bw, bh] = sizeOf(b);
+      const x = X(b.x || 0), y = Y(b.y || 0), w = bw * s, h = bh * s;
+      drawPdfBlock(page, b, x, y, w, h, s, imgCache, countOf);
+      const target = pageOf[b.id];
+      if (target != null) page.link(x, y, w, h, target);      // jump into its page
+    }
+  }
+
+  function drawPdfBlock(page, b, x, y, w, h, s, imgCache, countOf) {
+    const accent = b.color || PALETTE[0];
+    if (b.kind === 'text') {
+      page.text(b.text || '', x, y, {
+        size: Math.max(5, (b.size || 16) * s), bold: !!b.bold, color: b.color || '#12151c',
+        maxWidth: w, maxLines: Math.max(1, Math.floor(h / Math.max(6, (b.size || 16) * s * 1.28))),
+        align: b.align === 'center' ? 'center' : b.align === 'right' ? 'right' : 'left',
+      });
+      return;
+    }
+    if (b.kind === 'image') {
+      const img = imgCache[b.id];
+      if (img) page.image(img, x, y, w, h);
+      else page.rect(x, y, w, h, { fill: '#eef1f5', stroke: '#d8dde5', radius: 4 * s });
+      if (b.outline) page.rect(x, y, w, h, { stroke: b.outlineColor || '#12151c', lineWidth: Math.max(.4, (b.outlineW || 2) * s), radius: (b.round ? 10 : 0) * s });
+      return;
+    }
+    if (b.kind === 'ink') {
+      const pad = ((b.width || 3) + 2) * s;
+      const pts = (b.pts || []).map(p => [x + pad + p[0] * s, y + pad + p[1] * s]);
+      const st = (typeof PEN_STYLES !== 'undefined' && PEN_STYLES[b.style]) ? PEN_STYLES[b.style] : null;
+      if (st && st.taper > 0) {
+        const d = inkTaperD(pts.map(p => [p[0], p[1]]), (b.width || 3) * s, st.taper);
+        // taper outlines are a filled polygon: rebuild it as points for the PDF
+        const nums = d.match(/-?\d+(\.\d+)?/g) || [];
+        const poly = [];
+        for (let i = 0; i + 1 < nums.length; i += 2) poly.push([+nums[i], +nums[i + 1]]);
+        page.path(poly, { fill: b.color || accent, closed: true, opacity: st.opacity });
+      } else {
+        page.path(pts, {
+          stroke: b.color || accent, width: Math.max(.3, (b.width || 3) * s),
+          smooth: true, opacity: st ? st.opacity : 1,
+        });
+      }
+      return;
+    }
+    if (b.kind === 'shape') {
+      const o = { fill: b.fill === false ? null : (b.color || accent), stroke: b.outline ? (b.outlineColor || '#12151c') : null, lineWidth: Math.max(.4, (b.outlineW || 2) * s) };
+      if (b.shape === 'circle') page.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, o);
+      else if (b.shape === 'triangle') page.path([[x + w / 2, y], [x + w, y + h], [x, y + h]], Object.assign({ closed: true }, o));
+      else if (b.shape === 'line') page.path([[x, y + h / 2], [x + w, y + h / 2]], { stroke: b.color || accent, width: Math.max(.5, (b.outlineW || 3) * s) });
+      else page.rect(x, y, w, h, Object.assign({ radius: 4 * s }, o));
+      return;
+    }
+    if (b.kind === 'table') {
+      const rows = b.rows || [];
+      const cols = Math.max(1, Math.max(...rows.map(r => r.length), 1));
+      const rh = h / Math.max(1, rows.length);
+      const cwid = w / cols;
+      page.rect(x, y, w, h, { fill: '#ffffff', stroke: '#c9d0da', lineWidth: .6 });
+      rows.forEach((row, r) => {
+        if (b.header !== false && r === 0) page.rect(x, y + r * rh, w, rh, { fill: '#f1f4f8' });
+        for (let c = 0; c < cols; c++) {
+          page.rect(x + c * cwid, y + r * rh, cwid, rh, { stroke: '#dbe1e9', lineWidth: .4 });
+          const t = (row[c] == null ? '' : String(row[c]));
+          if (t) page.text(t, x + c * cwid + 2 * s, y + r * rh + rh * 0.22, {
+            size: Math.max(4, Math.min(9, rh * 0.5)), bold: (b.header !== false && r === 0),
+            color: '#12151c', maxWidth: cwid - 4 * s, maxLines: 1,
+          });
+        }
+      });
+      if (b.title) page.text(b.title, x, y - 12 * s, { size: Math.max(5, 9 * s), bold: true, color: '#12151c', maxWidth: w, maxLines: 1 });
+      return;
+    }
+    // default card
+    page.rect(x, y, w, h, { fill: '#ffffff', stroke: '#d8dde5', lineWidth: .8, radius: 9 * s });
+    page.rect(x, y, Math.max(2, 3 * s), h, { fill: accent });
+    const pad = 10 * s;
+    let ty = page.text(blockLabel(b), x + pad + 4 * s, y + pad, {
+      size: Math.max(6, 11 * s), bold: true, color: '#12151c', maxWidth: w - pad * 2 - 4 * s, maxLines: 2,
+    });
+    if (b.description) {
+      ty = page.text(b.description, x + pad + 4 * s, ty + 3 * s, {
+        size: Math.max(5, 8.5 * s), color: '#5b6472', maxWidth: w - pad * 2 - 4 * s, maxLines: 3,
+      });
+    }
+    const kids = countOf[b.id] || 0;
+    if (kids) page.text(`${kids} inside`, x + pad + 4 * s, y + h - pad - 8 * s, { size: Math.max(5, 7.5 * s), color: '#8b93a1', maxWidth: w - pad * 2 });
+  }
+
+  function exportWorkspacePdfFlow(wsId) {
+    const id = wsId || state.ws;
+    if (!id) { toast('Open a workspace first.'); return; }
+    DB.getWorkspace(id).then(w => {
+      promptDialog('Export PDF', (w && w.name) || 'Workspace', (name) => {
+        exportWorkspacePdf(id, (name || '').trim() || (w && w.name) || 'Workspace');
+      });
+    });
+  }
+
   function exportWorkspaceFlow(wsId) {
     const id = wsId || state.ws;
     if (!id) return;
@@ -4588,6 +4849,7 @@
       const act = btn.dataset.act;
       menu.hidden = true;
       if (act === 'export') exportWorkspaceFlow(state.ws);
+      if (act === 'export-pdf') exportWorkspacePdfFlow(state.ws);
       if (act === 'properties') openProperties(state.ws);
       if (act === 'add-child') createBlock('block');
       if (act === 'fit') fitToView();
@@ -4727,7 +4989,7 @@
       if (((e.key === 'y' || e.key === 'Y') && (e.ctrlKey || e.metaKey)) ||
           ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey) && e.shiftKey)) { e.preventDefault(); redo(); return; }
       if ((e.key === 'a' || e.key === 'A') && (e.ctrlKey || e.metaKey) && state.levelLayout === 'canvas') {
-        e.preventDefault(); setSelection(state.blocks.map(b => b.id));
+        e.preventDefault(); selectAllOnLevel();
       }
       if ((e.key === 'c' || e.key === 'C') && (e.ctrlKey || e.metaKey)) {
         if (state.selectedIds.size) { e.preventDefault(); copySelection(); } return;
@@ -4891,6 +5153,7 @@
       toast(fingerDraw === 'auto' ? 'Finger drawing: auto' : fingerDraw === 'on' ? 'Finger drawing: always on' : 'Finger drawing: off — stylus only');
     });
     $('#pen-select').addEventListener('click', () => setPenSelect(!state.penSelect));
+    $('#btn-select-all').addEventListener('click', selectAllOnLevel);
     bindPenBarDrag();
     $('#btn-fit').addEventListener('click', fitToView);
     $('#btn-help').addEventListener('click', () => openAbout('help'));
