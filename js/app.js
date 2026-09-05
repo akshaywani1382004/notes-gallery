@@ -606,8 +606,7 @@
     const width = b.width || 3;
     el.innerHTML =
       `<svg class="ink-svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">` +
-      `<path d="${inkStrokeD(pts, style, width)}"/></svg>` +
-      `<div class="block-actions"><button class="blk-btn" data-blk="edit" title="Edit ink">${ic('pencil')}</button></div>`;
+      `<path d="${inkStrokeD(pts, style, width)}"/></svg>`;
     applyInkStyle(el.querySelector('path'), style, b.color || penColor, width);
   }
 
@@ -1446,8 +1445,14 @@
   // Single-click = select (highlight only). Shift+click toggles into a
   // multi-selection; right-drag marquee-selects. Editing is via the edit
   // button / openEditor(); opening the inner canvas is double-click / open btn.
+  function syncSelectionButtons() {
+    const any = state.selectedIds.size > 0;
+    $('#btn-delete-sel')?.classList.toggle('dimmed', !any);
+    $('#btn-select-all')?.classList.toggle('active', any);
+  }
   function applySelectionClasses() {
     $$('.block, .list-row').forEach(n => n.classList.toggle('selected', state.selectedIds.has(n.dataset.id)));
+    syncSelectionButtons();
   }
   function selectBlock(id) {              // replace selection with just this one
     state.selectedIds = new Set([id]);
@@ -3421,6 +3426,7 @@
     if (state.penSelect) setEraser(false);
     $('#pen-select')?.classList.toggle('active', state.penSelect);
     stage.classList.toggle('selecting', state.penSelect);
+    renderPenStyles();
     if (!state.penSelect) { clearSelection(); if (lasso) { lasso.path.remove(); lasso = null; } }
   }
   function setEraser(on) {
@@ -3428,6 +3434,7 @@
     state.penEraser = !!on;
     const btn = $('#pen-eraser'); if (btn) btn.classList.toggle('active', state.penEraser);
     stage.classList.toggle('erasing', state.penEraser);
+    renderPenStyles();
     $('#btn-eraser')?.classList.toggle('active', state.penMode && state.penEraser);
     $('#btn-pen')?.classList.toggle('active', state.penMode && !state.penEraser);
   }
@@ -3454,12 +3461,15 @@
     Object.keys(PEN_STYLES).forEach(key => {
       const s = PEN_STYLES[key];
       const b = document.createElement('button');
-      b.className = 'pen-tool' + (key === penStyle ? ' active' : '');
+      // While the eraser or lasso is active no style is "current" — the pen
+      // is not what a tap would do.
+      b.className = 'pen-tool' + (key === penStyle && !state.penEraser && !state.penSelect ? ' active' : '');
       b.title = s.label;
       b.innerHTML = ic(s.icon);
       b.addEventListener('click', () => {
         penStyle = key;
         try { localStorage.setItem('ng-pen-style', key); } catch (_) {}
+        setEraser(false); setPenSelect(false);        // back to drawing
         renderPenStyles(); syncPenSize();
       });
       wrap.appendChild(b);
@@ -3611,7 +3621,12 @@
       const d = document.createElement('span');
       d.className = 'pen-dot' + (col === penColor ? ' active' : '');
       d.style.background = col;
-      d.addEventListener('click', () => { penColor = col; try { localStorage.setItem('ng-pen-color', col); } catch (_) {} renderPenColors(); });
+      d.addEventListener('click', () => {
+        penColor = col;
+        try { localStorage.setItem('ng-pen-color', col); } catch (_) {}
+        setEraser(false); setPenSelect(false);        // choosing ink means "draw"
+        renderPenColors(); renderPenStyles();
+      });
       wrap.appendChild(d);
     });
   }
@@ -5188,6 +5203,11 @@
     });
     $('#pen-select').addEventListener('click', () => setPenSelect(!state.penSelect));
     $('#btn-select-all').addEventListener('click', selectAllOnLevel);
+    $('#btn-delete-sel').addEventListener('click', () => {
+      if (!state.selectedIds.size) { toast('Select something first.'); return; }
+      deleteSelected();
+    });
+    syncSelectionButtons();        // start dimmed until something is picked
     bindPenBarDrag();
     bindDrawTapGestures();
     $('#btn-fit').addEventListener('click', fitToView);
