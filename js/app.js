@@ -3518,12 +3518,21 @@
   // along the top and bottom); anywhere else it floats where it was dropped.
   // This follows the pointer, not the bar's own edges — a wide bar would
   // otherwise always be touching something and could never float free.
+  // The panel lives between the toolbar and the breadcrumb bar — docking to
+  // the top means sitting just under the menu, never behind it.
+  function penBarBounds() {
+    const bar = $('#topbar'), foot = $('#bottombar');
+    const top = bar ? bar.getBoundingClientRect().bottom + 6 : 6;
+    const footH = foot && !foot.hidden ? foot.getBoundingClientRect().height : 0;
+    return { top, bottom: window.innerHeight - footH - 6 };
+  }
   function dockForPointer(px, py) {
-    const S = 70, vw = window.innerWidth, vh = window.innerHeight;
-    const d = { left: px, right: vw - px, top: py, bottom: vh - py };
+    const S = 70, vw = window.innerWidth;
+    const b = penBarBounds();
+    const d = { left: px, right: vw - px, top: py - b.top, bottom: b.bottom - py };
     const near = Object.keys(d).filter(k => d[k] <= S);
     if (!near.length) return null;
-    return 'dock-' + near.reduce((a, b) => (d[b] < d[a] ? b : a));
+    return 'dock-' + near.reduce((a, x) => (d[x] < d[a] ? x : a));
   }
   function applyPenDock(bar, dock) {
     PEN_DOCKS.forEach(c => bar.classList.toggle(c, c === dock));
@@ -3534,13 +3543,13 @@
     applyPenDock(bar, dock);
     const r = bar.getBoundingClientRect();           // orientation may have changed the size
     const w = r.width || 320, h = r.height || 46;
-    const vw = window.innerWidth, vh = window.innerHeight;
+    const vw = window.innerWidth, b = penBarBounds();
     if (dock === 'dock-left') left = 0;
     else if (dock === 'dock-right') left = vw - w;
-    else if (dock === 'dock-top') top = 0;
-    else if (dock === 'dock-bottom') top = vh - h;
+    else if (dock === 'dock-top') top = b.top;
+    else if (dock === 'dock-bottom') top = b.bottom - h;
     left = clamp(left, dock ? 0 : 6, Math.max(0, vw - w - (dock ? 0 : 6)));
-    top = clamp(top, dock ? 0 : 6, Math.max(0, vh - h - (dock ? 0 : 6)));
+    top = clamp(top, b.top, Math.max(b.top, b.bottom - h));
     bar.style.left = Math.round(left) + 'px';
     bar.style.top = Math.round(top) + 'px';
     if (save) {
