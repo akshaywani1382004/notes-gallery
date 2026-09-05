@@ -132,6 +132,7 @@
     highlighter: '<path d="M4 20h6"/><path d="M12.5 18.5H8l-1.5-3 7-7a1.8 1.8 0 0 1 2.6 0l1.4 1.4a1.8 1.8 0 0 1 0 2.6Z"/><line x1="12" y1="7.5" x2="16.5" y2="12"/>',
     marker: '<path d="M4.5 19.5h7"/><path d="M9 16.5 6.8 14.3l7.5-7.5a2.4 2.4 0 0 1 3.4 0l.5.5a2.4 2.4 0 0 1 0 3.4L10.7 18.2Z"/>',
     hand: '<path d="M9 11V5.6a1.6 1.6 0 0 1 3.2 0V11m0-1.2V4.8a1.6 1.6 0 0 1 3.2 0V11m0-.8a1.6 1.6 0 0 1 3.2 0v4.4a5.6 5.6 0 0 1-5.6 5.6h-1a5 5 0 0 1-3.8-1.7L5 17.4a1.6 1.6 0 0 1 2.2-2.3L9 16.6V7.6a1.6 1.6 0 0 0-3.2 0V13"/>',
+    lasso: '<path d="M12 5.2c4.4 0 8 2.1 8 4.8s-3.6 4.8-8 4.8c-1.4 0-2.8-.2-4-.6"/><path d="M8 14.2C5.5 13.4 4 11.9 4 10c0-1.7 1.3-3.2 3.4-4.1"/><path d="M7.7 14.4c-.6 1.6-.4 3.1.5 3.9"/><circle cx="9" cy="19.6" r="1.5"/>',
     grip: '<circle cx="9" cy="6" r="1.3"/><circle cx="15" cy="6" r="1.3"/><circle cx="9" cy="12" r="1.3"/><circle cx="15" cy="12" r="1.3"/><circle cx="9" cy="18" r="1.3"/><circle cx="15" cy="18" r="1.3"/>',
     map: '<path d="M9 4 4 6v14l5-2 6 2 5-2V4l-5 2-6-2Z"/><line x1="9" y1="4" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="20"/>',
     undo: '<path d="M4 8h9.5a5.5 5.5 0 0 1 0 11H8"/><polyline points="7.5 4 4 8 7.5 12"/>',
@@ -314,6 +315,7 @@
     tagFilter: null,         // active #tag filter (dims non-matching)
     penMode: false,          // freehand ink drawing mode
     penEraser: false,        // eraser sub-tool within pen mode (removes ink strokes)
+    penSelect: false,        // lasso select sub-tool within pen mode
     view: { scale: 1, tx: 60, ty: 40 },
     linkMode: false,
     linkSrc: null,
@@ -383,7 +385,6 @@
     state.tagFilter = null;   // filters are per-level
     renderBreadcrumbs();
     if (listMode) {
-      $('#empty-hint').hidden = true;
       renderList();
     } else {
       renderBlocks();
@@ -401,7 +402,6 @@
     $$('.block', world).forEach(n => n.remove());
     state.els = {};
     for (const b of state.blocks) world.appendChild(makeBlockEl(b));
-    $('#empty-hint').hidden = state.blocks.length !== 0;
   }
 
   function makeBlockEl(b) {
@@ -919,7 +919,6 @@
       renderList();
     } else {
       world.appendChild(makeBlockEl(b));
-      $('#empty-hint').hidden = true;
     }
     if (isText) openTextEditor(b.id);
     else if (isShape) openShapeEditor(b.id);
@@ -972,7 +971,6 @@
     state.blocks.push(b);
     state.childCounts[b.id] = { blocks: 0, files: 0 };
     world.appendChild(makeBlockEl(b));
-    $('#empty-hint').hidden = true;
     recordChange(emptySet(), { blocks: [b], edges: [], files: [] });
     selectBlock(b.id);
     toast('Text file imported');
@@ -997,7 +995,6 @@
     state.childCounts[b.id] = { blocks: 0, files: 0 };
     recordChange(emptySet(), { blocks: [b], edges: [], files: [] });
     world.appendChild(makeBlockEl(b));
-    $('#empty-hint').hidden = true;
     if (opts.openAfter !== false) openImageEditor(b.id);
     else selectBlock(b.id);
     return b;
@@ -1099,7 +1096,6 @@
     state.childCounts[listId] = { blocks: made.length - 1, files: 0 };
     state.childPeek[listId] = made.slice(1, 5).map(k => ({ title: k.title, color: k.color }));
     world.appendChild(makeBlockEl(list));
-    $('#empty-hint').hidden = true;
     recordChange(emptySet(), { blocks: made, edges: [], files: [] });
     selectBlock(listId);
     toast(`Imported ${made.length - 1} rows as a list`);
@@ -1237,7 +1233,6 @@
     state.blocks.push(b);
     state.childCounts[b.id] = { blocks: 0, files: 0 };
     world.appendChild(makeBlockEl(b));
-    $('#empty-hint').hidden = true;
     recordChange(emptySet(), { blocks: [b], edges: [], files: [] });
     selectBlock(b.id);
     toast(`Imported ${rows.length}×${rows[0].length} table`);
@@ -2639,6 +2634,30 @@
   let lastPointer = null;              // last pointer position (screen coords) for paste-at-cursor
   let inking = null;                   // active freehand stroke {pts, path, pointerId, lastX, lastY}
   let erasing = false;                 // pen eraser drag in progress
+  let lasso = null;                    // freehand selection loop {pts, path, pointerId}
+  let lastPointerType = 'mouse';       // dblclick has no pointerType of its own
+
+  // Is a point inside the lasso loop? (even-odd ray cast, in world units)
+  function pointInPoly(x, y, poly) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1];
+      if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi + 1e-9) + xi) inside = !inside;
+    }
+    return inside;
+  }
+  // Pick every block on this level whose middle falls inside the loop.
+  function selectInsideLasso(poly) {
+    const hits = [];
+    for (const b of state.blocks) {
+      if (b.parentId !== state.level) continue;
+      const el = state.els[b.id]; if (!el) continue;
+      const cx = (b.x || 0) + el.offsetWidth / 2, cy = (b.y || 0) + el.offsetHeight / 2;
+      if (pointInPoly(cx, cy, poly)) hits.push(b.id);
+    }
+    setSelection(hits);
+    if (hits.length) toast(hits.length + (hits.length === 1 ? ' item selected — drag to move, Delete to remove' : ' items selected — drag to move, Delete to remove'));
+  }
 
   // Smooth ink path (midpoint quadratic curves) — pen strokes render as fluid
   // curves instead of jagged segment chains, live and once saved.
@@ -2683,8 +2702,27 @@
     }
     if (e.button !== 0) return;
 
+    lastPointerType = e.pointerType || 'mouse';
+
     // a palm resting on the page while writing does nothing at all
     if (state.penMode && isPalm(e)) return;
+
+    // lasso select: circle anything freehand to pick it up. Starting on top of
+    // something already selected drags the whole selection instead.
+    if (state.penMode && state.penSelect && !lasso) {
+      const onPicked = e.target.closest('.block') && state.selectedIds.has(e.target.closest('.block').dataset.id);
+      if (!onPicked && !e.target.closest('#pen-bar') && !e.target.closest('.banner-stack')) {
+        const r = stage.getBoundingClientRect();
+        const p = screenToWorld(e.clientX - r.left, e.clientY - r.top);
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('class', 'lasso-path');
+        svg.appendChild(path);
+        lasso = { pts: [[p.x, p.y]], path, pointerId: e.pointerId };
+        path.setAttribute('d', 'M' + p.x + ' ' + p.y);
+        return;
+      }
+      // fall through: pointer landed on the selection, so the normal drag runs
+    }
 
     // pen eraser: wipe any ink stroke touched (drag continues in onPointerMove)
     if (state.penMode && state.penEraser && !inking) {
@@ -2696,7 +2734,7 @@
     // freehand pen (Samsung-Notes model): while draw mode is on, the pen ALWAYS
     // draws — over empty canvas, over blocks, over earlier strokes. Nothing gets
     // selected or dragged. Two fingers = pan/zoom the page.
-    if (state.penMode && !state.penEraser && state.levelLayout === 'canvas'
+    if (state.penMode && !state.penEraser && !state.penSelect && state.levelLayout === 'canvas'
         && !e.target.closest('.banner-stack') && !e.target.closest('#pen-bar') && !e.target.closest('#minimap')
         && inkAccepts(e)) {
       if (inking) {
@@ -2842,6 +2880,18 @@
   function onPointerMove(e) {
     lastPointer = { x: e.clientX, y: e.clientY };   // for paste-at-cursor
     if (erasing) { eraseInkAt(e.clientX, e.clientY); return; }
+    if (lasso) {
+      if (e.pointerId !== lasso.pointerId) return;
+      const r = stage.getBoundingClientRect();
+      const p = screenToWorld(e.clientX - r.left, e.clientY - r.top);
+      const last = lasso.pts[lasso.pts.length - 1];
+      if (Math.hypot(p.x - last[0], p.y - last[1]) * state.view.scale > 2) {
+        lasso.pts.push([p.x, p.y]);
+        lasso.path.setAttribute('d', 'M' + lasso.pts.map(q => q[0].toFixed(1) + ' ' + q[1].toFixed(1)).join(' L') + ' Z');
+      }
+      return;
+    }
+
     if (inking) {
       if (e.pointerId !== inking.pointerId) return;   // ignore stray pointers mid-stroke
       inking.lastX = e.clientX; inking.lastY = e.clientY;
@@ -2988,6 +3038,15 @@
       rowResize = null; pointers.delete(e.pointerId); return;
     }
     if (erasing) { erasing = false; pointers.delete(e.pointerId); return; }
+    if (lasso) {
+      if (e.pointerId !== lasso.pointerId) { pointers.delete(e.pointerId); return; }
+      const shape = lasso; lasso = null;
+      shape.path.remove();
+      if (shape.pts.length >= 3) selectInsideLasso(shape.pts);
+      else clearSelection();
+      return;
+    }
+
     if (inking) {
       if (e.pointerId !== inking.pointerId) { pointers.delete(e.pointerId); return; }
       const stroke = inking; inking = null;
@@ -3283,6 +3342,9 @@
 
   function onDblClick(e) {
     if (state.levelLayout === 'list') return;   // handled by list-view
+    // while drawing, a stylus double-tap is just two dots of ink - never a new
+    // block. A finger (or mouse) double-tap still adds one, as does Add.
+    if (state.penMode && lastPointerType === 'pen') return;
     if (e.target.closest('[data-blk]')) return; // action buttons, not "open"
     const blockEl = e.target.closest('.block');
     if (blockEl) {
@@ -3346,11 +3408,20 @@
     if (on) {
       setLinkMode(false); closeDrawerIfOpen(); clearSelection();
       renderPenColors(); renderPenStyles(); syncPenSize(); updatePenTouchBtn(); loadPenBarPos();
-    } else setEraser(false);
+    } else { setEraser(false); setPenSelect(false); }
     $('#btn-pen')?.classList.toggle('active', on && !state.penEraser);
     $('#btn-eraser')?.classList.toggle('active', on && state.penEraser);
   }
+  // lasso select sub-tool (mutually exclusive with the eraser)
+  function setPenSelect(on) {
+    state.penSelect = !!on;
+    if (state.penSelect) setEraser(false);
+    $('#pen-select')?.classList.toggle('active', state.penSelect);
+    stage.classList.toggle('selecting', state.penSelect);
+    if (!state.penSelect) { clearSelection(); if (lasso) { lasso.path.remove(); lasso = null; } }
+  }
   function setEraser(on) {
+    if (on && state.penSelect) setPenSelect(false);
     state.penEraser = !!on;
     const btn = $('#pen-eraser'); if (btn) btn.classList.toggle('active', state.penEraser);
     stage.classList.toggle('erasing', state.penEraser);
@@ -3408,23 +3479,49 @@
     if (bar.parentElement !== penBarHost()) penBarHost().appendChild(bar);
     let pos = null;
     try { pos = JSON.parse(localStorage.getItem('ng-pen-bar-pos') || 'null'); } catch (_) {}
-    if (pos && typeof pos.left === 'number') placePenBar(pos.left, pos.top);
+    if (pos && typeof pos.left === 'number') placePenBar(pos.left, pos.top, pos.dock || null);
     else resetPenBarPos();
   }
-  function placePenBar(left, top) {
+  const PEN_DOCKS = ['dock-left', 'dock-right', 'dock-top', 'dock-bottom'];
+
+  // Which edge is the pointer hugging? Inside the snap zone the bar docks to
+  // that edge and takes its orientation (vertical down the sides, horizontal
+  // along the top and bottom); anywhere else it floats where it was dropped.
+  // This follows the pointer, not the bar's own edges — a wide bar would
+  // otherwise always be touching something and could never float free.
+  function dockForPointer(px, py) {
+    const S = 70, vw = window.innerWidth, vh = window.innerHeight;
+    const d = { left: px, right: vw - px, top: py, bottom: vh - py };
+    const near = Object.keys(d).filter(k => d[k] <= S);
+    if (!near.length) return null;
+    return 'dock-' + near.reduce((a, b) => (d[b] < d[a] ? b : a));
+  }
+  function applyPenDock(bar, dock) {
+    PEN_DOCKS.forEach(c => bar.classList.toggle(c, c === dock));
+  }
+  function placePenBar(left, top, dock, save = true) {
     const bar = $('#pen-bar'); if (!bar) return;
-    const r = bar.getBoundingClientRect();
-    const w = r.width || 320, h = r.height || 46;
-    left = clamp(left, 6, Math.max(6, window.innerWidth - w - 6));
-    top = clamp(top, 6, Math.max(6, window.innerHeight - h - 6));
     bar.classList.add('moved');
+    applyPenDock(bar, dock);
+    const r = bar.getBoundingClientRect();           // orientation may have changed the size
+    const w = r.width || 320, h = r.height || 46;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    if (dock === 'dock-left') left = 0;
+    else if (dock === 'dock-right') left = vw - w;
+    else if (dock === 'dock-top') top = 0;
+    else if (dock === 'dock-bottom') top = vh - h;
+    left = clamp(left, dock ? 0 : 6, Math.max(0, vw - w - (dock ? 0 : 6)));
+    top = clamp(top, dock ? 0 : 6, Math.max(0, vh - h - (dock ? 0 : 6)));
     bar.style.left = Math.round(left) + 'px';
     bar.style.top = Math.round(top) + 'px';
-    try { localStorage.setItem('ng-pen-bar-pos', JSON.stringify({ left: Math.round(left), top: Math.round(top) })); } catch (_) {}
+    if (save) {
+      try { localStorage.setItem('ng-pen-bar-pos', JSON.stringify({ left: Math.round(left), top: Math.round(top), dock })); } catch (_) {}
+    }
   }
   function resetPenBarPos() {
     const bar = $('#pen-bar'); if (!bar) return;
     bar.classList.remove('moved');
+    applyPenDock(bar, null);
     bar.style.left = bar.style.top = '';
     try { localStorage.removeItem('ng-pen-bar-pos'); } catch (_) {}
   }
@@ -3440,14 +3537,18 @@
       try { grip.setPointerCapture(e.pointerId); } catch (_) {}
     });
     grip.addEventListener('dblclick', (e) => { e.preventDefault(); resetPenBarPos(); });
-    const move = (e) => { if (drag) placePenBar(e.clientX - drag.dx, e.clientY - drag.dy); };
+    const move = (e) => {
+      if (!drag) return;
+      placePenBar(e.clientX - drag.dx, e.clientY - drag.dy, dockForPointer(e.clientX, e.clientY));
+    };
     const end = () => { if (drag) { drag = null; bar.classList.remove('dragging'); } };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', end);
     window.addEventListener('pointercancel', end);
     window.addEventListener('resize', () => {
       if (!bar.classList.contains('moved')) return;
-      placePenBar(parseFloat(bar.style.left) || 0, parseFloat(bar.style.top) || 0);
+      const dock = PEN_DOCKS.find(c => bar.classList.contains(c)) || null;
+      placePenBar(parseFloat(bar.style.left) || 0, parseFloat(bar.style.top) || 0, dock);
     });
   }
 
@@ -3480,7 +3581,6 @@
     state.blocks.push(b);
     state.childCounts[b.id] = { blocks: 0, files: 0 };
     world.appendChild(makeBlockEl(b));
-    $('#empty-hint').hidden = true;
     recordChange(emptySet(), { blocks: [b], edges: [], files: [] });
   }
 
@@ -4656,6 +4756,7 @@
       if (e.key === 'l' || e.key === 'L') setLinkMode(!state.linkMode);
       if (e.key === 'p' || e.key === 'P') setPenMode(!state.penMode);
       if (e.key === 'e' || e.key === 'E') { if (!state.penMode) setPenMode(true); if (state.penMode) setEraser(!state.penEraser); }
+      if (e.key === 's' || e.key === 'S') { if (!state.penMode) setPenMode(true); if (state.penMode) setPenSelect(!state.penSelect); }
       if (e.key === 'm' || e.key === 'M') { minimapOn = !minimapOn; try { localStorage.setItem('ng-minimap', minimapOn ? '1' : '0'); } catch (_) {} $('#btn-map').classList.toggle('active', minimapOn); drawMinimap(); }
       if (e.key === 'f' || e.key === 'F') fitToView();
       if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedIds.size) deleteSelected();
@@ -4789,6 +4890,7 @@
       updatePenTouchBtn();
       toast(fingerDraw === 'auto' ? 'Finger drawing: auto' : fingerDraw === 'on' ? 'Finger drawing: always on' : 'Finger drawing: off — stylus only');
     });
+    $('#pen-select').addEventListener('click', () => setPenSelect(!state.penSelect));
     bindPenBarDrag();
     $('#btn-fit').addEventListener('click', fitToView);
     $('#btn-help').addEventListener('click', () => openAbout('help'));
@@ -4815,6 +4917,7 @@
       clearTimeout(lpTimer); lpTimer = null; lpFired = false;
       colResize = null; rowResize = null; erasing = false;
       if (inking) { inking.path.remove(); inking = null; }   // drop a half-drawn stroke
+      if (lasso) { lasso.path.remove(); lasso = null; }
     };
     window.addEventListener('blur', resetGestures);
     document.addEventListener('visibilitychange', () => { if (document.hidden) resetGestures(); });

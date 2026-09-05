@@ -307,13 +307,6 @@ input, textarea { font-size: 15px; }
   touch-action: none; cursor: grab;
   -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
 }
-/* soft brand glow behind the grid (does not move with pan) */
-#stage::before {
-  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 0;
-  background:
-    radial-gradient(900px 520px at 12% -8%, var(--glow), transparent 60%),
-    radial-gradient(760px 460px at 100% 108%, color-mix(in srgb, var(--accent-2) 14%, transparent), transparent 62%);
-}
 #stage.panning { cursor: grabbing; }
 /* locked block indicator */
 .block.locked::after {
@@ -336,7 +329,12 @@ input, textarea { font-size: 15px; }
 /* Samsung-Notes-style draw mode: the page is just paper — blocks/strokes are
    inert (no hover chrome, no selection, no dragging), the pen only draws.
    Eraser mode keeps hit-testing on so it can find strokes to wipe. */
-#stage.penning:not(.erasing) #world .block { pointer-events: none; }
+#stage.penning:not(.erasing):not(.selecting) #world .block { pointer-events: none; }
+/* lasso select: blocks are grabbable again so a picked group can be dragged */
+#stage.penning.selecting { cursor: crosshair; }
+#stage.penning.selecting #world .block { pointer-events: auto; }
+.lasso-path { fill: color-mix(in srgb, var(--accent) 14%, transparent); stroke: var(--accent);
+  stroke-width: 1.5; stroke-dasharray: 6 5; vector-effect: non-scaling-stroke; }
 #stage.penning #world .block .block-actions,
 #stage.penning #world .tnode-rotate, #stage.penning #world .tnode-resize,
 #stage.penning #world .tnode-edge, #stage.penning #world .col-resize,
@@ -371,6 +369,31 @@ input, textarea { font-size: 15px; }
   z-index: 40; pointer-events: auto; max-width: calc(100vw - 12px); flex-wrap: wrap; }
 #pen-bar.moved { top: 0; bottom: auto; transform: none; }
 #pen-bar[hidden] { display: none; }
+
+/* ---- docked to a screen edge: the bar takes that edge's orientation ---- */
+#pen-bar.dock-left, #pen-bar.dock-right {
+  flex-direction: column; flex-wrap: nowrap; border-radius: 22px;
+  padding: 10px 8px; gap: 9px; max-width: none; max-height: calc(100vh - 16px);
+}
+#pen-bar.dock-top, #pen-bar.dock-bottom { flex-direction: row; }
+/* vertical: stack the tool groups, wrap the colours into a 2-wide block */
+#pen-bar.dock-left .pen-styles, #pen-bar.dock-right .pen-styles { flex-direction: column; }
+#pen-bar.dock-left .pen-colors, #pen-bar.dock-right .pen-colors {
+  flex-wrap: wrap; width: 40px; justify-content: center; gap: 5px 4px;
+}
+#pen-bar.dock-left .pen-sep, #pen-bar.dock-right .pen-sep { width: 24px; height: 1px; }
+#pen-bar.dock-left .pen-size-wrap, #pen-bar.dock-right .pen-size-wrap { flex-direction: column; gap: 5px; }
+#pen-bar.dock-left #pen-size, #pen-bar.dock-right #pen-size {
+  writing-mode: vertical-lr; direction: rtl; width: 22px; height: 96px; appearance: slider-vertical;
+}
+#pen-bar.dock-left .pen-size-val, #pen-bar.dock-right .pen-size-val { min-width: 0; text-align: center; }
+#pen-bar.dock-left #pen-exit, #pen-bar.dock-right #pen-exit { padding: 6px 10px; font-size: 12px; }
+#pen-bar.dock-left .pen-grip, #pen-bar.dock-right .pen-grip { margin: -2px 0 0; transform: rotate(90deg); }
+/* the docked edge sits flush, so square off that side */
+#pen-bar.dock-left { border-top-left-radius: 10px; border-bottom-left-radius: 10px; }
+#pen-bar.dock-right { border-top-right-radius: 10px; border-bottom-right-radius: 10px; }
+#pen-bar.dock-top { border-top-left-radius: 12px; border-top-right-radius: 12px; }
+#pen-bar.dock-bottom { border-bottom-left-radius: 12px; border-bottom-right-radius: 12px; }
 @media (max-width: 560px) { .minimap { width: 130px; height: 90px; right: 8px; bottom: 64px; } }
 
 /* tag chips on cards */
@@ -455,10 +478,14 @@ input, textarea { font-size: 15px; }
 .blk-btn:hover, .lr-btn:hover { color: var(--accent); border-color: var(--accent); }
 .blk-btn .ic, .lr-btn .ic { width: 15px; height: 15px; }
 .lr-actions { flex: none; }
-/* touch devices: always show the row/block actions (no hover) */
+/* Touch devices have no hover, so the edit marks would otherwise sit on every
+   block forever. Show them only once a block is picked (tap to select), and
+   never while drawing. */
 @media (hover: none) {
-  .block-actions, .lr-actions { opacity: 1; }
+  .block-actions, .lr-actions { opacity: 0; }
+  .block.selected .block-actions, .list-row.selected .lr-actions { opacity: 1; }
 }
+#stage.penning #world .block.selected .block-actions { opacity: 0; }
 
 /* free text node on the canvas */
 .block.block-text {
@@ -611,12 +638,6 @@ input, textarea { font-size: 15px; }
 .tbtn:hover { border-color: var(--accent); }
 .tbtn.on { background: var(--grad); border-color: transparent; color: #fff; box-shadow: var(--glow-shadow); }
 
-.empty-hint { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; z-index: 1; }
-.empty-card { text-align: center; color: var(--text-dim); }
-.empty-mark { width: 60px; height: 60px; border-radius: 17px; display: inline-grid; place-items: center; color: #fff; background: var(--grad); box-shadow: var(--glow-shadow); }
-.empty-mark .ic { width: 30px; height: 30px; stroke-width: 2; }
-.empty-card h2 { margin: 18px 0 6px; color: var(--text); font-family: var(--serif); font-weight: 700; font-size: 22px; letter-spacing: -0.02em; }
-.empty-card p { margin: 0; font-size: 14px; }
 .mobile-only { display: none; }
 
 .banner-stack {
@@ -1047,9 +1068,10 @@ input, textarea { font-size: 15px; }
   .hero-tag { min-height: 0; }
   .minimap { display: none; }
 }
-/* touch devices: bigger tap targets + always-visible affordances */
+/* touch devices: bigger tap targets. Block/row edit marks stay hidden until
+   the block is picked (see the rule above) so they don't litter the page. */
 @media (hover: none) {
-  .block-actions, .lr-actions, .ws-card-actions { opacity: 1; }
+  .ws-card-actions { opacity: 1; }
   .blk-btn, .lr-btn { width: 34px; height: 34px; }
   .tnode-rotate, .tnode-resize { width: 26px; height: 26px; }
   .tnode-rotate { top: -36px; }
