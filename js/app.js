@@ -3437,7 +3437,10 @@
       const r = stage.getBoundingClientRect();
       const p = screenToWorld(e.clientX - r.left, e.clientY - r.top);
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      const width = curWidth();
+      // The nib keeps the thickness you picked on screen, whatever the zoom:
+      // strokes live in world units, so divide by the current scale — write
+      // zoomed out and the mark is the same weight under your hand.
+      const width = curWidth() / (state.view.scale || 1);
       applyInkStyle(path, penStyle, penColor, width);
       svg.appendChild(path);
       // A stylus reports how hard you press; that drives the stroke width for
