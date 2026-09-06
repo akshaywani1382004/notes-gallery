@@ -9,7 +9,7 @@
   <link rel="apple-touch-icon" href="icon.svg" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Notes Gallery" />
-  <link rel="stylesheet" href="css/styles.css?v=92" />
+  <link rel="stylesheet" href="css/styles.css?v=93" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cdefs%3E%3ClinearGradient%20id='g'%20x1='0'%20y1='0'%20x2='1'%20y2='1'%3E%3Cstop%20offset='0'%20stop-color='%234353ff'/%3E%3Cstop%20offset='1'%20stop-color='%23146ef5'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20width='24'%20height='24'%20rx='6'%20fill='url(%23g)'/%3E%3Cg%20transform='translate(12%2012)%20scale(0.76)%20translate(-12%20-12)'%20fill='none'%20stroke='%23fff'%20stroke-width='1.5'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M12%203.6C14.7%203.6%2016.1%205.8%2015.9%208L12.5%2018.6C12.3%2019.4%2011.7%2019.4%2011.5%2018.6L8.1%208C7.9%205.8%209.3%203.6%2012%203.6Z'/%3E%3Cline%20x1='12'%20y1='10.6'%20x2='12'%20y2='18'/%3E%3Ccircle%20cx='12'%20cy='9'%20r='1.15'/%3E%3C/g%3E%3C/svg%3E" />
 </head>
 <body>
@@ -42,6 +42,9 @@
             <span data-icon="plus"></span><span class="lbl">Add</span>
           </button>
         </div>
+        <button id="btn-undo" class="btn icon" title="Undo (Ctrl+Z)"><span data-icon="undo"></span></button>
+        <button id="btn-redo" class="btn icon" title="Redo (Ctrl+Y)"><span data-icon="redo"></span></button>
+        <button id="btn-read" class="btn icon" title="Read mode — look without changing anything"><span data-icon="lock"></span></button>
         <button id="btn-link" class="btn icon" title="Connect two blocks"><span data-icon="link"></span></button>
         <span class="bar-break" aria-hidden="true"></span>
         <button id="btn-pen" class="btn icon" title="Freehand pen (draw)"><span data-icon="pen"></span></button>
@@ -100,6 +103,12 @@
         <button data-sel="ungroup" title="Ungroup (Ctrl+Shift+G)"><span data-icon="ungroup"></span></button>
         <span class="sel-sep"></span>
         <button data-sel="paint" title="Copy a look, then paste it onto others"><span data-icon="brush"></span></button>
+        <span class="sel-sep"></span>
+        <span id="sel-modes" class="sel-modes">
+          <button data-lmode="replace" class="active" title="New selection"><span data-icon="select"></span></button>
+          <button data-lmode="add" title="Add to selection"><span data-icon="plus"></span></button>
+          <button data-lmode="remove" title="Remove from selection"><span data-icon="minus"></span></button>
+        </span>
       </div>
 
 
@@ -128,6 +137,11 @@
           <button id="pen-touch" class="pen-tool" title="Finger drawing"><span data-icon="hand"></span></button>
           <button id="pen-snap" class="pen-tool" title="Shape snapping"><span data-icon="shapes"></span></button>
           <button id="pen-select" class="pen-tool" title="Lasso select (S) — circle anything to pick it up"><span data-icon="lasso"></span></button>
+          <span id="pen-lasso-modes" class="pen-lasso-modes" hidden>
+            <button data-lmode="replace" class="pen-tool active" title="New selection"><span data-icon="select"></span></button>
+            <button data-lmode="add" class="pen-tool" title="Add to selection"><span data-icon="plus"></span></button>
+            <button data-lmode="remove" class="pen-tool" title="Remove from selection"><span data-icon="minus"></span></button>
+          </span>
           <button id="pen-eraser" class="pen-tool" title="Eraser (E)"><span data-icon="eraser"></span></button>
           <button id="pen-exit">Done</button>
         </div>
@@ -742,9 +756,9 @@
     <input type="file" id="xlsx-input" hidden accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" />
   </div>
 
-  <script src="js/platform.js?v=92"></script>
-  <script src="js/pdf.js?v=92"></script>
-  <script src="js/db.js?v=92"></script>
-  <script src="js/app.js?v=92"></script>
+  <script src="js/platform.js?v=93"></script>
+  <script src="js/pdf.js?v=93"></script>
+  <script src="js/db.js?v=93"></script>
+  <script src="js/app.js?v=93"></script>
 </body>
 </html>

@@ -140,6 +140,7 @@
     'dist-v': '<line x1="4" y1="3" x2="20" y2="3"/><line x1="4" y1="21" x2="20" y2="21"/><rect x="8" y="10" width="8" height="4" rx="1"/>',
     group: '<rect x="3.5" y="3.5" width="9" height="9" rx="1.6"/><rect x="11.5" y="11.5" width="9" height="9" rx="1.6"/>',
     ungroup: '<rect x="3.5" y="3.5" width="8" height="8" rx="1.6"/><rect x="12.5" y="12.5" width="8" height="8" rx="1.6" stroke-dasharray="2.5 2.5"/>',
+    redo: '<path d="M20 10H9.5A4.5 4.5 0 0 0 9.5 19H15"/><path d="M15.5 5.5 20 10l-4.5 4.5"/>',
     diamond: '<path d="M12 3.5 20.5 12 12 20.5 3.5 12Z"/>',
     pentagon: '<path d="M12 3.5 20.5 9.7 17.2 19.8H6.8L3.5 9.7Z"/>',
     hexagon: '<path d="M8.2 4h7.6l3.8 8-3.8 8H8.2L4.4 12Z"/>',
@@ -347,6 +348,7 @@
     penMode: false,          // freehand ink drawing mode
     penEraser: false,        // eraser sub-tool within pen mode (removes ink strokes)
     penSelect: false,        // lasso select sub-tool within pen mode
+    readOnly: false,         // read mode: look and navigate only
     selectTool: false,       // toolbar Select tool: lasso-pick on the canvas
     view: { scale: 1, tx: 60, ty: 40 },
     linkMode: false,
@@ -457,7 +459,10 @@
     el.dataset.id = b.id;
     el.style.left = b.x + 'px';
     el.style.top = b.y + 'px';
+    // Drawing sits above the page unless it has been given its own order
+    // (send-to-back and friends set an explicit z, which wins).
     if (b.z) el.style.zIndex = b.z;
+    else if (b.kind === 'ink') el.style.zIndex = INK_Z;
     if (b.kind === 'text') paintTextNode(el, b);
     else if (b.kind === 'shape') paintShapeNode(el, b);
     else if (b.kind === 'image') paintImageNode(el, b);
@@ -944,6 +949,7 @@
     updateNavButtons();
   }
   async function navigateTo(levelId) {
+    dropActiveTools();                     // tools do not follow you into a block
     closeDrawer();
     await goToLevel(levelId, { push: true });
   }
@@ -973,6 +979,8 @@
 
   /* ---------------------------- CRUD ----------------------------------- */
   async function createBlock(type = 'block', at) {
+    if (state.readOnly) { toast('Read mode is on.'); return; }
+    dropActiveTools();
     flushEdit();
     const isText = type === 'text';
     const isShape = type === 'shape';
@@ -1512,6 +1520,7 @@
   }
 
   function deleteBlock(id) {
+    if (state.readOnly) { toast('Read mode is on.'); return; }
     const b = state.blocks.find(x => x.id === id);
     if (!b) return;
     const label = b.kind === 'text'
@@ -1542,13 +1551,19 @@
   function positionSelBar() {
     const bar = $('#sel-bar'); if (!bar) return;
     const ids = [...state.selectedIds];
-    if (ids.length < 2 || state.levelLayout !== 'canvas' || state.penMode) { bar.hidden = true; return; }
-    let minX = Infinity, minY = Infinity, maxX = -Infinity;
+    // Only while the Select tool is up — it used to pop over whatever you had
+    // just written, which got in the way.
+    const selecting = state.selectTool || state.penSelect;
+    if (!ids.length || !selecting || state.levelLayout !== 'canvas') { bar.hidden = true; return; }
+    // align/distribute need two; with one item only the style tools apply
+    bar.querySelectorAll('[data-align]').forEach(b => { b.disabled = ids.length < 2; });
+    bar.querySelector('[data-sel="group"]').disabled = ids.length < 2;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     ids.forEach(id => {
       const el = state.els[id]; if (!el) return;
       const r = el.getBoundingClientRect();
       minX = Math.min(minX, r.left); maxX = Math.max(maxX, r.right);
-      minY = Math.min(minY, r.top);
+      minY = Math.min(minY, r.top); maxY = Math.max(maxY, r.bottom);
     });
     if (!isFinite(minX)) { bar.hidden = true; return; }
     const sr = stage.getBoundingClientRect();
@@ -1556,7 +1571,8 @@
     const bw = bar.offsetWidth || 320;
     let left = (minX + maxX) / 2 - sr.left - bw / 2;
     left = clamp(left, 8, Math.max(8, sr.width - bw - 8));
-    const top = Math.max(8, minY - sr.top - bar.offsetHeight - 10);
+    let top = minY - sr.top - bar.offsetHeight - 12;
+    if (top < 8) top = Math.min(sr.height - bar.offsetHeight - 8, maxY - sr.top + 12);
     bar.style.left = Math.round(left) + 'px';
     bar.style.top = Math.round(top) + 'px';
   }
@@ -1579,6 +1595,8 @@
   function alignAdjust(drag, dxW, dyW) {
     const moving = drag.ids.map(id => state.blocks.find(b => b.id === id)).filter(Boolean);
     if (!moving.length) return { dx: 0, dy: 0 };
+    // Handwriting is placed by hand, not by rules — no guide snapping for it.
+    if (moving.every(b => b.kind === 'ink')) { clearGuides(); return { dx: 0, dy: 0 }; }
     // the moving group's box at the current drag position
     let mx = Infinity, my = Infinity, mX = -Infinity, mY = -Infinity;
     moving.forEach(b => {
@@ -1684,6 +1702,20 @@
     await createBlock('block', { x: box.x + box.w + 40, y: box.y });
   }
 
+  /* ------------------------------ read mode ----------------------------- *
+   * Everything visible, nothing changeable: no dragging, editing, deleting
+   * or drawing — just look around and step into blocks.                    */
+  function setReadMode(on) {
+    state.readOnly = !!on;
+    document.getElementById('app').classList.toggle('reading', state.readOnly);
+    $('#btn-read')?.classList.toggle('active', state.readOnly);
+    if (state.readOnly) {
+      setPenMode(false); setLinkMode(false); setSelectMode(false);
+      clearSelection(); closeOtherEditors();
+    }
+    toast(state.readOnly ? 'Read mode on — nothing can be changed' : 'Read mode off');
+  }
+
   /* --------------------------- format painter --------------------------- *
    * Copy one block's look, then stamp it onto anything else selected.      */
   const STYLE_FIELDS = ['color', 'font', 'size', 'bold', 'italic', 'align', 'glow', 'glowColor',
@@ -1781,6 +1813,7 @@
   }
 
   function deleteSelected() {
+    if (state.readOnly) { toast('Read mode is on.'); return; }
     const ids = [...state.selectedIds];
     if (!ids.length) return;
     if (ids.length === 1) { deleteBlock(ids[0]); return; }
@@ -2984,6 +3017,12 @@
     return inside;
   }
   // Pick every block on this level whose middle falls inside the loop.
+  let lassoMode = 'replace';        // replace | add | remove
+  function setLassoMode(m) {
+    lassoMode = m;
+    $$('#pen-lasso-modes button').forEach(b => b.classList.toggle('active', b.dataset.lmode === m));
+    $$('#sel-modes button').forEach(b => b.classList.toggle('active', b.dataset.lmode === m));
+  }
   function selectInsideLasso(poly) {
     const hits = [];
     for (const b of state.blocks) {
@@ -2992,8 +3031,18 @@
       const cx = (b.x || 0) + el.offsetWidth / 2, cy = (b.y || 0) + el.offsetHeight / 2;
       if (pointInPoly(cx, cy, poly)) hits.push(b.id);
     }
-    setSelection(hits);
-    if (hits.length) toast(hits.length + (hits.length === 1 ? ' item selected — drag to move, Delete to remove' : ' items selected — drag to move, Delete to remove'));
+    const grown = withGroups(hits);
+    if (lassoMode === 'add') {
+      grown.forEach(id => state.selectedIds.add(id));
+      applySelectionClasses();
+    } else if (lassoMode === 'remove') {
+      grown.forEach(id => state.selectedIds.delete(id));
+      applySelectionClasses();
+    } else {
+      setSelection(hits);
+    }
+    const count = state.selectedIds.size;
+    toast(count ? count + (count === 1 ? ' item selected' : ' items selected') : 'Selection cleared');
   }
 
   /* --------------------- handwriting -> text --------------------------- *
@@ -3292,6 +3341,15 @@
 
   function onPointerDown(e) {
     if (state.levelLayout === 'list') return;   // list view handles its own clicks/scroll
+    // Floating UI sits inside the stage; a tap there is for that panel, not the
+    // canvas. Without this the canvas cleared the selection first and every
+    // button on the selection bar appeared to do nothing.
+    if (e.target.closest && e.target.closest('#sel-bar, #outline, #present-bar, #pen-bar, .banner-stack, #minimap')) return;
+    // read mode: panning and navigating still work, editing does not
+    if (state.readOnly) {
+      const onBlock = e.target.closest && e.target.closest('.block');
+      if (onBlock) return;
+    }
 
     // committing an in-progress table cell / title edit when clicking away from it
     if (editTableId && tsel && tsel.editing) {
@@ -3633,8 +3691,11 @@
       const adj = alignAdjust(dragging, dx / s, dy / s);
       for (const bid of dragging.ids) {
         const st = dragging.starts[bid]; if (!st) continue;
-        const nx = snapVal(st.x + dx / s + adj.dx), ny = snapVal(st.y + dy / s + adj.dy);
         const bb = state.blocks.find(x => x.id === bid); if (!bb) continue;
+        // Handwriting must land exactly where you put it: snapping strokes to
+        // the grid pulls the letters of a word apart.
+        const fit = bb.kind === 'ink' ? (v) => Math.round(v) : snapVal;
+        const nx = fit(st.x + dx / s + adj.dx), ny = fit(st.y + dy / s + adj.dy);
         bb.x = nx; bb.y = ny;
         const el = state.els[bid]; if (el) { el.style.left = nx + 'px'; el.style.top = ny + 'px'; }
       }
@@ -3906,6 +3967,7 @@
         { g: 'Arrange', icon: 'align-bottom', title: 'Align bottom', fn: () => alignSelection('bottom') },
         { g: 'Arrange', icon: 'dist-h', title: 'Space evenly across', fn: () => alignSelection('dist-h') },
         { g: 'Arrange', icon: 'dist-v', title: 'Space evenly down', fn: () => alignSelection('dist-v') },
+        { g: 'View', icon: 'lock', title: 'Read mode', fn: () => setReadMode(!state.readOnly) },
         { g: 'View', icon: 'list', title: 'Outline sidebar (O)', fn: () => toggleOutline() },
         { g: 'Arrange', icon: 'frame', title: 'Tidy this level', fn: () => tidyLevel() },
         { g: 'View', icon: 'external', title: 'Present', fn: () => startPresenting() },
@@ -4010,6 +4072,12 @@
 
   function onDblClick(e) {
     if (state.levelLayout === 'list') return;   // handled by list-view
+    if (state.readOnly) {                       // look, step in, change nothing
+      const el = e.target.closest('.block');
+      const b = el && state.blocks.find(x => x.id === el.dataset.id);
+      if (b && !['text', 'shape', 'image', 'ink', 'table'].includes(b.kind)) navigateTo(b.id);
+      return;
+    }
     // while drawing, a stylus double-tap is just two dots of ink - never a new
     // block. A finger (or mouse) double-tap still adds one, as does Add.
     if (state.penMode && lastPointerType === 'pen') return;
@@ -4068,6 +4136,7 @@
 
   /* ---------------------------- freehand pen --------------------------- */
   function setPenMode(on) {
+    if (on && state.readOnly) { toast('Read mode is on.'); return; }
     if (on && (state.ws == null || state.levelLayout !== 'canvas')) return;
     state.penMode = on;
     $('#btn-pen').classList.toggle('active', on);
@@ -4088,6 +4157,16 @@
     $('#btn-pen')?.classList.toggle('active', on && !state.penEraser);
     $('#btn-eraser')?.classList.toggle('active', on && state.penEraser);
   }
+  // Doing something else (adding a block, opening a menu, stepping into a
+  // block) puts the pen / eraser / lasso away, so they never linger.
+  function dropActiveTools(why) {
+    let dropped = false;
+    if (state.penMode) { setPenMode(false); dropped = true; }
+    if (state.selectTool) { setSelectMode(false); dropped = true; }
+    if (state.linkMode) { setLinkMode(false); dropped = true; }
+    if (dropped && why) toast(why);
+  }
+
   // Is a freehand selection loop available right now?
   const lassoActive = () => (state.penMode && state.penSelect) || (!state.penMode && state.selectTool);
 
@@ -4099,6 +4178,7 @@
     if (!state.selectTool && lasso) { lasso.path.remove(); lasso = null; }
     if (state.selectTool) toast('Select: circle anything to pick it up');
     syncSelectionButtons();
+    positionSelBar();
   }
 
   // lasso select sub-tool (mutually exclusive with the eraser)
@@ -4107,6 +4187,9 @@
     if (state.penSelect) setEraser(false);
     $('#pen-select')?.classList.toggle('active', state.penSelect);
     $('#btn-select')?.classList.toggle('active', state.penSelect || state.selectTool);
+    const modes = $('#pen-lasso-modes'); if (modes) modes.hidden = !state.penSelect;
+    if (!state.penSelect && !state.selectTool) setLassoMode('replace');
+    positionSelBar();
     stage.classList.toggle('selecting', state.penSelect);
     renderPenStyles();
     if (!state.penSelect) { clearSelection(); if (lasso) { lasso.path.remove(); lasso = null; } }
@@ -4273,7 +4356,7 @@
     let g = null;
     const done = () => { g = null; };
     stage.addEventListener('pointerdown', (e) => {
-      if (!state.penMode || e.pointerType !== 'touch' || isPalm(e)) return;
+      if (e.pointerType !== 'touch' || isPalm(e)) return;
       const now = Date.now();
       if (!g || now - g.start > 700) g = { start: now, max: 0, moved: false, pts: new Map() };
       g.pts.set(e.pointerId, { x: e.clientX, y: e.clientY, live: true });
@@ -4316,7 +4399,9 @@
       wrap.appendChild(d);
     });
   }
-  let lastInk = null;          // { group, at, x, y } — the previous stroke
+  // Ink floats above other blocks unless it is explicitly sent backward.
+  const INK_Z = 500;
+  let lastInk = null;          // { group, at, x, y, w, h } — the previous stroke
   async function finalizeInk(pts, stroke) {
     const style = (stroke && stroke.style) || penStyle;
     const color = (stroke && stroke.color) || penColor;
@@ -4333,15 +4418,20 @@
       x: Math.round(minX - width - 2), y: Math.round(minY - width - 2),
       z: 0, createdAt: Date.now(), updatedAt: Date.now(),
     };
-    // join the previous stroke's group when written right after it, nearby
+    b.z = INK_Z;                 // drawing sits above the page by default
+    // Join the previous stroke's group only when it reads as the same word:
+    // written straight after it, on the same line, and close by relative to
+    // how tall the writing is. Fixed distances merged whole phrases.
     const now = Date.now();
-    if (lastInk && now - lastInk.at < 1500 &&
-        Math.hypot(b.x - lastInk.x, b.y - lastInk.y) < 220) {
-      b.group = lastInk.group;
-    } else {
-      b.group = uid();
-    }
-    lastInk = { group: b.group, at: now, x: b.x, y: b.y };
+    const lineH = Math.max(18, Math.min(90, b.h || 24));
+    const gapX = lastInk ? (b.x - (lastInk.x + lastInk.w)) : Infinity;   // space between strokes
+    const dyMid = lastInk ? Math.abs((b.y + (b.h || 0) / 2) - (lastInk.y + lastInk.h / 2)) : Infinity;
+    const sameWord = lastInk &&
+      now - lastInk.at < 900 &&                 // a pause ends the word
+      gapX > -lineH * 1.2 && gapX < lineH * 0.45 &&
+      dyMid < lineH * 0.9;
+    b.group = sameWord ? lastInk.group : uid();
+    lastInk = { group: b.group, at: now, x: b.x, y: b.y, w: b.w || 0, h: b.h || 0 };
 
     await DB.saveBlock(b);
     state.blocks.push(b);
@@ -4443,7 +4533,9 @@
     const ctx = cv.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cssW, cssH);
-    const b = worldBounds();
+    // An empty level has no bounds; fall back to the viewport so the minimap
+    // still draws instead of throwing.
+    const b = worldBounds() || { minX: 0, minY: 0, maxX: 0, maxY: 0 };
     const vr = stage.getBoundingClientRect();
     const vw0 = screenToWorld(0, 0), vw1 = screenToWorld(vr.width, vr.height);
     // include viewport in bounds so the indicator is always visible
@@ -5230,8 +5322,13 @@
    * Lay this level's blocks out on a clean grid, biggest rows first.       */
   async function tidyLevel() {
     if (state.levelLayout !== 'canvas') { toast('Switch to canvas view to tidy.'); return; }
-    const blocks = state.blocks.filter(b => b.parentId === state.level && !b.locked);
-    if (blocks.length < 2) { toast('Nothing to tidy here.'); return; }
+    // Tidy what you picked (or the whole level if nothing is picked), and
+    // leave handwriting alone — a grid would tear words apart.
+    const picked = new Set(state.selectedIds);
+    const blocks = state.blocks.filter(b =>
+      b.parentId === state.level && !b.locked && b.kind !== 'ink' &&
+      (!picked.size || picked.has(b.id)));
+    if (blocks.length < 2) { toast(picked.size ? 'Pick two or more blocks to tidy.' : 'Nothing to tidy here.'); return; }
     const boxes = blocks.map(b => ({ b, ...blockBox(b) }));
     boxes.sort((p, q) => (p.y - q.y) || (p.x - q.x));      // keep roughly the order you had
     const GAP = 40;
@@ -6297,6 +6394,20 @@
       deleteSelected();
     });
     syncSelectionButtons();        // start dimmed until something is picked
+    ['#btn-home', '#btn-back', '#btn-forward'].forEach(sel => {
+      const b = $(sel); if (b) b.addEventListener('click', () => dropActiveTools());
+    });
+    $('#btn-undo').addEventListener('click', () => undo());
+    $('#btn-redo').addEventListener('click', () => redo());
+    $('#btn-read').addEventListener('click', () => setReadMode(!state.readOnly));
+    $('#sel-modes').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-lmode]'); if (!b) return;
+      setLassoMode(b.dataset.lmode);
+    });
+    $('#pen-lasso-modes').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-lmode]'); if (!b) return;
+      setLassoMode(b.dataset.lmode);
+    });
     $('#sel-bar').addEventListener('click', (e) => {
       const b = e.target.closest('button'); if (!b) return;
       if (b.dataset.align) alignSelection(b.dataset.align);

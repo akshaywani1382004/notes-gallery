@@ -324,6 +324,21 @@ input, textarea { font-size: 15px; }
 #stage[data-paper="blank"] { background-image: none; }
 
 /* ---- smart alignment guides ---- */
+.sel-modes { display: inline-flex; gap: 2px; }
+.sel-bar button.active { background: var(--grad); color: #fff; }
+.sel-bar button:disabled { opacity: .35; pointer-events: none; }
+.pen-lasso-modes { display: inline-flex; gap: 4px; }
+.pen-lasso-modes[hidden] { display: none; }
+
+/* read mode: look, navigate, change nothing */
+#app.reading .block-actions { opacity: 0 !important; }
+#app.reading #btn-add, #app.reading #btn-link, #app.reading #btn-pen,
+#app.reading #btn-eraser, #app.reading #btn-select, #app.reading #btn-delete,
+#app.reading #btn-undo, #app.reading #btn-redo { opacity: .4; pointer-events: none; }
+#app.reading #btn-read { background: var(--grad); color: #fff; border-color: transparent; }
+#app.reading .tnode-rotate, #app.reading .tnode-resize, #app.reading .tnode-edge,
+#app.reading .col-resize, #app.reading .row-resize { display: none !important; }
+
 /* ---- outline sidebar ---- */
 .outline {
   position: absolute; left: 0; top: 0; bottom: 0; width: 264px; z-index: 22;
