@@ -133,6 +133,13 @@
     marker: '<path d="M4.5 19.5h7"/><path d="M9 16.5 6.8 14.3l7.5-7.5a2.4 2.4 0 0 1 3.4 0l.5.5a2.4 2.4 0 0 1 0 3.4L10.7 18.2Z"/>',
     hand: '<path d="M9 11V5.6a1.6 1.6 0 0 1 3.2 0V11m0-1.2V4.8a1.6 1.6 0 0 1 3.2 0V11m0-.8a1.6 1.6 0 0 1 3.2 0v4.4a5.6 5.6 0 0 1-5.6 5.6h-1a5 5 0 0 1-3.8-1.7L5 17.4a1.6 1.6 0 0 1 2.2-2.3L9 16.6V7.6a1.6 1.6 0 0 0-3.2 0V13"/>',
     select: '<path d="M4 8.5V6.5A2.5 2.5 0 0 1 6.5 4h2M15.5 4h2A2.5 2.5 0 0 1 20 6.5v2M20 15.5v2a2.5 2.5 0 0 1-2.5 2.5h-2M8.5 20h-2A2.5 2.5 0 0 1 4 17.5v-2"/><rect x="8.5" y="8.5" width="7" height="7" rx="1.2"/>',
+    'align-top': '<line x1="4" y1="4" x2="20" y2="4"/><rect x="7" y="8" width="4" height="12" rx="1"/><rect x="14" y="8" width="4" height="7" rx="1"/>',
+    'align-middle': '<line x1="4" y1="12" x2="20" y2="12"/><rect x="7" y="5" width="4" height="14" rx="1"/><rect x="14" y="8" width="4" height="8" rx="1"/>',
+    'align-bottom': '<line x1="4" y1="20" x2="20" y2="20"/><rect x="7" y="4" width="4" height="12" rx="1"/><rect x="14" y="9" width="4" height="7" rx="1"/>',
+    'dist-h': '<line x1="3" y1="4" x2="3" y2="20"/><line x1="21" y1="4" x2="21" y2="20"/><rect x="10" y="8" width="4" height="8" rx="1"/>',
+    'dist-v': '<line x1="4" y1="3" x2="20" y2="3"/><line x1="4" y1="21" x2="20" y2="21"/><rect x="8" y="10" width="8" height="4" rx="1"/>',
+    group: '<rect x="3.5" y="3.5" width="9" height="9" rx="1.6"/><rect x="11.5" y="11.5" width="9" height="9" rx="1.6"/>',
+    ungroup: '<rect x="3.5" y="3.5" width="8" height="8" rx="1.6"/><rect x="12.5" y="12.5" width="8" height="8" rx="1.6" stroke-dasharray="2.5 2.5"/>',
     diamond: '<path d="M12 3.5 20.5 12 12 20.5 3.5 12Z"/>',
     pentagon: '<path d="M12 3.5 20.5 9.7 17.2 19.8H6.8L3.5 9.7Z"/>',
     hexagon: '<path d="M8.2 4h7.6l3.8 8-3.8 8H8.2L4.4 12Z"/>',
@@ -249,7 +256,9 @@
       const speed = Math.hypot(b[0] - a[0], b[1] - a[1]);
       const f = 1 - taper * Math.min(1, speed / 26);          // faster -> thinner
       const ends = Math.min(1, Math.min(i, n - 1 - i) / 3);   // taper both ends
-      w[i] = half * f * (0.35 + 0.65 * ends);
+      const press = pts[i][2];                                // 0 = not from a stylus
+      const pf = press ? (0.45 + 1.1 * press) : 1;            // harder -> thicker
+      w[i] = half * f * pf * (0.35 + 0.65 * ends);
     }
     for (let k = 0; k < 2; k++)                                // smooth the widths
       for (let i = 1; i < n - 1; i++) w[i] = (w[i - 1] + w[i] * 2 + w[i + 1]) / 4;
@@ -350,11 +359,20 @@
   const svg    = $('#edge-layer');
 
   /* ---------------------------- viewport ------------------------------- */
+  // The writing surface: dots (default), grid, ruled lines or blank.
+  function applyPaper(kind) {
+    stage.dataset.paper = kind || 'dots';
+  }
+
   function applyView() {
     const { scale, tx, ty } = state.view;
     world.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
-    stage.style.backgroundSize = `${26 * scale}px ${26 * scale}px`;
+    const paper = stage.dataset.paper || 'dots';
+    stage.style.backgroundSize = paper === 'lines'
+      ? `100% ${30 * scale}px`
+      : `${26 * scale}px ${26 * scale}px`;
     stage.style.backgroundPosition = `${tx}px ${ty}px`;
+    positionSelBar();
     const pct = Math.round(scale * 100) + '%';
     $('#btn-zoom-reset').textContent = pct;
     scheduleMinimap();
@@ -407,6 +425,7 @@
 
     state.tagFilter = null;   // filters are per-level
     renderBreadcrumbs();
+    if (outlineOpen) renderOutline();
     if (listMode) {
       renderList();
     } else {
@@ -624,7 +643,7 @@
     const pad = (b.width || 3) + 2;
     const w = (b.w || 1) + pad * 2, h = (b.h || 1) + pad * 2;
     el.style.width = w + 'px'; el.style.height = h + 'px';
-    const pts = (b.pts || []).map(p => [p[0] + pad, p[1] + pad]);
+    const pts = (b.pts || []).map(p => [p[0] + pad, p[1] + pad, p[2] || 0]);
     const style = PEN_STYLES[b.style] ? b.style : 'pen';
     const width = b.width || 3;
     el.innerHTML =
@@ -828,15 +847,62 @@
       if (!a || !b) continue;
       const p1 = borderPoint(a, b), p2 = borderPoint(b, a);
       const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
-      const d = `M ${p1.x} ${p1.y} Q ${mx} ${my} ${p2.x} ${p2.y}`;
+      const d = edgePathD(e.style, p1, p2);
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       g.setAttribute('class', 'edge-g');
+      const startArrow = e.both ? ' marker-start="url(#arrow)"' : '';
       g.innerHTML =
         `<path class="hit" d="${d}"></path>` +
-        `<path class="edge" d="${d}" marker-end="url(#arrow)"></path>`;
-      g.addEventListener('click', (ev) => { ev.stopPropagation(); askDeleteEdge(e); });
+        `<path class="edge" d="${d}"${startArrow} marker-end="url(#arrow)"></path>` +
+        (e.label
+          ? `<text class="edge-label" x="${mx}" y="${my}" text-anchor="middle" dominant-baseline="middle">${esc(e.label)}</text>`
+          : '');
+      g.addEventListener('click', (ev) => { ev.stopPropagation(); openEdgeEditor(e); });
       svg.appendChild(g);
     }
+  }
+
+  // Curved (default), straight, or right-angled elbow.
+  function edgePathD(style, p1, p2) {
+    if (style === 'straight') return `M ${p1.x} ${p1.y} L ${p2.x} ${p2.y}`;
+    if (style === 'elbow') {
+      const midX = (p1.x + p2.x) / 2;
+      return `M ${p1.x} ${p1.y} L ${midX} ${p1.y} L ${midX} ${p2.y} L ${p2.x} ${p2.y}`;
+    }
+    const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
+    return `M ${p1.x} ${p1.y} Q ${mx} ${my} ${p2.x} ${p2.y}`;
+  }
+
+  let edgeEditing = null;
+  function openEdgeEditor(e) {
+    edgeEditing = e;
+    $('#edge-label').value = e.label || '';
+    $('#edge-both').checked = !!e.both;
+    const st = e.style || 'curve';
+    $$('#edge-styles button').forEach(b => b.classList.toggle('active', b.dataset.estyle === st));
+    $('#edge-modal').hidden = false;
+    setTimeout(() => $('#edge-label').focus(), 40);
+  }
+  function bindEdgeEditor() {
+    const close = () => { $('#edge-modal').hidden = true; edgeEditing = null; };
+    $('#edge-styles').addEventListener('click', (ev) => {
+      const b = ev.target.closest('button[data-estyle]'); if (!b) return;
+      $$('#edge-styles button').forEach(x => x.classList.toggle('active', x === b));
+    });
+    $('#edge-cancel').addEventListener('click', close);
+    $('#edge-save').addEventListener('click', async () => {
+      if (!edgeEditing) { close(); return; }
+      const e = edgeEditing;
+      e.label = ($('#edge-label').value || '').trim();
+      e.both = $('#edge-both').checked;
+      e.style = ($$('#edge-styles button').find(b => b.classList.contains('active')) || {}).dataset?.estyle || 'curve';
+      await DB.saveEdge(e);
+      close(); drawEdges(); markChanged();
+    });
+    $('#edge-delete').addEventListener('click', () => {
+      const e = edgeEditing; close();
+      if (e) askDeleteEdge(e);
+    });
   }
 
   function askDeleteEdge(e) {
@@ -1426,6 +1492,7 @@
       b.x += dx; b.y += dy;
       const el = state.els[id]; if (el) { el.style.left = b.x + 'px'; el.style.top = b.y + 'px'; }
     }
+    positionSelBar();
     drawEdges();
     clearTimeout(nudge.timer);
     nudge.timer = setTimeout(commitNudge, 450);
@@ -1471,21 +1538,237 @@
   function syncSelectionButtons() {
     $('#btn-delete')?.classList.toggle('dimmed', state.selectedIds.size === 0);
   }
+  // Floating toolbar over a multi-selection.
+  function positionSelBar() {
+    const bar = $('#sel-bar'); if (!bar) return;
+    const ids = [...state.selectedIds];
+    if (ids.length < 2 || state.levelLayout !== 'canvas' || state.penMode) { bar.hidden = true; return; }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity;
+    ids.forEach(id => {
+      const el = state.els[id]; if (!el) return;
+      const r = el.getBoundingClientRect();
+      minX = Math.min(minX, r.left); maxX = Math.max(maxX, r.right);
+      minY = Math.min(minY, r.top);
+    });
+    if (!isFinite(minX)) { bar.hidden = true; return; }
+    const sr = stage.getBoundingClientRect();
+    bar.hidden = false;
+    const bw = bar.offsetWidth || 320;
+    let left = (minX + maxX) / 2 - sr.left - bw / 2;
+    left = clamp(left, 8, Math.max(8, sr.width - bw - 8));
+    const top = Math.max(8, minY - sr.top - bar.offsetHeight - 10);
+    bar.style.left = Math.round(left) + 'px';
+    bar.style.top = Math.round(top) + 'px';
+  }
+
   function applySelectionClasses() {
     $$('.block, .list-row').forEach(n => n.classList.toggle('selected', state.selectedIds.has(n.dataset.id)));
     syncSelectionButtons();
+    positionSelBar();
   }
+  /* -------------------------- alignment guides -------------------------- *
+   * While dragging, if an edge or centre comes within a few pixels of the
+   * same line on another block, the drag snaps to it and the line is drawn.  */
+  const GUIDE_SNAP = 6;                       // screen px
+  function blockBox(b) {
+    const el = state.els[b.id];
+    const w = (b.w || (el && el.offsetWidth) || BLOCK_W);
+    const h = (b.h || (el && el.offsetHeight) || BLOCK_H_GUESS);
+    return { x: b.x || 0, y: b.y || 0, w, h };
+  }
+  function alignAdjust(drag, dxW, dyW) {
+    const moving = drag.ids.map(id => state.blocks.find(b => b.id === id)).filter(Boolean);
+    if (!moving.length) return { dx: 0, dy: 0 };
+    // the moving group's box at the current drag position
+    let mx = Infinity, my = Infinity, mX = -Infinity, mY = -Infinity;
+    moving.forEach(b => {
+      const st = drag.starts[b.id]; if (!st) return;
+      const bb = blockBox(b);
+      const x = st.x + dxW, y = st.y + dyW;
+      mx = Math.min(mx, x); my = Math.min(my, y);
+      mX = Math.max(mX, x + bb.w); mY = Math.max(mY, y + bb.h);
+    });
+    const movingIds = new Set(drag.ids);
+    const others = state.blocks.filter(b => b.parentId === state.level && !movingIds.has(b.id));
+    const tol = GUIDE_SNAP / state.view.scale;
+    const mine = { v: [mx, (mx + mX) / 2, mX], h: [my, (my + mY) / 2, mY] };
+    let best = { dx: null, dy: null, gx: [], gy: [] };
+    for (const o of others) {
+      const ob = blockBox(o);
+      const ov = [ob.x, ob.x + ob.w / 2, ob.x + ob.w];
+      const oh = [ob.y, ob.y + ob.h / 2, ob.y + ob.h];
+      for (const m of mine.v) for (const t of ov) {
+        const d = t - m;
+        if (Math.abs(d) <= tol && (best.dx === null || Math.abs(d) < Math.abs(best.dx))) { best.dx = d; best.gx = [t]; }
+      }
+      for (const m of mine.h) for (const t of oh) {
+        const d = t - m;
+        if (Math.abs(d) <= tol && (best.dy === null || Math.abs(d) < Math.abs(best.dy))) { best.dy = d; best.gy = [t]; }
+      }
+    }
+    drawGuides(best.gx, best.gy);
+    return { dx: best.dx || 0, dy: best.dy || 0 };
+  }
+  function drawGuides(xs, ys) {
+    let layer = $('#guide-layer');
+    if (!layer) {
+      layer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      layer.setAttribute('id', 'guide-layer');
+      svg.appendChild(layer);
+    }
+    layer.innerHTML = '';
+    const span = 100000;
+    (xs || []).forEach(x => {
+      const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      l.setAttribute('class', 'align-guide');
+      l.setAttribute('x1', x); l.setAttribute('x2', x);
+      l.setAttribute('y1', -span); l.setAttribute('y2', span);
+      layer.appendChild(l);
+    });
+    (ys || []).forEach(y => {
+      const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      l.setAttribute('class', 'align-guide');
+      l.setAttribute('y1', y); l.setAttribute('y2', y);
+      l.setAttribute('x1', -span); l.setAttribute('x2', span);
+      layer.appendChild(l);
+    });
+  }
+  const clearGuides = () => { const g = $('#guide-layer'); if (g) g.innerHTML = ''; };
+
+  /* ------------------------ align + distribute -------------------------- */
+  async function alignSelection(how) {
+    const ids = [...state.selectedIds];
+    if (ids.length < 2) { toast('Select two or more blocks first.'); return; }
+    const items = ids.map(id => state.blocks.find(b => b.id === id)).filter(b => b && !b.locked);
+    if (items.length < 2) return;
+    const boxes = items.map(b => ({ b, ...blockBox(b) }));
+    const minX = Math.min(...boxes.map(o => o.x)), maxX = Math.max(...boxes.map(o => o.x + o.w));
+    const minY = Math.min(...boxes.map(o => o.y)), maxY = Math.max(...boxes.map(o => o.y + o.h));
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+
+    if (how === 'dist-h' || how === 'dist-v') {
+      const horiz = how === 'dist-h';
+      boxes.sort((a, b) => (horiz ? a.x - b.x : a.y - b.y));
+      const total = horiz ? (maxX - minX) : (maxY - minY);
+      const used = boxes.reduce((t, o) => t + (horiz ? o.w : o.h), 0);
+      const gap = (total - used) / (boxes.length - 1);
+      let at = horiz ? minX : minY;
+      boxes.forEach(o => {
+        if (horiz) { o.b.x = Math.round(at); at += o.w + gap; }
+        else { o.b.y = Math.round(at); at += o.h + gap; }
+      });
+    } else {
+      boxes.forEach(o => {
+        if (how === 'left') o.b.x = Math.round(minX);
+        else if (how === 'right') o.b.x = Math.round(maxX - o.w);
+        else if (how === 'center') o.b.x = Math.round(cx - o.w / 2);
+        else if (how === 'top') o.b.y = Math.round(minY);
+        else if (how === 'bottom') o.b.y = Math.round(maxY - o.h);
+        else if (how === 'middle') o.b.y = Math.round(cy - o.h / 2);
+      });
+    }
+    for (const o of boxes) {
+      o.b.updatedAt = Date.now();
+      await DB.saveBlock(o.b);
+      const el = state.els[o.b.id];
+      if (el) { el.style.left = o.b.x + 'px'; el.style.top = o.b.y + 'px'; }
+    }
+    drawEdges();
+    toast('Aligned');
+  }
+
+  // Tab: a new block beside this one, ready to name.
+  async function addSibling(id) {
+    const b = state.blocks.find(x => x.id === id); if (!b) return;
+    const box = blockBox(b);
+    await createBlock('block', { x: box.x + box.w + 40, y: box.y });
+  }
+
+  /* --------------------------- format painter --------------------------- *
+   * Copy one block's look, then stamp it onto anything else selected.      */
+  const STYLE_FIELDS = ['color', 'font', 'size', 'bold', 'italic', 'align', 'glow', 'glowColor',
+                        'fill', 'outline', 'outlineW', 'outlineColor', 'round', 'width', 'style',
+                        'dash', 'layout'];
+  let styleClip = null;
+  function copyStyle() {
+    const id = [...state.selectedIds][0];
+    const b = id && state.blocks.find(x => x.id === id);
+    if (!b) { toast('Select a block to copy its look.'); return; }
+    styleClip = {};
+    STYLE_FIELDS.forEach(f => { if (b[f] !== undefined) styleClip[f] = b[f]; });
+    styleClip.__kind = b.kind || 'block';
+    $('#sel-bar')?.querySelector('[data-sel="paint"]')?.classList.add('armed');
+    toast('Look copied — select others and paste the look');
+  }
+  async function pasteStyle() {
+    if (!styleClip) { toast('Copy a look first (Ctrl+Alt+C).'); return; }
+    const ids = [...state.selectedIds];
+    if (!ids.length) { toast('Select what to paint.'); return; }
+    let done = 0;
+    for (const id of ids) {
+      const b = state.blocks.find(x => x.id === id); if (!b) continue;
+      STYLE_FIELDS.forEach(f => { if (styleClip[f] !== undefined) b[f] = styleClip[f]; });
+      b.updatedAt = Date.now();
+      await DB.saveBlock(b);
+      refreshItem(b.id);
+      done++;
+    }
+    drawEdges();
+    toast(done + (done === 1 ? ' block painted' : ' blocks painted'));
+  }
+
+  /* ------------------------------ groups -------------------------------- *
+   * Blocks sharing a `group` id move, style and delete as one. Strokes
+   * written in the same burst are grouped automatically, so a handwritten
+   * paragraph behaves like one note instead of forty separate marks.       */
+  function groupMembers(id) {
+    const b = state.blocks.find(x => x.id === id);
+    if (!b || !b.group) return [id];
+    return state.blocks.filter(x => x.group === b.group).map(x => x.id);
+  }
+  // Grow a set of ids to include every group-mate.
+  function withGroups(ids) {
+    const out = new Set();
+    ids.forEach(id => groupMembers(id).forEach(m => out.add(m)));
+    return [...out];
+  }
+  async function groupSelection() {
+    const ids = [...state.selectedIds];
+    if (ids.length < 2) { toast('Select two or more things to group.'); return; }
+    const gid = uid();
+    for (const id of ids) {
+      const b = state.blocks.find(x => x.id === id); if (!b) continue;
+      b.group = gid; b.updatedAt = Date.now();
+      await DB.saveBlock(b);
+    }
+    setSelection(ids);
+    toast(ids.length + ' items grouped');
+  }
+  async function ungroupSelection() {
+    const ids = withGroups([...state.selectedIds]);
+    let any = false;
+    for (const id of ids) {
+      const b = state.blocks.find(x => x.id === id); if (!b || !b.group) continue;
+      delete b.group; b.updatedAt = Date.now();
+      await DB.saveBlock(b); any = true;
+    }
+    if (!any) { toast('Nothing grouped here.'); return; }
+    setSelection(ids);
+    toast('Ungrouped');
+  }
+
   function selectBlock(id) {              // replace selection with just this one
-    state.selectedIds = new Set([id]);
+    state.selectedIds = new Set(withGroups([id]));
     applySelectionClasses();
   }
   function toggleSelect(id) {             // shift+click
-    if (state.selectedIds.has(id)) state.selectedIds.delete(id);
-    else state.selectedIds.add(id);
+    const mates = withGroups([id]);
+    if (state.selectedIds.has(id)) mates.forEach(m => state.selectedIds.delete(m));
+    else mates.forEach(m => state.selectedIds.add(m));
     applySelectionClasses();
   }
   function setSelection(ids) {
-    state.selectedIds = new Set(ids);
+    state.selectedIds = new Set(withGroups(ids));
     applySelectionClasses();
   }
   function clearSelection() {
@@ -3091,8 +3374,13 @@
       const width = curWidth();
       applyInkStyle(path, penStyle, penColor, width);
       svg.appendChild(path);
-      inking = { pts: [[p.x, p.y]], path, pointerId: e.pointerId, lastX: e.clientX, lastY: e.clientY,
-                 style: penStyle, color: penColor, width };
+      // A stylus reports how hard you press; that drives the stroke width for
+      // the styles that taper. Fingers and mice report nothing useful, so
+      // they keep the speed-based width.
+      const pen = e.pointerType === 'pen';
+      inking = { pts: [[p.x, p.y, pen ? (e.pressure || 0.5) : 0]], path, pointerId: e.pointerId,
+                 lastX: e.clientX, lastY: e.clientY,
+                 style: penStyle, color: penColor, width, pressure: pen };
       path.setAttribute('d', inkStrokeD(inking.pts, penStyle, width));
       return;
     }
@@ -3237,7 +3525,8 @@
       const p = screenToWorld(e.clientX - r.left, e.clientY - r.top);
       const last = inking.pts[inking.pts.length - 1];
       if (!last || Math.hypot(p.x - last[0], p.y - last[1]) * state.view.scale > 1) {
-        inking.pts.push([Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10]);
+        inking.pts.push([Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10,
+                         inking.pressure ? (e.pressure || 0.5) : 0]);
         inking.path.setAttribute('d', inkStrokeD(inking.pts, inking.style, inking.width));
       }
       return;
@@ -3340,9 +3629,11 @@
       if (Math.abs(dx) + Math.abs(dy) > 3) dragging.moved = true;
       if (dragging.shift) return;      // shift = toggle only, don't move
       const s = state.view.scale;
+      // smart guides: nudge the drag so edges/centres line up with neighbours
+      const adj = alignAdjust(dragging, dx / s, dy / s);
       for (const bid of dragging.ids) {
         const st = dragging.starts[bid]; if (!st) continue;
-        const nx = snapVal(st.x + dx / s), ny = snapVal(st.y + dy / s);
+        const nx = snapVal(st.x + dx / s + adj.dx), ny = snapVal(st.y + dy / s + adj.dy);
         const bb = state.blocks.find(x => x.id === bid); if (!bb) continue;
         bb.x = nx; bb.y = ny;
         const el = state.els[bid]; if (el) { el.style.left = nx + 'px'; el.style.top = ny + 'px'; }
@@ -3429,6 +3720,7 @@
     if (pointers.size < 2) pinch = null;
 
     if (dragging) {
+      clearGuides();
       state.els[dragging.primary]?.classList.remove('dragging');
       if (dragging.shift && !dragging.moved) {
         toggleSelect(dragging.primary);          // shift+click toggles
@@ -3543,6 +3835,15 @@
         { icon: 'frame', label: 'Fit to view', fn: () => fitToView() },
         { sep: true },
         { icon: 'upload', label: 'Export workspace', fn: () => exportWorkspaceFlow(state.ws) },
+        { icon: 'copy', label: 'Copy look', fn: () => copyStyle() },
+        { icon: 'brush', label: 'Paste look', fn: () => pasteStyle() },
+        { icon: 'group', label: 'Group selection', fn: () => groupSelection() },
+        { icon: 'ungroup', label: 'Ungroup selection', fn: () => ungroupSelection() },
+        { icon: 'list', label: 'Outline', fn: () => toggleOutline() },
+        { icon: 'frame', label: 'Tidy this level', fn: () => tidyLevel() },
+        { icon: 'external', label: 'Present', fn: () => startPresenting() },
+        { icon: 'image', label: 'Export this level as PNG', fn: () => exportLevelImage('png') },
+        { icon: 'shapes', label: 'Export this level as SVG', fn: () => exportLevelImage('svg') },
         { icon: 'filetext', label: 'Export as PDF', fn: () => exportWorkspacePdfFlow(state.ws) },
         { icon: 'type', label: 'Convert handwriting to text', fn: () => convertInkToText() },
         { icon: 'info', label: 'About', fn: () => openAbout('about') },
@@ -3593,6 +3894,23 @@
         { g: 'Edit', icon: 'arrow-left', title: 'Undo', fn: () => undo() },
         { g: 'Edit', icon: 'arrow-right', title: 'Redo', fn: () => redo() },
         { g: 'Workspace', icon: 'upload', title: 'Export workspace', fn: () => exportWorkspaceFlow(state.ws) },
+        { g: 'Style', icon: 'copy', title: 'Copy look (Ctrl+Alt+C)', fn: () => copyStyle() },
+        { g: 'Style', icon: 'brush', title: 'Paste look (Ctrl+Alt+V)', fn: () => pasteStyle() },
+        { g: 'Arrange', icon: 'group', title: 'Group selection', fn: () => groupSelection() },
+        { g: 'Arrange', icon: 'ungroup', title: 'Ungroup selection', fn: () => ungroupSelection() },
+        { g: 'Arrange', icon: 'align-left', title: 'Align left', fn: () => alignSelection('left') },
+        { g: 'Arrange', icon: 'align-center', title: 'Align centres', fn: () => alignSelection('center') },
+        { g: 'Arrange', icon: 'align-right', title: 'Align right', fn: () => alignSelection('right') },
+        { g: 'Arrange', icon: 'align-top', title: 'Align top', fn: () => alignSelection('top') },
+        { g: 'Arrange', icon: 'align-middle', title: 'Align middles', fn: () => alignSelection('middle') },
+        { g: 'Arrange', icon: 'align-bottom', title: 'Align bottom', fn: () => alignSelection('bottom') },
+        { g: 'Arrange', icon: 'dist-h', title: 'Space evenly across', fn: () => alignSelection('dist-h') },
+        { g: 'Arrange', icon: 'dist-v', title: 'Space evenly down', fn: () => alignSelection('dist-v') },
+        { g: 'View', icon: 'list', title: 'Outline sidebar (O)', fn: () => toggleOutline() },
+        { g: 'Arrange', icon: 'frame', title: 'Tidy this level', fn: () => tidyLevel() },
+        { g: 'View', icon: 'external', title: 'Present', fn: () => startPresenting() },
+        { g: 'Workspace', icon: 'image', title: 'Export this level as PNG', fn: () => exportLevelImage('png') },
+        { g: 'Workspace', icon: 'shapes', title: 'Export this level as SVG', fn: () => exportLevelImage('svg') },
         { g: 'Workspace', icon: 'filetext', title: 'Export as PDF', fn: () => exportWorkspacePdfFlow(state.ws) },
         { g: 'Ink', icon: 'type', title: 'Convert handwriting to text', fn: () => convertInkToText() },
         { g: 'Workspace', icon: 'sliders', title: 'Workspace properties', fn: () => openProperties(state.ws) },
@@ -3998,13 +4316,16 @@
       wrap.appendChild(d);
     });
   }
+  let lastInk = null;          // { group, at, x, y } — the previous stroke
   async function finalizeInk(pts, stroke) {
     const style = (stroke && stroke.style) || penStyle;
     const color = (stroke && stroke.color) || penColor;
     const width = (stroke && stroke.width) || curWidth();
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const [x, y] of pts) { minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); }
-    const rel = pts.map(([x, y]) => [Math.round((x - minX) * 10) / 10, Math.round((y - minY) * 10) / 10]);
+    const rel = pts.map(([x, y, pr]) => (pr
+      ? [Math.round((x - minX) * 10) / 10, Math.round((y - minY) * 10) / 10, Math.round(pr * 100) / 100]
+      : [Math.round((x - minX) * 10) / 10, Math.round((y - minY) * 10) / 10]));
     const b = {
       id: uid(), ws: state.ws, parentId: state.level, kind: 'ink',
       title: '', color, width, style,
@@ -4012,6 +4333,16 @@
       x: Math.round(minX - width - 2), y: Math.round(minY - width - 2),
       z: 0, createdAt: Date.now(), updatedAt: Date.now(),
     };
+    // join the previous stroke's group when written right after it, nearby
+    const now = Date.now();
+    if (lastInk && now - lastInk.at < 1500 &&
+        Math.hypot(b.x - lastInk.x, b.y - lastInk.y) < 220) {
+      b.group = lastInk.group;
+    } else {
+      b.group = uid();
+    }
+    lastInk = { group: b.group, at: now, x: b.x, y: b.y };
+
     await DB.saveBlock(b);
     state.blocks.push(b);
     state.childCounts[b.id] = { blocks: 0, files: 0 };
@@ -4729,6 +5060,232 @@
       { size: Math.max(5, 7.5 * s), color: TH.faint, maxWidth: innerW, maxLines: 1 });
   }
 
+  /* ---------------- export this level as a picture ---------------------- *
+   * Vector SVG (crisp at any size) or PNG for pasting into chats/slides.   */
+  function levelToSvg() {
+    const blocks = state.blocks.filter(b => b.parentId === state.level);
+    if (!blocks.length) return null;
+    const PAD = 40;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const boxes = {};
+    blocks.forEach(b => {
+      const bb = blockBox(b);
+      boxes[b.id] = bb;
+      minX = Math.min(minX, bb.x); minY = Math.min(minY, bb.y);
+      maxX = Math.max(maxX, bb.x + bb.w); maxY = Math.max(maxY, bb.y + bb.h);
+    });
+    const W = Math.max(1, maxX - minX + PAD * 2), H = Math.max(1, maxY - minY + PAD * 2);
+    const ox = PAD - minX, oy = PAD - minY;
+    const bg = getComputedStyle(document.body).getPropertyValue('--bg').trim() || '#ffffff';
+    const ink = getComputedStyle(document.body).getPropertyValue('--text').trim() || '#111111';
+    const line = getComputedStyle(document.body).getPropertyValue('--line').trim() || '#d8dde5';
+    const dim = getComputedStyle(document.body).getPropertyValue('--text-dim').trim() || '#666';
+    const out = [];
+    out.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(W)}" height="${Math.round(H)}" viewBox="0 0 ${Math.round(W)} ${Math.round(H)}">`);
+    out.push(`<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="${dim}"/></marker></defs>`);
+    out.push(`<rect width="100%" height="100%" fill="${bg}"/>`);
+
+    // connectors first
+    state.edges.forEach(e => {
+      const A = boxes[e.from], B = boxes[e.to];
+      if (!A || !B) return;
+      const c1 = { x: A.x + ox + A.w / 2, y: A.y + oy + A.h / 2 };
+      const c2 = { x: B.x + ox + B.w / 2, y: B.y + oy + B.h / 2 };
+      out.push(`<path d="${edgePathD(e.style, c1, c2)}" fill="none" stroke="${dim}" stroke-width="1.5" marker-end="url(#a)"${e.both ? ' marker-start="url(#a)"' : ''}/>`);
+      if (e.label) out.push(`<text x="${(c1.x + c2.x) / 2}" y="${(c1.y + c2.y) / 2}" fill="${dim}" font-family="system-ui,sans-serif" font-size="12" text-anchor="middle">${esc(e.label)}</text>`);
+    });
+
+    blocks.forEach(b => {
+      const bb = boxes[b.id];
+      const x = bb.x + ox, y = bb.y + oy, w = bb.w, h = bb.h;
+      const accent = b.color || PALETTE[0];
+      if (b.kind === 'ink') {
+        const pad = (b.width || 3) + 2;
+        const pts = (b.pts || []).map(p => [x + pad + p[0], y + pad + p[1], p[2] || 0]);
+        const st = PEN_STYLES[b.style] || PEN_STYLES.pen;
+        const d = inkStrokeD(pts, PEN_STYLES[b.style] ? b.style : 'pen', b.width || 3);
+        out.push(st.taper > 0
+          ? `<path d="${d}" fill="${accent}" opacity="${st.opacity}"/>`
+          : `<path d="${d}" fill="none" stroke="${accent}" stroke-width="${b.width || 3}" stroke-linecap="round" stroke-linejoin="round" opacity="${st.opacity}"/>`);
+        return;
+      }
+      if (b.kind === 'image' && b.src) {
+        out.push(`<image href="${esc(b.src)}" x="${x}" y="${y}" width="${w}" height="${h}" preserveAspectRatio="none"/>`);
+        return;
+      }
+      if (b.kind === 'text') {
+        const size = b.size || 16;
+        const lines = String(b.text || '').split('\n');
+        out.push(`<text x="${x}" y="${y + size}" fill="${b.color || ink}" font-family="system-ui,sans-serif" font-size="${size}"${b.bold ? ' font-weight="700"' : ''}${b.italic ? ' font-style="italic"' : ''}>`);
+        lines.forEach((ln, i) => out.push(`<tspan x="${x}" dy="${i ? size * 1.3 : 0}">${esc(ln)}</tspan>`));
+        out.push('</text>');
+        return;
+      }
+      if (b.kind === 'shape') {
+        const fill = b.fill ? accent : 'none';
+        const stroke = b.outline ? (b.outlineColor || accent) : (b.fill ? 'none' : accent);
+        const sw = b.outlineW || 2;
+        if (b.shape === 'circle') out.push(`<ellipse cx="${x + w / 2}" cy="${y + h / 2}" rx="${w / 2}" ry="${h / 2}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`);
+        else if (b.shape === 'line') out.push(`<line x1="${x}" y1="${y + h / 2}" x2="${x + w}" y2="${y + h / 2}" stroke="${b.outlineColor || accent}" stroke-width="${b.outlineW || 4}" stroke-linecap="round"${b.dash ? ` stroke-dasharray="${(b.outlineW || 4) * 0.2} ${(b.outlineW || 4) * 1.9}"` : ''}/>`);
+        else if (b.shape === 'triangle') out.push(`<polygon points="${x + w / 2},${y} ${x + w},${y + h} ${x},${y + h}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`);
+        else if (b.shape === 'polygon' && Array.isArray(b.points)) out.push(`<polygon points="${b.points.map(([px, py]) => `${x + px * w},${y + py * h}`).join(' ')}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`);
+        else out.push(`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="6" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`);
+        return;
+      }
+      if (b.kind === 'table') {
+        const rows = b.rows || [];
+        const cols = Math.max(1, Math.max(...rows.map(r => r.length), 1));
+        const rh = h / Math.max(1, rows.length), cw = w / cols;
+        out.push(`<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${bg}" stroke="${line}"/>`);
+        rows.forEach((row, r) => {
+          for (let c = 0; c < cols; c++) {
+            out.push(`<rect x="${x + c * cw}" y="${y + r * rh}" width="${cw}" height="${rh}" fill="none" stroke="${line}" stroke-width="0.7"/>`);
+            const t = row[c] == null ? '' : String(row[c]);
+            if (t) out.push(`<text x="${x + c * cw + 5}" y="${y + r * rh + rh * 0.66}" fill="${ink}" font-family="system-ui,sans-serif" font-size="${Math.min(13, rh * 0.5)}"${r === 0 && b.header !== false ? ' font-weight="700"' : ''}>${esc(t)}</text>`);
+          }
+        });
+        return;
+      }
+      // card
+      out.push(`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="12" fill="${bg}" stroke="${line}"/>`);
+      out.push(`<rect x="${x}" y="${y}" width="4" height="${h}" fill="${accent}"/>`);
+      out.push(`<text x="${x + 16}" y="${y + 28}" fill="${ink}" font-family="system-ui,sans-serif" font-size="15" font-weight="700">${esc(blockLabel(b))}</text>`);
+      if (b.description) out.push(`<text x="${x + 16}" y="${y + 50}" fill="${dim}" font-family="system-ui,sans-serif" font-size="12">${esc(String(b.description).slice(0, 46))}</text>`);
+    });
+    out.push('</svg>');
+    return { svg: out.join(''), w: Math.round(W), h: Math.round(H) };
+  }
+
+  async function exportLevelImage(kind) {
+    const made = levelToSvg();
+    if (!made) { toast('Nothing on this level to export.'); return; }
+    const name = safeFileName(state.wsName || 'workspace') + '-' + (state.levelBlock ? safeFileName(state.levelBlock.title || 'level') : 'home');
+    if (kind === 'svg') {
+      await saveExport(new Blob([made.svg], { type: 'image/svg+xml' }), name + '.svg', made.svg);
+      return;
+    }
+    const scale = 2;                                   // crisp on high-dpi screens
+    const img = new Image();
+    const url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(made.svg);
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+    const cv = document.createElement('canvas');
+    cv.width = made.w * scale; cv.height = made.h * scale;
+    const ctx = cv.getContext('2d');
+    ctx.scale(scale, scale);
+    ctx.drawImage(img, 0, 0);
+    const blob = await new Promise(res => cv.toBlob(res, 'image/png'));
+    await saveExport(blob, name + '.png');
+  }
+
+  // Save a generated file: native dialog in the app, download on the web.
+  async function saveExport(blob, filename, textForShell) {
+    if (SHELL) {
+      const path = await NGShell.saveDialog(filename);
+      if (!path) return;
+      const data = textForShell != null ? textForShell : new Uint8Array(await blob.arrayBuffer());
+      try { await NGShell.writeFile(path, data); toast('Saved'); }
+      catch (err) { console.error(err); toast('Could not write the file.'); }
+      return;
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast('Exported ' + filename);
+  }
+
+  /* --------------------------- outline sidebar -------------------------- *
+   * The whole workspace as a tree — the same shape the PDF bookmarks use.  */
+  let outlineOpen = false;
+  async function toggleOutline(force) {
+    outlineOpen = force === undefined ? !outlineOpen : !!force;
+    $('#outline').hidden = !outlineOpen;
+    if (outlineOpen) await renderOutline();
+  }
+  async function renderOutline() {
+    const tree = $('#outline-tree'); if (!tree || !state.ws) return;
+    const all = await DB.allByWs('blocks', state.ws);
+    const kidsOf = (id) => all.filter(b => b.parentId === id).sort((a, b) => (a.y - b.y) || (a.x - b.x));
+    tree.innerHTML = '';
+    const add = (id, title, colour, depth) => {
+      const kids = kidsOf(id);
+      const row = document.createElement('button');
+      row.className = 'outline-row' + (id === state.level ? ' here' : '');
+      row.style.paddingLeft = (8 + depth * 14) + 'px';
+      row.innerHTML = `<span class="outline-dot" style="background:${esc(colour || PALETTE[0])}"></span>` +
+                      `<span class="outline-name">${esc(title)}</span>` +
+                      (kids.length ? `<span class="outline-count">${kids.length}</span>` : '');
+      row.addEventListener('click', async () => {
+        await navigateTo(id === DB.ROOT ? DB.ROOT : id);
+        renderOutline();
+      });
+      tree.appendChild(row);
+      kids.forEach(k => { if (kidsOf(k.id).length) add(k.id, blockLabel(k), k.color, depth + 1); });
+    };
+    add(DB.ROOT, state.wsName || 'Workspace', PALETTE[0], 0);
+  }
+
+  /* ------------------------------ auto tidy ----------------------------- *
+   * Lay this level's blocks out on a clean grid, biggest rows first.       */
+  async function tidyLevel() {
+    if (state.levelLayout !== 'canvas') { toast('Switch to canvas view to tidy.'); return; }
+    const blocks = state.blocks.filter(b => b.parentId === state.level && !b.locked);
+    if (blocks.length < 2) { toast('Nothing to tidy here.'); return; }
+    const boxes = blocks.map(b => ({ b, ...blockBox(b) }));
+    boxes.sort((p, q) => (p.y - q.y) || (p.x - q.x));      // keep roughly the order you had
+    const GAP = 40;
+    const colW = Math.max(...boxes.map(o => o.w));
+    const perRow = Math.max(1, Math.ceil(Math.sqrt(boxes.length)));
+    const startX = Math.min(...boxes.map(o => o.x));
+    const startY = Math.min(...boxes.map(o => o.y));
+    let x = startX, y = startY, rowH = 0, col = 0;
+    for (const o of boxes) {
+      o.b.x = Math.round(x); o.b.y = Math.round(y);
+      o.b.updatedAt = Date.now();
+      await DB.saveBlock(o.b);
+      const el = state.els[o.b.id];
+      if (el) { el.style.left = o.b.x + 'px'; el.style.top = o.b.y + 'px'; }
+      rowH = Math.max(rowH, o.h);
+      col++;
+      if (col >= perRow) { col = 0; x = startX; y += rowH + GAP; rowH = 0; }
+      else x += colW + GAP;
+    }
+    drawEdges(); positionSelBar(); markChanged();
+    toast('Tidied ' + boxes.length + ' blocks');
+  }
+
+  /* --------------------------- presentation mode ------------------------ *
+   * Walk the workspace one level at a time, full screen.                   */
+  let presenting = null;        // { stops: [{id,title}], at }
+  async function startPresenting() {
+    if (!state.ws) { toast('Open a workspace first.'); return; }
+    const all = await DB.allByWs('blocks', state.ws);
+    const kidsOf = (id) => all.filter(b => b.parentId === id).sort((a, b) => (a.y - b.y) || (a.x - b.x));
+    const stops = [];
+    (function walk(id, title) {
+      stops.push({ id, title });
+      kidsOf(id).forEach(k => { if (kidsOf(k.id).length) walk(k.id, blockLabel(k)); });
+    })(DB.ROOT, state.wsName || 'Workspace');
+    presenting = { stops, at: 0 };
+    document.getElementById('app').classList.add('presenting');
+    $('#present-bar').hidden = false;
+    clearSelection();
+    await gotoStop(0);
+  }
+  async function gotoStop(i) {
+    if (!presenting) return;
+    presenting.at = clamp(i, 0, presenting.stops.length - 1);
+    const stop = presenting.stops[presenting.at];
+    await navigateTo(stop.id);            // navigateTo already fits the view
+    $('#pres-where').textContent = `${stop.title}  ·  ${presenting.at + 1} / ${presenting.stops.length}`;
+  }
+  function stopPresenting() {
+    presenting = null;
+    document.getElementById('app').classList.remove('presenting');
+    $('#present-bar').hidden = true;
+  }
+
   function exportWorkspacePdfFlow(wsId) {
     const id = wsId || state.ws;
     if (!id) { toast('Open a workspace first.'); return; }
@@ -5008,6 +5565,7 @@
     const w = await DB.getWorkspace(id);
     if (!w) return;
     state.ws = id; state.wsName = w.name;
+    applyPaper(w.paper);
     clearHistory();
     stopTyping();
     $('#brand-menu').hidden = true;
@@ -5143,6 +5701,8 @@
     if (!w) return;
     propsWs = id;
     propsColor = w.color || PALETTE[0];
+    promptPaper = w.paper || 'dots';
+    $$('#props-papers button').forEach(b => b.classList.toggle('active', b.dataset.paper === promptPaper));
     $('#props-name').value = w.name || '';
     renderPropsColors(propsColor);
     const rec = await DB.getHandleRec(id);
@@ -5174,7 +5734,9 @@
       const name = ($('#props-name').value || '').trim();
       w.name = name || w.name;
       w.color = propsColor || w.color;
+      w.paper = promptPaper || 'dots';
       w.updatedAt = Date.now();
+      if (state.ws === propsWs) applyPaper(w.paper);
       await DB.saveWorkspace(w);
       if (state.ws === propsWs) { state.wsName = w.name; renderBreadcrumbs(); markChanged(); }
       const wasHome = !$('#home').hidden;
@@ -5276,6 +5838,7 @@
   let promptColor = null;
   let promptTemplate = 'blank';
   let promptTheme = 'light';        // light / dark page style (PDF export)
+  let promptPaper = 'dots';         // writing surface for a workspace
   function renderPromptColors(active) {
     const wrap = $('#prompt-colors');
     wrap.innerHTML = '';
@@ -5321,7 +5884,7 @@
       const v = $('#prompt-input').value;
       $('#prompt').hidden = true;
       const cb = promptCb; promptCb = null;
-      if (cb) cb(v, promptColor, promptTemplate, promptTheme);
+      if (cb) cb(v, promptColor, promptTemplate, promptTheme, promptPaper);
     });
     $('#prompt-templates').addEventListener('click', (e) => {
       const b = e.target.closest('[data-tpl]'); if (!b) return;
@@ -5382,6 +5945,11 @@
       menu.hidden = true;
       if (act === 'export') exportWorkspaceFlow(state.ws);
       if (act === 'export-pdf') exportWorkspacePdfFlow(state.ws);
+      if (act === 'export-png') exportLevelImage('png');
+      if (act === 'export-svg') exportLevelImage('svg');
+      if (act === 'outline') toggleOutline();
+      if (act === 'tidy') tidyLevel();
+      if (act === 'present') startPresenting();
       if (act === 'properties') openProperties(state.ws);
       if (act === 'add-child') createBlock('block');
       if (act === 'fit') fitToView();
@@ -5523,13 +6091,15 @@
       if ((e.key === 'a' || e.key === 'A') && (e.ctrlKey || e.metaKey) && state.levelLayout === 'canvas') {
         e.preventDefault(); selectAllOnLevel();
       }
-      if ((e.key === 'c' || e.key === 'C') && (e.ctrlKey || e.metaKey)) {
+      if ((e.key === 'c' || e.key === 'C') && (e.ctrlKey || e.metaKey) && !e.altKey) {
         if (state.selectedIds.size) { e.preventDefault(); copySelection(); } return;
       }
+      if ((e.key === 'c' || e.key === 'C') && e.altKey && (e.ctrlKey || e.metaKey)) { e.preventDefault(); copyStyle(); return; }
+      if ((e.key === 'v' || e.key === 'V') && e.altKey && (e.ctrlKey || e.metaKey)) { e.preventDefault(); pasteStyle(); return; }
       if ((e.key === 'x' || e.key === 'X') && (e.ctrlKey || e.metaKey)) {
         if (state.selectedIds.size) { e.preventDefault(); cutSelection(); } return;
       }
-      if ((e.key === 'v' || e.key === 'V') && (e.ctrlKey || e.metaKey)) {
+      if ((e.key === 'v' || e.key === 'V') && (e.ctrlKey || e.metaKey) && !e.altKey) {
         if (clipboard) { e.preventDefault(); pasteClipboard(); } return;
       }
       if ((e.key === 'd' || e.key === 'D') && (e.ctrlKey || e.metaKey)) {
@@ -5551,6 +6121,23 @@
       if (e.key === 'p' || e.key === 'P') setPenMode(!state.penMode);
       if (e.key === 'e' || e.key === 'E') { if (!state.penMode) setPenMode(true); if (state.penMode) setEraser(!state.penEraser); }
       if (e.key === 's' || e.key === 'S') { if (!state.penMode) setPenMode(true); if (state.penMode) setPenSelect(!state.penSelect); }
+      // Tab drops a sibling next to the selected block and selects it
+      if (e.key === 'Tab' && state.selectedIds.size === 1 && state.levelLayout === 'canvas') {
+        e.preventDefault();
+        addSibling([...state.selectedIds][0]);
+        return;
+      }
+      if ((e.key === 'g' || e.key === 'G') && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        if (e.shiftKey) ungroupSelection(); else groupSelection();
+        return;
+      }
+      if (presenting) {
+        if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); gotoStop(presenting.at + 1); return; }
+        if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); gotoStop(presenting.at - 1); return; }
+        if (e.key === 'Escape') { stopPresenting(); return; }
+      }
+      if (e.key === 'o' || e.key === 'O') { toggleOutline(); return; }
       if (e.key === 'm' || e.key === 'M') { minimapOn = !minimapOn; try { localStorage.setItem('ng-minimap', minimapOn ? '1' : '0'); } catch (_) {} $('#btn-map').classList.toggle('active', minimapOn); drawMinimap(); }
       if (e.key === 'f' || e.key === 'F') fitToView();
       if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedIds.size) deleteSelected();
@@ -5710,6 +6297,24 @@
       deleteSelected();
     });
     syncSelectionButtons();        // start dimmed until something is picked
+    $('#sel-bar').addEventListener('click', (e) => {
+      const b = e.target.closest('button'); if (!b) return;
+      if (b.dataset.align) alignSelection(b.dataset.align);
+      else if (b.dataset.sel === 'group') groupSelection();
+      else if (b.dataset.sel === 'ungroup') ungroupSelection();
+      else if (b.dataset.sel === 'paint') { if (styleClip) pasteStyle(); else copyStyle(); }
+    });
+    $('#props-papers').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-paper]'); if (!b) return;
+      promptPaper = b.dataset.paper;
+      $$('#props-papers button').forEach(x => x.classList.toggle('active', x === b));
+      if (state.ws === propsWs) applyPaper(promptPaper);      // live preview
+    });
+    $('#outline-close').addEventListener('click', () => toggleOutline(false));
+    $('#pres-prev').addEventListener('click', () => gotoStop(presenting ? presenting.at - 1 : 0));
+    $('#pres-next').addEventListener('click', () => gotoStop(presenting ? presenting.at + 1 : 0));
+    $('#pres-exit').addEventListener('click', stopPresenting);
+    bindEdgeEditor();
     bindPenBarDrag();
     bindDrawTapGestures();
     $('#btn-fit').addEventListener('click', fitToView);

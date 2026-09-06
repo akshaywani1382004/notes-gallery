@@ -309,6 +309,77 @@ input, textarea { font-size: 15px; }
   -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
 }
 #stage.panning { cursor: grabbing; }
+
+/* ---- paper styles: the surface you write on ---- */
+#stage[data-paper="grid"] {
+  background-image:
+    linear-gradient(var(--grid-dot) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-dot) 1px, transparent 1px);
+  background-size: 26px 26px, 26px 26px;
+}
+#stage[data-paper="lines"] {
+  background-image: linear-gradient(var(--grid-dot) 1px, transparent 1px);
+  background-size: 100% 30px;
+}
+#stage[data-paper="blank"] { background-image: none; }
+
+/* ---- smart alignment guides ---- */
+/* ---- outline sidebar ---- */
+.outline {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 264px; z-index: 22;
+  background: var(--panel); border-right: 1px solid var(--line);
+  display: flex; flex-direction: column; box-shadow: var(--shadow-lg);
+}
+.outline[hidden] { display: none; }
+.outline-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 10px 12px 16px; border-bottom: 1px solid var(--line);
+  font-weight: 700; font-size: 13px; color: var(--text);
+}
+.outline-tree { flex: 1; overflow: auto; padding: 8px 6px 16px; }
+.outline-row {
+  display: flex; align-items: center; gap: 7px; width: 100%; text-align: left;
+  padding: 6px 8px; border: none; background: transparent; color: var(--text-dim);
+  border-radius: 8px; cursor: pointer; font-size: 13px;
+}
+.outline-row:hover { background: var(--panel-2); color: var(--text); }
+.outline-row.here { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--text); font-weight: 600; }
+.outline-dot { width: 8px; height: 8px; border-radius: 999px; flex: none; }
+.outline-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.outline-count { margin-left: auto; font-size: 11px; color: var(--text-mute); }
+
+/* ---- presentation mode ---- */
+#app.presenting #topbar, #app.presenting #bottombar,
+#app.presenting .minimap, #app.presenting .banner-stack { display: none; }
+#app.presenting .block-actions { opacity: 0 !important; }
+.present-bar {
+  position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 40;
+  display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
+  box-shadow: var(--shadow-lg);
+}
+.present-bar[hidden] { display: none; }
+.pres-where { font-size: 13px; color: var(--text-dim); min-width: 160px; text-align: center; }
+
+.edge-label { fill: var(--text-dim); font-size: 12px; paint-order: stroke;
+  stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; pointer-events: none; }
+.align-guide { stroke: var(--accent); stroke-width: 1; vector-effect: non-scaling-stroke;
+  stroke-dasharray: 4 4; opacity: .9; pointer-events: none; }
+
+/* ---- selection toolbar ---- */
+.sel-bar {
+  position: absolute; z-index: 26; display: flex; align-items: center; gap: 3px;
+  padding: 5px 7px; border-radius: 12px; background: var(--panel);
+  border: 1px solid var(--line); box-shadow: var(--shadow-lg);
+}
+.sel-bar[hidden] { display: none; }
+.sel-bar button {
+  width: 28px; height: 28px; display: grid; place-items: center; cursor: pointer;
+  border: none; background: transparent; color: var(--text-dim); border-radius: 7px;
+}
+.sel-bar button:hover { background: var(--panel-2); color: var(--accent); }
+.sel-bar .ic { width: 16px; height: 16px; }
+.sel-sep { width: 1px; height: 18px; background: var(--line); margin: 0 2px; }
 /* locked block indicator */
 .block.locked::after {
   content: ""; position: absolute; top: 6px; left: 6px; width: 16px; height: 16px; z-index: 4; opacity: .7;
