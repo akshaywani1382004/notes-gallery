@@ -1659,6 +1659,7 @@
     if (ids.length < 2) { toast('Select two or more blocks first.'); return; }
     const items = ids.map(id => state.blocks.find(b => b.id === id)).filter(b => b && !b.locked);
     if (items.length < 2) return;
+    const undoBefore = { blocks: items.map(b => ({ ...b })), edges: [], files: [] };
     const boxes = items.map(b => ({ b, ...blockBox(b) }));
     const minX = Math.min(...boxes.map(o => o.x)), maxX = Math.max(...boxes.map(o => o.x + o.w));
     const minY = Math.min(...boxes.map(o => o.y)), maxY = Math.max(...boxes.map(o => o.y + o.h));
@@ -1691,7 +1692,8 @@
       const el = state.els[o.b.id];
       if (el) { el.style.left = o.b.x + 'px'; el.style.top = o.b.y + 'px'; }
     }
-    drawEdges();
+    recordChange(undoBefore, { blocks: items.map(b => ({ ...b })), edges: [], files: [] });
+    drawEdges(); positionSelBar();
     toast('Aligned');
   }
 
@@ -1736,15 +1738,17 @@
     if (!styleClip) { toast('Copy a look first (Ctrl+Alt+C).'); return; }
     const ids = [...state.selectedIds];
     if (!ids.length) { toast('Select what to paint.'); return; }
+    const items = ids.map(id => state.blocks.find(x => x.id === id)).filter(Boolean);
+    const undoBefore = { blocks: items.map(b => ({ ...b })), edges: [], files: [] };
     let done = 0;
-    for (const id of ids) {
-      const b = state.blocks.find(x => x.id === id); if (!b) continue;
+    for (const b of items) {
       STYLE_FIELDS.forEach(f => { if (styleClip[f] !== undefined) b[f] = styleClip[f]; });
       b.updatedAt = Date.now();
       await DB.saveBlock(b);
       refreshItem(b.id);
       done++;
     }
+    recordChange(undoBefore, { blocks: items.map(b => ({ ...b })), edges: [], files: [] });
     drawEdges();
     toast(done + (done === 1 ? ' block painted' : ' blocks painted'));
   }
@@ -1767,24 +1771,27 @@
   async function groupSelection() {
     const ids = [...state.selectedIds];
     if (ids.length < 2) { toast('Select two or more things to group.'); return; }
+    const items = ids.map(id => state.blocks.find(x => x.id === id)).filter(Boolean);
+    const undoBefore = { blocks: items.map(b => ({ ...b })), edges: [], files: [] };
     const gid = uid();
-    for (const id of ids) {
-      const b = state.blocks.find(x => x.id === id); if (!b) continue;
+    for (const b of items) {
       b.group = gid; b.updatedAt = Date.now();
       await DB.saveBlock(b);
     }
+    recordChange(undoBefore, { blocks: items.map(b => ({ ...b })), edges: [], files: [] });
     setSelection(ids);
     toast(ids.length + ' items grouped');
   }
   async function ungroupSelection() {
     const ids = withGroups([...state.selectedIds]);
-    let any = false;
-    for (const id of ids) {
-      const b = state.blocks.find(x => x.id === id); if (!b || !b.group) continue;
+    const items = ids.map(id => state.blocks.find(x => x.id === id)).filter(b => b && b.group);
+    if (!items.length) { toast('Nothing grouped here.'); return; }
+    const undoBefore = { blocks: items.map(b => ({ ...b })), edges: [], files: [] };
+    for (const b of items) {
       delete b.group; b.updatedAt = Date.now();
-      await DB.saveBlock(b); any = true;
+      await DB.saveBlock(b);
     }
-    if (!any) { toast('Nothing grouped here.'); return; }
+    recordChange(undoBefore, { blocks: items.map(b => ({ ...b })), edges: [], files: [] });
     setSelection(ids);
     toast('Ungrouped');
   }
@@ -5329,6 +5336,7 @@
       b.parentId === state.level && !b.locked && b.kind !== 'ink' &&
       (!picked.size || picked.has(b.id)));
     if (blocks.length < 2) { toast(picked.size ? 'Pick two or more blocks to tidy.' : 'Nothing to tidy here.'); return; }
+    const undoBefore = { blocks: blocks.map(b => ({ ...b })), edges: [], files: [] };
     const boxes = blocks.map(b => ({ b, ...blockBox(b) }));
     boxes.sort((p, q) => (p.y - q.y) || (p.x - q.x));      // keep roughly the order you had
     const GAP = 40;
@@ -5348,6 +5356,7 @@
       if (col >= perRow) { col = 0; x = startX; y += rowH + GAP; rowH = 0; }
       else x += colW + GAP;
     }
+    recordChange(undoBefore, { blocks: blocks.map(b => ({ ...b })), edges: [], files: [] });
     drawEdges(); positionSelBar(); markChanged();
     toast('Tidied ' + boxes.length + ' blocks');
   }
@@ -6154,6 +6163,7 @@
         return;
       }
       if (e.key === 'Escape') {
+        if (presenting) { stopPresenting(); return; }        // leave the slideshow
         if (!$('#cmdk').hidden) { closeCmdk(); return; }
         if (!$('#ctxmenu').hidden) { hideCtxMenu(); }
         else if (!$('#prompt').hidden) { $('#prompt').hidden = true; promptCb = null; }
@@ -6161,6 +6171,7 @@
         else if (!$('#confirm').hidden) { $('#confirm').hidden = true; confirmCb = null; }
         else if (!$('#about').hidden) $('#about').hidden = true;
         else if (state.penMode) setPenMode(false);
+        else if (state.selectTool) setSelectMode(false);      // put the lasso away
         else if (state.linkMode) setLinkMode(false);
         else if (!$('#text-drawer').hidden) closeTextEditor();
         else if (!$('#shape-drawer').hidden) closeShapeEditor();
