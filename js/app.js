@@ -84,7 +84,9 @@
 
   /* ---- line-icon set (stroke SVGs, sized via CSS .ic) ------------------ */
   const ICON = {
-    diary: '<path d="M5.5 9.6V5.6A2.1 2.1 0 0 1 7.6 3.5H14.2L19.8 9.1V15.2L14.6 20.5H10.4"/><path d="M3.2 20.8L6.1 13.5C6.8 11.8 8.3 10.7 10.1 10.7H12.5V13.1C12.5 15.1 11.5 16.9 9.8 18Z"/><path d="M3.2 20.8L8.3 15.7"/><circle cx="8.8" cy="15.2" r="1.05"/><path d="M9.9 14.1L13.7 10.3"/><path d="M15.9 8.1L12.3 8.7L15.3 11.7Z" fill="#4f7cff" stroke="none"/><path d="M14.2 3.5V9.1H19.8Z" fill="#4f7cff" stroke="none"/><path d="M19.8 15.2H14.6V20.5Z" fill="#4f7cff" stroke="none"/><path d="M11.2 6.1L13.2 8.1" stroke="#4f7cff"/>',
+    diary: '<defs><linearGradient id="ngs" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4f6f9"/><stop offset="1" stop-color="#aeb6c2"/></linearGradient></defs><g stroke="url(#ngs)"><path d="M5.5 9.6V5.6A2.1 2.1 0 0 1 7.6 3.5H14.2L19.8 9.1V15.2L14.6 20.5H10.4"/><path d="M3.2 20.8L6.1 13.5C6.8 11.8 8.3 10.7 10.1 10.7H12.5V13.1C12.5 15.1 11.5 16.9 9.8 18Z"/><path d="M3.2 20.8L8.3 15.7"/><circle cx="8.8" cy="15.2" r="1.05"/><path d="M9.9 14.1L13.7 10.3"/></g><path d="M15.9 8.1L12.3 8.7L15.3 11.7Z" fill="#4f7cff" stroke="none"/><path d="M14.2 3.5V9.1H19.8Z" fill="#4f7cff" stroke="none"/><path d="M19.8 15.2H14.6V20.5Z" fill="#4f7cff" stroke="none"/><path d="M11.2 6.1L13.2 8.1" stroke="#4f7cff"/>',
+    chev: '<path d="M6.5 9.5l5.5 5.5 5.5-5.5"/>',
+    checkbox: '<rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8.2 12.2l2.6 2.6 5-5.4"/>',
     plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
     minus: '<line x1="5" y1="12" x2="19" y2="12"/>',
     link: '<line x1="9.5" y1="14.5" x2="14.5" y2="9.5"/><path d="M11 6.5 12 5.5a3.4 3.4 0 0 1 4.8 4.8l-1 1"/><path d="M13 17.5 12 18.5a3.4 3.4 0 0 1-4.8-4.8l1-1"/>',
@@ -528,6 +530,7 @@
       + (b.kind === 'text' ? ' block-text' : '')
       + (b.kind === 'shape' ? ' block-shape' : '')
       + (b.kind === 'image' ? ' block-image' : '')
+      + (b.kind === 'check' ? ' block-check' : '')
       + (b.kind === 'ink' ? ' block-ink' : '')
       + (b.kind === 'table' ? ' block-table' : '');
     el.dataset.id = b.id;
@@ -540,12 +543,27 @@
     if (b.kind === 'text') paintTextNode(el, b);
     else if (b.kind === 'shape') paintShapeNode(el, b);
     else if (b.kind === 'image') paintImageNode(el, b);
+    else if (b.kind === 'check') paintCheckNode(el, b);
     else if (b.kind === 'ink') paintInkNode(el, b);
     else if (b.kind === 'table') paintTableNode(el, b);
     else { el.style.setProperty('--b-accent', b.color || PALETTE[0]); paintBlock(el, b); }
     el.classList.toggle('locked', !!b.locked);
     state.els[b.id] = el;
     return el;
+  }
+
+  // checkbox node (kind === 'check'): a square that ticks on a tap
+  function paintCheckNode(el, b) {
+    const size = b.size || 28;
+    el.style.width = size + 'px'; el.style.height = size + 'px';
+    el.style.setProperty('--b-accent', b.color || PALETTE[0]);
+    el.classList.toggle('is-checked', !!b.checked);
+    el.innerHTML =
+      `<span class="check-face" title="${b.checked ? 'Ticked' : 'Not ticked'}">` +
+        `<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 12.5l3.6 3.6 7.4-8.2"/></svg>` +
+      `</span>` +
+      `<div class="block-actions"><button class="blk-btn" data-blk="edit" title="Checkbox options">${ic('pencil')}</button></div>` +
+      `<div class="tnode-resize" title="Resize"></div>`;
   }
 
   // free image node (kind === 'image'); src is a data URL stored on the block
@@ -711,6 +729,7 @@
     if (b.kind === 'text') { paintTextNode(el, b); }
     else if (b.kind === 'shape') { paintShapeNode(el, b); }
     else if (b.kind === 'image') { paintImageNode(el, b); }
+    else if (b.kind === 'check') { paintCheckNode(el, b); }
     else if (b.kind === 'ink') { paintInkNode(el, b); }
     else if (b.kind === 'table') { paintTableNode(el, b); }
     else { paintBlock(el, b); el.style.setProperty('--b-accent', b.color || PALETTE[0]); }
@@ -846,10 +865,10 @@
           <div class="lr-sub">Table · ${rows.length}×${cols}</div></div>
         </div>`;
     }
-    if (b.kind === 'image' || b.kind === 'shape' || b.kind === 'ink') {
-      const kindLabel = b.kind === 'image' ? 'Image' : b.kind === 'ink' ? 'Ink drawing' : 'Shape';
-      const kindIco = b.kind === 'image' ? 'image' : b.kind === 'ink' ? 'pen' : 'shapes';
-      const kindSub = b.kind === 'image' ? 'Picture' : b.kind === 'ink' ? 'Freehand' : (b.shape || 'shape');
+    if (b.kind === 'image' || b.kind === 'shape' || b.kind === 'ink' || b.kind === 'check') {
+      const kindLabel = b.kind === 'image' ? 'Image' : b.kind === 'ink' ? 'Ink drawing' : b.kind === 'check' ? 'Checkbox' : 'Shape';
+      const kindIco = b.kind === 'image' ? 'image' : b.kind === 'ink' ? 'pen' : b.kind === 'check' ? 'checkbox' : 'shapes';
+      const kindSub = b.kind === 'image' ? 'Picture' : b.kind === 'ink' ? 'Freehand' : b.kind === 'check' ? (b.checked ? 'Ticked' : 'Not ticked') : (b.shape || 'shape');
       return `<div class="list-row" data-id="${esc(b.id)}" style="--b-accent:${esc(b.color || 'var(--accent)')}">
           <div class="lr-ico">${ic(kindIco)}</div>
           <div class="lr-main"><div class="lr-title">${kindLabel}</div>
@@ -1058,12 +1077,13 @@
     flushEdit();
     const isText = type === 'text';
     const isShape = type === 'shape';
+    const isCheck = type === 'check';
     const layout = type === 'list' ? 'list' : 'canvas';
     const b = {
       id: uid(),
       ws: state.ws,
       parentId: state.level,
-      title: (isText || isShape) ? '' : (layout === 'list' ? 'New list' : 'New block'),
+      title: (isText || isShape || isCheck) ? '' : (layout === 'list' ? 'New list' : 'New block'),
       description: '',
       notes: '',
       layout,
@@ -1075,10 +1095,11 @@
     };
     if (isText) { b.kind = 'text'; b.text = 'Text'; b.font = 'sans'; b.size = 22; b.bold = false; b.italic = false; b.align = 'left'; b.orient = 'h'; b.rot = 0; b.glow = false; b.glowColor = ''; }
     if (isShape) { b.kind = 'shape'; b.shape = 'rectangle'; b.w = 150; b.h = 100; b.points = null; b.fill = true; b.outline = false; b.outlineW = 3; b.outlineColor = PALETTE[0]; b.rot = 0; }
+    if (isCheck) { b.kind = 'check'; b.size = 32; b.checked = false; }
     if (state.levelLayout === 'canvas') {
       const pos = at || centerOfView();
-      const halfW = isText ? 20 : isShape ? b.w / 2 : BLOCK_W / 2;
-      const halfH = isText ? 12 : isShape ? b.h / 2 : 30;
+      const halfW = isText ? 20 : isShape ? b.w / 2 : isCheck ? b.size / 2 : BLOCK_W / 2;
+      const halfH = isText ? 12 : isShape ? b.h / 2 : isCheck ? b.size / 2 : 30;
       b.x = Math.round(pos.x - halfW);
       b.y = Math.round(pos.y - halfH);
     }
@@ -1093,8 +1114,9 @@
     }
     if (isText) openTextEditor(b.id);
     else if (isShape) openShapeEditor(b.id);
+    else if (isCheck) selectBlock(b.id);                     // ready to tick, no panel in the way
     else openEditor(b.id, true);
-    toast(isText ? 'Text added' : isShape ? 'Shape added' : (layout === 'list' ? 'List added' : 'Block added'));
+    toast(isText ? 'Text added' : isShape ? 'Shape added' : isCheck ? 'Checkbox added \u2014 tap it to tick' : (layout === 'list' ? 'List added' : 'Block added'));
   }
 
   async function persistBlock(b) {
@@ -1761,6 +1783,8 @@
       } else if (b.kind === 'text') {
         if (it.size) b.size = clamp(Math.round(it.size * ratio), 4, 4000);
         if (it.w) b.w = Math.max(20, Math.round(it.w * ratio));
+      } else if (b.kind === 'check') {
+        if (it.size) b.size = clamp(Math.round(it.size * ratio), 12, 600);
       } else if (b.kind === 'table') {
         if (it.fontSize) b.fontSize = clamp(Math.round(it.fontSize * ratio), 5, 400);
         if (it.w) b.w = Math.max(60, Math.round(it.w * ratio));
@@ -2230,7 +2254,7 @@
   const saveState = $('#save-state');
   let saveTimer = null;
   // superset covering both the block editor and the text editor
-  const EDIT_FIELDS = ['title', 'description', 'notes', 'tags', 'color', 'layout', 'text', 'font', 'size', 'bold', 'italic', 'align', 'orient', 'rot', 'glow', 'glowColor', 'shape', 'w', 'h', 'fill', 'outline', 'outlineW', 'outlineColor', 'src', 'round', 'width', 'nowrap', 'style', 'points', 'dash'];
+  const EDIT_FIELDS = ['title', 'description', 'notes', 'tags', 'color', 'layout', 'text', 'font', 'size', 'bold', 'italic', 'align', 'orient', 'rot', 'glow', 'glowColor', 'shape', 'w', 'h', 'fill', 'outline', 'outlineW', 'outlineColor', 'src', 'round', 'width', 'nowrap', 'style', 'points', 'dash', 'checked'];
 
   function snapshotFields(b) {
     const o = { id: b.id };
@@ -2267,6 +2291,7 @@
     if (b.kind === 'text') openTextEditor(b.id);
     else if (b.kind === 'shape') openShapeEditor(b.id);
     else if (b.kind === 'image') openImageEditor(b.id);
+    else if (b.kind === 'check') openCheckEditor(b.id);
     else if (b.kind === 'ink') openInkEditor(b.id);
     toast('Reset to original');
   }
@@ -2290,6 +2315,7 @@
     if (b && b.kind === 'text') openTextEditor(id);
     else if (b && b.kind === 'shape') openShapeEditor(id);
     else if (b && b.kind === 'image') openImageEditor(id);
+    else if (b && b.kind === 'check') openCheckEditor(id);
     else if (b && b.kind === 'ink') openInkEditor(id);
     else if (b && b.kind === 'table') openTableEditor(id);
     else openEditor(id);
@@ -2302,6 +2328,7 @@
     if (textBlock || !$('#text-drawer').hidden) closeTextEditor();
     if (shapeBlock || !$('#shape-drawer').hidden) closeShapeEditor();
     if (imageBlock || !$('#image-drawer').hidden) closeImageEditor();
+    if (checkBlock || !$('#check-drawer').hidden) closeCheckEditor();
     if (inkBlock || !$('#ink-drawer').hidden) closeInkEditor();
     if (drawerBlock || !$('#drawer').hidden) closeDrawer();
   }
@@ -2747,6 +2774,54 @@
         await createImageBlock(file);
       }
     });
+  }
+
+  /* ------------------------- checkbox editor ---------------------------- */
+  let checkBlock = null, checkSaveTimer = null;
+  function renderCkSwatches(active) {
+    const wrap = $('#ck-swatches'); if (!wrap) return; wrap.innerHTML = '';
+    PALETTE.concat(['#22c38f', '#8a94a6']).forEach(col => {
+      const sw = document.createElement('div');
+      sw.className = 'swatch' + ((active || PALETTE[0]) === col ? ' active' : '');
+      sw.style.background = col;
+      sw.addEventListener('click', () => { if (!checkBlock) return; checkBlock.color = col; renderCkSwatches(col); refreshItem(checkBlock.id); queueCheckSave(); });
+      wrap.appendChild(sw);
+    });
+  }
+  function queueCheckSave() {
+    if (!checkBlock) return;
+    $('#check-save').textContent = 'Saving\u2026';
+    clearTimeout(checkSaveTimer);
+    checkSaveTimer = setTimeout(async () => {
+      if (!checkBlock) return;
+      await persistBlock(checkBlock); refreshItem(checkBlock.id);
+      $('#check-save').textContent = 'Saved';
+      setTimeout(() => { if ($('#check-save').textContent === 'Saved') $('#check-save').textContent = ''; }, 1500);
+      markChanged();
+    }, 300);
+  }
+  function openCheckEditor(id) {
+    flushEdit(); closeOtherEditors();
+    const b = state.blocks.find(x => x.id === id); if (!b) return;
+    selectBlock(id);
+    checkBlock = b; editBaseline = snapshotFields(b);
+    $('#ck-checked').checked = !!b.checked;
+    renderCkSwatches(b.color);
+    $('#ck-size').value = b.size || 32; $('#ck-size-val').value = b.size || 32;
+    $('#check-drawer').hidden = false; $('#check-save').textContent = '';
+  }
+  function closeCheckEditor() {
+    if ($('#check-drawer').hidden && !checkBlock) return;
+    flushEdit();
+    $('#check-drawer').hidden = true; checkBlock = null;
+  }
+  function bindCheckEditor() {
+    wireParam('ck-size-val', 'ck-size', (v) => { if (!checkBlock) return; checkBlock.size = clamp(Math.round(v), 12, 600); refreshItem(checkBlock.id); queueCheckSave(); });
+    $('#ck-checked').addEventListener('change', (e) => { if (!checkBlock) return; checkBlock.checked = e.target.checked; refreshItem(checkBlock.id); queueCheckSave(); });
+    $('#check-close').addEventListener('click', closeCheckEditor);
+    $('#ck-done').addEventListener('click', closeCheckEditor);
+    $('#ck-reset').addEventListener('click', resetActiveEditor);
+    $('#ck-delete').addEventListener('click', () => { if (checkBlock) deleteBlock(checkBlock.id); });
   }
 
   /* ---------------------------- ink editor ----------------------------- *
@@ -3516,7 +3591,7 @@
   // Corners = points where the stroke turns sharply. Measured as the angle
   // between the directions a few samples either side, then thinned so one
   // corner is reported once.
-  function findCorners(rs, closed) {
+  function findCorners(rs, closed, minTurn) {
     const N = rs.length, span = Math.max(2, Math.round(N * 0.05));
     const turn = new Array(N).fill(0);
     for (let i = 0; i < N; i++) {
@@ -3529,7 +3604,7 @@
       if (d > Math.PI) d = Math.PI * 2 - d;
       turn[i] = d;
     }
-    const MIN_TURN = 0.62;                       // ~35 degrees counts as a corner
+    const MIN_TURN = minTurn || 0.62;            // ~35 degrees counts as a corner
     const picks = [];
     for (let i = 0; i < N; i++) {
       if (turn[i] < MIN_TURN) continue;
@@ -3583,21 +3658,119 @@
     return err / pts.length;
   }
 
-  // Returns { shape, points?, x, y, w, h } when the stroke is clearly a shape.
-  function recognizeShape(pts) {
-    if (pts.length < 6) return null;
+  /* ---- template matching ($1 unistroke, made rotation- and start-tolerant) --
+   * The stroke is resampled to 64 evenly spaced points, scaled into a square
+   * (so a rectangle reads as a square and an ellipse as a circle - the
+   * proportions are settled afterwards from the real box), centred, and
+   * compared point by point against generated templates. Every start point
+   * and both drawing directions are tried, and the best rotation is found by
+   * golden-section search, so how the shape was drawn does not matter.     */
+  const SR_N = 64, SR_SIZE = 250;
+  // Rotate to the indicative angle FIRST, then scale to the square, then
+  // centre - in that order. A box depends on the shape's rotation, so scaling
+  // before rotating made an upright square and a tilted one different sizes.
+  function srNormalize(P) {
+    let cx = 0, cy = 0;
+    for (const [x, y] of P) { cx += x; cy += y; }
+    cx /= P.length; cy /= P.length;
+    const a = Math.atan2(P[0][1] - cy, P[0][0] - cx);          // indicative angle
+    const cos = Math.cos(-a), sin = Math.sin(-a);
+    const R = P.map(([x, y]) => [(x - cx) * cos - (y - cy) * sin, (x - cx) * sin + (y - cy) * cos]);
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const [x, y] of R) { minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
+    const sx = SR_SIZE / Math.max(1e-6, maxX - minX), sy = SR_SIZE / Math.max(1e-6, maxY - minY);
+    let qx = 0, qy = 0;
+    const Q = R.map(([x, y]) => { const q = [x * sx, y * sy]; qx += q[0]; qy += q[1]; return q; });
+    qx /= Q.length; qy /= Q.length;
+    return Q.map(([x, y]) => [x - qx, y - qy]);
+  }
+  function srRotate(P, a) { const c = Math.cos(a), s2 = Math.sin(a); return P.map(([x, y]) => [x * c - y * s2, x * s2 + y * c]); }
+  function srDist(P, T) { let d = 0; for (let i = 0; i < P.length; i++) d += Math.hypot(P[i][0] - T[i][0], P[i][1] - T[i][1]); return d / P.length; }
+  function srBestDist(P, T) {
+    const PHI = 0.5 * (-1 + Math.sqrt(5));
+    let a = -Math.PI / 4, b = Math.PI / 4;
+    let x1 = PHI * a + (1 - PHI) * b, f1 = srDist(srRotate(P, x1), T);
+    let x2 = (1 - PHI) * a + PHI * b, f2 = srDist(srRotate(P, x2), T);
+    while (Math.abs(b - a) > 0.035) {
+      if (f1 < f2) { b = x2; x2 = x1; f2 = f1; x1 = PHI * a + (1 - PHI) * b; f1 = srDist(srRotate(P, x1), T); }
+      else { a = x1; x1 = x2; f1 = f2; x2 = (1 - PHI) * a + PHI * b; f2 = srDist(srRotate(P, x2), T); }
+    }
+    return Math.min(f1, f2);
+  }
+  // templates: a circle and the regular polygons, drawn from the top, clockwise
+  const SR_TEMPLATES = (() => {
+    const ring = (k, inner) => {
+      const pts = [], count = inner ? k * 2 : k;
+      for (let i = 0; i <= count; i++) {
+        const idx = i % count, r = inner && idx % 2 ? inner : 1;
+        const a = -Math.PI / 2 + idx / count * Math.PI * 2;
+        pts.push([Math.cos(a) * r, Math.sin(a) * r]);
+      }
+      return pts;
+    };
+    const circle = []; for (let i = 0; i <= 96; i++) { const a = -Math.PI / 2 + i / 96 * Math.PI * 2; circle.push([Math.cos(a), Math.sin(a)]); }
+    return [['circle', circle], ['triangle', ring(3)], ['square', ring(4)], ['pentagon', ring(5)], ['hexagon', ring(6)], ['star', ring(5, 0.42)]]
+      .map(([name, pts]) => ({ name, pts: srNormalize(resamplePts(pts, SR_N)) }));
+  })();
+  function srMatch(pts) {
+    const rs = resamplePts(pts, SR_N).map(p => [p[0], p[1]]);
+    const scored = SR_TEMPLATES.map(t => {
+      let dmin = Infinity;
+      for (const dir of [rs, rs.slice().reverse()]) {
+        for (let k = 0; k < SR_N; k += 4) {
+          const P = srNormalize(dir.slice(k).concat(dir.slice(0, k)));
+          dmin = Math.min(dmin, srBestDist(P, t.pts));
+        }
+      }
+      return { name: t.name, score: 1 - dmin / (0.5 * Math.SQRT2 * SR_SIZE) };
+    }).sort((a, b) => b.score - a.score);
+    return { best: scored[0], second: scored[1], all: scored };
+  }
+  const SR_ACCEPT = 0.80;                 // below this the stroke is not a shape at all
+
+  // A closed stroke, tidied: an overshoot past the start is cut off, and
+  // whatever gap is left is bridged, so the matcher sees the intended outline.
+  function tidyClosed(pts) {
+    const n = pts.length, s0 = pts[0];
+    let bestI = n - 1, bestD = Math.hypot(pts[n - 1][0] - s0[0], pts[n - 1][1] - s0[1]);
+    for (let i = Math.floor(n * 0.75); i < n - 1; i++) {
+      const d = Math.hypot(pts[i][0] - s0[0], pts[i][1] - s0[1]);
+      if (d < bestD) { bestD = d; bestI = i; }
+    }
+    const cut = pts.slice(0, bestI + 1);
+    cut.push([s0[0], s0[1]]);
+    return cut;
+  }
+  // How much the outline turns, against the one full turn a plain outline
+  // needs: ~1 for circles and polygons, more for anything bumpy or looping.
+  function wiggle(rs) {
+    const N = rs.length, span = Math.max(3, Math.round(N * 0.08));
+    let tot = 0;
+    for (let i = 0; i < N; i++) {
+      const a = rs[(i - span + N) % N], b = rs[i], c = rs[(i + span) % N];
+      let d = Math.atan2(c[1] - b[1], c[0] - b[0]) - Math.atan2(b[1] - a[1], b[0] - a[0]);
+      while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
+      tot += Math.abs(d);
+    }
+    return tot / (2 * Math.PI * span);
+  }
+
+  // Returns { shape, points?, x, y, w, h, rot? } when the stroke is clearly a shape.
+  function recognizeShape(raw) {
+    if (raw.length < 6) return null;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, pathLen = 0;
-    for (let i = 0; i < pts.length; i++) {
-      minX = Math.min(minX, pts[i][0]); maxX = Math.max(maxX, pts[i][0]);
-      minY = Math.min(minY, pts[i][1]); maxY = Math.max(maxY, pts[i][1]);
-      if (i) pathLen += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    for (let i = 0; i < raw.length; i++) {
+      minX = Math.min(minX, raw[i][0]); maxX = Math.max(maxX, raw[i][0]);
+      minY = Math.min(minY, raw[i][1]); maxY = Math.max(maxY, raw[i][1]);
+      if (i) pathLen += Math.hypot(raw[i][0] - raw[i - 1][0], raw[i][1] - raw[i - 1][1]);
     }
     const w = maxX - minX, h = maxY - minY;
     const size = Math.max(w, h);
     if (size < 28 || pathLen < 40) return null;               // too small to judge
-    const a = pts[0], b = pts[pts.length - 1];
+    const a = raw[0], b = raw[raw.length - 1];
     const gap = Math.hypot(b[0] - a[0], b[1] - a[1]);
-    const closed = gap < Math.max(size * 0.3, pathLen * 0.13);
+    // closed when the ends come back together - up to about half a side apart
+    const closed = gap < Math.max(size * 0.5, pathLen * 0.16);
     const box = { x: minX, y: minY, w: Math.max(w, 6), h: Math.max(h, 6) };
 
     if (!closed) {
@@ -3606,48 +3779,77 @@
       if (gap > 0 && pathLen / gap < 1.16) {
         const dx = b[0] - a[0], dy = b[1] - a[1];
         let dev = 0;
-        for (const [px, py] of pts) {
-          dev = Math.max(dev, Math.abs((px - a[0]) * dy - (py - a[1]) * dx) / gap);
-        }
+        for (const [px, py] of raw) dev = Math.max(dev, Math.abs((px - a[0]) * dy - (py - a[1]) * dx) / gap);
         if (dev < gap * 0.09) return { shape: 'line', ...box, from: a, to: b };
       }
       return null;                                            // open scribble: leave as ink
     }
+    // round more than once, or wander: a spiral or a scribble, never a shape
+    if (pathLen > 2 * (w + h) * 1.45) return null;
 
-    // ---- closed: corners decide what it is ----
+    const pts = tidyClosed(raw);
     const rs = resamplePts(pts, 96);
-    const corners = findCorners(rs, true);
-    const c = corners.length;
-    const near = (v, t, tol) => Math.abs(v - t) < tol;
+    const m = srMatch(pts);
+    if (m.best.score < SR_ACCEPT) return null;
+    let kind = m.best.name;
+    // bumpy outlines (a cloud, a scribbled loop) turn far more than a plain
+    // shape does; a star is the one shape that legitimately turns a lot
+    const wg = wiggle(rs);
+    if (kind !== 'star' && wg > 1.3) return null;
+    if (kind === 'star' && wg > 2.5) return null;
 
-    if (c === 3) return { shape: 'triangle', ...box };
+    const corners = findCorners(rs, true);           // ~35 degrees
+    const sharp = findCorners(rs, true, 0.85);       // ~49 degrees: real corners, not wobble
+    const c = corners.length, sc = sharp.length;
+    // a close call between neighbours: let the corners settle it
+    if (m.best.score - m.second.score < 0.04) {
+      const byCorners = c === 3 ? 'triangle' : c === 4 ? 'square' : c === 5 ? 'pentagon' : c === 6 ? 'hexagon'
+                      : c <= 2 ? 'circle' : (c >= 9 && c <= 11 ? 'star' : null);
+      if (byCorners && (byCorners === m.best.name || byCorners === m.second.name)) kind = byCorners;
+    }
+    // circle, pentagon and hexagon are near-twins under wobble: how round the
+    // outline really is, and how many sharp corners it has, decide
+    if (kind === 'circle' || kind === 'pentagon' || kind === 'hexagon') {
+      const err = ellipseError(rs, minX, minY, w, h);
+      if (err < 0.075 && sc <= 2) kind = 'circle';
+      else if (sc === 5) kind = 'pentagon';
+      else if (sc === 6) kind = 'hexagon';
+      else if (sc <= 2 && err < 0.11) kind = 'circle';
+    }
+    if (kind === 'circle') return { shape: 'circle', ...box };
+    if (kind === 'triangle') return { shape: 'triangle', ...box };
+    if (kind === 'pentagon') return { shape: 'polygon', points: POLY_SHAPES.pentagon, ...box };
+    if (kind === 'hexagon') return { shape: 'polygon', points: POLY_SHAPES.hexagon, ...box };
+    if (kind === 'star') return { shape: 'polygon', points: POLY_SHAPES.star, ...box };
+
+    // four-sided: standing on a corner (diamond), or a rectangle - at whatever
+    // angle it was drawn, with its real side lengths
+    const near = (v, t, tol) => Math.abs(v - t) < tol;
     if (c === 4) {
-      // diamond when the corners sit at the middles of the box's sides
       const mids = corners.filter(([px, py]) =>
         (near(px, minX + w / 2, w * 0.22) && (near(py, minY, h * 0.25) || near(py, maxY, h * 0.25))) ||
         (near(py, minY + h / 2, h * 0.22) && (near(px, minX, w * 0.25) || near(px, maxX, w * 0.25))));
       if (mids.length === 4) return { shape: 'polygon', points: POLY_SHAPES.diamond, ...box };
-      const square = Math.min(w, h) / Math.max(w, h) > 0.82;
-      return { shape: square ? 'square' : 'rectangle', ...box };
+      const side = (k) => Math.hypot(corners[(k + 1) % 4][0] - corners[k][0], corners[(k + 1) % 4][1] - corners[k][1]);
+      let wid = (side(0) + side(2)) / 2, hei = (side(1) + side(3)) / 2;
+      let ang = Math.atan2(corners[1][1] - corners[0][1], corners[1][0] - corners[0][0]) * 180 / Math.PI;
+      ang = ((ang % 180) + 180) % 180; if (ang > 90) ang -= 180;
+      if (ang > 45) { ang -= 90; [wid, hei] = [hei, wid]; } else if (ang < -45) { ang += 90; [wid, hei] = [hei, wid]; }
+      if (Math.abs(ang) < 5) ang = 0;                          // near enough upright
+      const cx = corners.reduce((t, q) => t + q[0], 0) / 4, cy = corners.reduce((t, q) => t + q[1], 0) / 4;
+      const square = Math.min(wid, hei) / Math.max(wid, hei) > 0.82;
+      return { shape: square ? 'square' : 'rectangle', x: cx - wid / 2, y: cy - hei / 2, w: wid, h: hei, rot: ang };
     }
-    if (c === 5) return { shape: 'polygon', points: POLY_SHAPES.pentagon, ...box };
-    if (c === 6) return { shape: 'polygon', points: POLY_SHAPES.hexagon, ...box };
-    if (c >= 9 && c <= 11) {
-      // star: corners alternate far from / close to the middle
-      const cx = minX + w / 2, cy = minY + h / 2;
-      const rad = corners.map(([px, py]) => Math.hypot((px - cx) / (w / 2 || 1), (py - cy) / (h / 2 || 1)));
-      const mean = rad.reduce((x, y) => x + y, 0) / rad.length;
-      const outer = rad.filter(r => r > mean), inner = rad.filter(r => r <= mean);
-      if (outer.length >= 4 && inner.length >= 4) {
-        const om = outer.reduce((x, y) => x + y, 0) / outer.length;
-        const im = inner.reduce((x, y) => x + y, 0) / inner.length;
-        if (im / om < 0.72) return { shape: 'polygon', points: POLY_SHAPES.star, ...box };
-      }
-    }
-    // no clear corners: a circle if it really is round
-    if (c <= 2 && ellipseError(rs, minX, minY, w, h) < 0.16) return { shape: 'circle', ...box };
-    return null;                                              // ambiguous: keep the ink
+    // corners unclear: how much of the outline hugs the box tells a square
+    // (almost all of it) from a diamond (only its four tips)
+    let hug = 0;
+    for (const [px, py] of rs) { if (Math.min(px - minX, maxX - px, py - minY, maxY - py) < size * 0.08) hug++; }
+    if (hug / rs.length < 0.42 && Math.min(w, h) / Math.max(w, h) > 0.8) return { shape: 'polygon', points: POLY_SHAPES.diamond, ...box };
+    const square = Math.min(w, h) / Math.max(w, h) > 0.82;
+    return { shape: square ? 'square' : 'rectangle', ...box };
   }
+  // exposed for the test bench only
+  window.__ngShape = { recognizeShape, srMatch, wiggle, tidyClosed, resamplePts };
 
   const shapeSnapName = (hit) => {
     if (hit.shape !== 'polygon') return hit.shape;
@@ -3674,6 +3876,7 @@
       b.x += Math.round((b.w - side) / 2); b.y += Math.round((b.h - side) / 2);
       b.w = b.h = side;
     }
+    if (hit.rot) b.rot = Math.round(hit.rot);                  // drawn at a tilt: keep it
     if (hit.shape === 'line') {                                // keep the drawn angle
       const dx = hit.to[0] - hit.from[0], dy = hit.to[1] - hit.from[1];
       const len = Math.hypot(dx, dy);
@@ -3969,7 +4172,7 @@
           startWrapW: b.w || null, startWrapH: b.h || null, startFont: b.fontSize || 13, startColW: (b.colW || []).slice(), startRowH: (b.rowH || []).slice(),
           startBX: b.x, startBY: b.y,
           cx: rect.left + rect.width / 2, cy: rect.top + rect.height / 2,
-          isText: b.kind === 'text', isImage: b.kind === 'image', isTable: b.kind === 'table', before: { ...b },
+          isText: b.kind === 'text', isImage: b.kind === 'image', isTable: b.kind === 'table', isCheck: b.kind === 'check', before: { ...b },
         };
         gizmo.startAngle = Math.atan2(e.clientY - gizmo.cy, e.clientX - gizmo.cx);
         return;
@@ -4126,6 +4329,10 @@
           // scale the wrap width by the same ratio so proportions stay constant
           if (gizmo.startWrapW) b.w = Math.max(40, Math.round(gizmo.startWrapW * (b.size / (gizmo.startSize || 1))));
           if (textBlock && textBlock.id === b.id) { $('#t-size').value = b.size; $('#t-size-val').value = b.size; }
+        } else if (gizmo.isCheck) {
+          const d = ((e.clientX - gizmo.startX) + (e.clientY - gizmo.startY)) / 2 / s;
+          b.size = clamp(Math.round((gizmo.startSize || 32) + d), 12, 600);
+          if (checkBlock && checkBlock.id === b.id) { $('#ck-size').value = b.size; $('#ck-size-val').value = b.size; }
         } else if (gizmo.isImage) {
           const ratio = gizmo.startH / (gizmo.startW || 1);
           b.w = clamp(Math.round(gizmo.startW + (e.clientX - gizmo.startX) / s), 20, 200000);
@@ -4288,6 +4495,8 @@
     if (pointers.size < 2) pinch = null;
 
     if (dragging) {
+      justDragged = dragging.moved;                    // before any await: the click is next
+      setTimeout(() => { justDragged = false; }, 0);
       clearGuides();
       state.els[dragging.primary]?.classList.remove('dragging');
       if (dragging.shift && !dragging.moved) {
@@ -4400,30 +4609,17 @@
     } else {
       clearSelection();
       items = [
-        { icon: 'plus', label: 'Add block', fn: () => createBlock('block', at) },
-        { icon: 'list', label: 'Add list', fn: () => createBlock('list', at) },
-        { icon: 'type', label: 'Add text', fn: () => createBlock('text', at) },
-        { icon: 'shapes', label: 'Add shape', fn: () => createBlock('shape', at) },
-        { icon: 'image', label: 'Add image', fn: () => pickImage(at) },
-        { icon: 'upload', label: 'Import text file', fn: () => pickTextFile(at) },
-        { sep: true },
         { icon: 'download', label: 'Paste', fn: () => pasteClipboard(), disabled: !clipboard },
         { icon: 'frame', label: 'Fit to view', fn: () => fitToView() },
         { sep: true },
-        { icon: 'upload', label: 'Export workspace', fn: () => exportWorkspaceFlow(state.ws) },
-        { icon: 'copy', label: 'Copy look', fn: () => copyStyle() },
-        { icon: 'brush', label: 'Paste look', fn: () => pasteStyle() },
-        { icon: 'group', label: 'Group selection', fn: () => groupSelection() },
-        { icon: 'ungroup', label: 'Ungroup selection', fn: () => ungroupSelection() },
-        { icon: 'list', label: 'Outline', fn: () => toggleOutline() },
-        { icon: 'frame', label: 'Tidy this level', fn: () => tidyLevel() },
-        { icon: 'external', label: 'Present', fn: () => startPresenting() },
-        { icon: 'image', label: 'Export this level as PNG', fn: () => exportLevelImage('png') },
-        { icon: 'shapes', label: 'Export this level as SVG', fn: () => exportLevelImage('svg') },
-        { icon: 'filetext', label: 'Export as PDF', fn: () => exportWorkspacePdfFlow(state.ws) },
-        { icon: 'type', label: 'Convert handwriting to text', fn: () => convertInkToText() },
+        { icon: 'map', label: 'Mini-map: ' + (minimapOn ? 'on' : 'off'), fn: () => toggleMinimap() },
+        { icon: 'lock', label: 'Lock to horizontal: ' + (axisLock === 'x' ? 'on' : 'off'), fn: () => setAxisLock(axisLock === 'x' ? null : 'x') },
+        { icon: 'lock', label: 'Lock to vertical: ' + (axisLock === 'y' ? 'on' : 'off'), fn: () => setAxisLock(axisLock === 'y' ? null : 'y') },
+        { icon: 'frame', label: 'Snap to grid: ' + (snapOn ? 'on' : 'off'), fn: () => { snapOn = !snapOn; try { localStorage.setItem('ng-snap', snapOn ? '1' : '0'); } catch (_) {} updateSnapLabel(); toast(snapOn ? 'Snap on' : 'Snap off'); } },
+        { icon: 'upload', label: 'Autosave: ' + ($('#autosave') && $('#autosave').checked ? 'on' : 'off'), fn: () => { const cb = $('#autosave'); if (cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change', { bubbles: true })); toast(cb.checked ? 'Autosave on' : 'Autosave off'); } updateMenuStates(); } },
+        { sep: true },
+        { icon: 'sliders', label: 'Workspace properties', fn: () => openProperties(state.ws) },
         { icon: 'info', label: 'About', fn: () => openAbout('about') },
-        { icon: 'help', label: 'Help', fn: () => openAbout('help') },
       ];
     }
     const menu = $('#ctxmenu');
@@ -4594,7 +4790,7 @@
     if (state.readOnly) {                       // look, step in, change nothing
       const el = e.target.closest('.block');
       const b = el && state.blocks.find(x => x.id === el.dataset.id);
-      if (b && !['text', 'shape', 'image', 'ink', 'table'].includes(b.kind)) navigateTo(b.id);
+      if (b && !['text', 'shape', 'image', 'ink', 'table', 'check'].includes(b.kind)) navigateTo(b.id);
       return;
     }
     // while drawing, a stylus double-tap is just two dots of ink - never a new
@@ -4607,6 +4803,7 @@
       if (b && b.kind === 'text') openTextEditor(b.id);
       else if (b && b.kind === 'shape') openShapeEditor(b.id);
       else if (b && b.kind === 'image') openImageEditor(b.id);
+      else if (b && b.kind === 'check') openCheckEditor(b.id);
       else if (b && b.kind === 'ink') openInkEditor(b.id);
       else if (b && b.kind === 'table') {
         const cell = e.target.closest('.data-table [data-r]');
@@ -4629,12 +4826,28 @@
     if (link && link.dataset.href) { e.preventDefault(); e.stopPropagation(); window.open(link.dataset.href, '_blank', 'noopener'); return; }
     const tag = e.target.closest('.tag-chip');
     if (tag) { e.stopPropagation(); setTagFilter(tag.dataset.tag); return; }
+    const face = e.target.closest('.block-check .check-face');
+    if (face && !justDragged && !state.readOnly && !state.penMode && !state.penEraser && !state.selectTool) {
+      const blk = face.closest('.block');
+      toggleCheck(blk.dataset.id);
+      return;
+    }
     const btn = e.target.closest('[data-blk]');
     if (!btn) return;
     const blk = btn.closest('.block');
     if (!blk) return;
     if (btn.dataset.blk === 'edit') openAnyEditor(blk.dataset.id);
     else navigateTo(blk.dataset.id);
+  }
+  let justDragged = false;                    // the click after a drag is not a tap
+  async function toggleCheck(id) {
+    const b = state.blocks.find(x => x.id === id); if (!b || b.kind !== 'check' || b.locked) return;
+    const before = { ...b };
+    b.checked = !b.checked; b.updatedAt = Date.now();
+    refreshBlockCard(id);
+    await DB.saveBlock(b);
+    recordChange({ blocks: [before], edges: [], files: [] }, { blocks: [{ ...b }], edges: [], files: [] });
+    if (checkBlock && checkBlock.id === id) $('#ck-checked').checked = b.checked;
   }
 
   /* ---------------------------- tag filter ----------------------------- */
@@ -4673,7 +4886,7 @@
       updateShapeSnapBtn(); loadPenBarPos();
       requestAnimationFrame(sizeInkSurface);            // surface ready before the first mark
     } else {
-      closePenMenu(); hideDockHint();
+      closePenMenu();
       if (state.penEraser) setEraser(false, true);       // Done means done
     }
     syncToolButtons();
@@ -5048,13 +5261,6 @@
     bar.dataset.anchor = anchor;
     if (save) { try { localStorage.setItem('ng-pen-bar-pos', JSON.stringify({ anchor, vert: penBarVert })); } catch (_) {} }
   }
-  function showDockHint(a) {
-    const h = $('#pen-dock-hint'); if (!h) return;
-    const p = anchorPoints()[a]; h.hidden = false;
-    h.style.left = Math.round(clamp(p[0], 10, window.innerWidth - 10)) + 'px';
-    h.style.top = Math.round(p[1]) + 'px';
-  }
-  function hideDockHint() { const h = $('#pen-dock-hint'); if (h) h.hidden = true; }
   function bindPenBarDrag() {
     const bar = $('#pen-bar'); if (!bar) return;
     let drag = null;
@@ -5072,13 +5278,12 @@
       }
       bar.style.left = Math.round(e.clientX - drag.dx) + 'px';
       bar.style.top = Math.round(e.clientY - drag.dy) + 'px';
-      showDockHint(nearestAnchor(e.clientX, e.clientY));
     });
     const end = (e) => {
       if (!drag || e.pointerId !== drag.id) return;
       const was = drag; drag = null;
       if (!was.live) return;
-      bar.classList.remove('dragging'); hideDockHint();
+      bar.classList.remove('dragging');
       try { bar.releasePointerCapture(e.pointerId); } catch (_) {}
       const a = nearestAnchor(e.clientX, e.clientY);
       placePenBar(a, anchorVert(a, penBarVert));
@@ -5368,6 +5573,10 @@
       if (fill) { ctx.fillStyle = fill; ctx.fill(); }
       if (stroke) { ctx.strokeStyle = stroke; ctx.stroke(); }
       if (!fill && !stroke) { ctx.strokeStyle = col.accent; ctx.stroke(); }
+    } else if (b.kind === 'check') {
+      ctx.strokeStyle = b.color || col.accent; ctx.lineWidth = 1;
+      ctx.strokeRect(x, y, w, h);
+      if (b.checked) { ctx.fillStyle = b.color || col.accent; ctx.fillRect(x, y, w, h); }
     } else if (b.kind === 'image') {
       const im = mmImage(b.src);
       if (im) { try { ctx.drawImage(im, x, y, w, h); } catch (_) { ctx.fillStyle = col.lineC; ctx.fillRect(x, y, w, h); } }
@@ -5474,7 +5683,7 @@
 
     const hits = [];
     for (const b of blocks) {
-      if (b.kind === 'shape' || b.kind === 'image' || b.kind === 'ink') continue;   // purely visual — nothing to match
+      if (b.kind === 'shape' || b.kind === 'image' || b.kind === 'ink' || b.kind === 'check') continue;   // purely visual — nothing to match
       const inTitle = (b.title || '').toLowerCase().includes(ql);
       const inDesc  = (b.description || '').toLowerCase().includes(ql);
       const inNotes = (b.notes || '').toLowerCase().includes(ql);
@@ -5709,6 +5918,7 @@
     if (b.kind === 'text') return (b.text || '').trim().split('\n')[0].slice(0, 40) || 'Text';
     if (b.kind === 'table') return 'Table';
     if (b.kind === 'image') return 'Image';
+    if (b.kind === 'check') return b.checked ? 'Checkbox (ticked)' : 'Checkbox';
     if (b.kind === 'ink') return 'Drawing';
     if (b.kind === 'shape') return b.shape ? b.shape[0].toUpperCase() + b.shape.slice(1) : 'Shape';
     return 'Untitled';
@@ -5822,6 +6032,11 @@
         maxWidth: w, maxLines: Math.max(1, Math.floor(h / Math.max(6, (b.size || 16) * s * 1.28))),
         align: b.align === 'center' ? 'center' : b.align === 'right' ? 'right' : 'left',
       });
+      return;
+    }
+    if (b.kind === 'check') {
+      page.rect(x, y, w, h, { fill: b.checked ? (b.color || TH.text) : null, stroke: b.color || TH.text, lineWidth: Math.max(.6, 2 * s), radius: w * 0.22 });
+      if (b.checked) page.path([[x + w * 0.27, y + h * 0.52], [x + w * 0.42, y + h * 0.67], [x + w * 0.73, y + h * 0.33]], { stroke: '#ffffff', width: Math.max(.8, w * 0.13) });
       return;
     }
     if (b.kind === 'image') {
@@ -5981,6 +6196,12 @@
         out.push(`<image href="${esc(b.src)}" x="${x}" y="${y}" width="${w}" height="${h}" preserveAspectRatio="none"/>`);
         return;
       }
+      if (b.kind === 'check') {
+        const c = esc(b.color || accent);
+        out.push(`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${(w * 0.22).toFixed(1)}" fill="${b.checked ? c : 'none'}" stroke="${c}" stroke-width="2"/>`);
+        if (b.checked) out.push(`<path d="M${(x + w * 0.27).toFixed(1)} ${(y + h * 0.52).toFixed(1)}L${(x + w * 0.42).toFixed(1)} ${(y + h * 0.67).toFixed(1)}L${(x + w * 0.73).toFixed(1)} ${(y + h * 0.33).toFixed(1)}" fill="none" stroke="#fff" stroke-width="${(w * 0.13).toFixed(1)}" stroke-linecap="round" stroke-linejoin="round"/>`);
+        return;
+      }
       if (b.kind === 'text') {
         const size = b.size || 16;
         const lines = String(b.text || '').split('\n');
@@ -6092,7 +6313,7 @@
       tree.appendChild(row);
       // every block that can hold things - not the loose text, shapes, images,
       // strokes and tables, which would swamp the tree
-      kids.forEach(k => { if (!['text', 'shape', 'image', 'ink', 'table'].includes(k.kind)) add(k.id, blockLabel(k), k.color, depth + 1); });
+      kids.forEach(k => { if (!['text', 'shape', 'image', 'ink', 'table', 'check'].includes(k.kind)) add(k.id, blockLabel(k), k.color, depth + 1); });
     };
     add(DB.ROOT, state.wsName || 'Workspace', PALETTE[0], 0);
   }
@@ -7432,7 +7653,7 @@
     bindToolbar(); bindStage(); bindDrawerFields(); bindFileInputs();
     bindSearch(); bindMenu(); bindConfirm(); bindKeys();
     bindAddMenu(); bindListView(); bindHome(); bindPrompt(); bindBrandMenu(); bindAutosave(); bindProps(); bindAbout(); bindContextMenu();
-    bindTextEditor(); bindShapeEditor(); bindImageEditor(); bindInkEditor(); bindTableEditor(); bindImagePaste(); bindCmdk(); bindMinimap(); bindSelFrame();
+    bindTextEditor(); bindShapeEditor(); bindImageEditor(); bindCheckEditor(); bindInkEditor(); bindTableEditor(); bindImagePaste(); bindCmdk(); bindMinimap(); bindSelFrame();
     document.addEventListener('click', (e) => { const rb = e.target.closest && e.target.closest('.param-reset'); if (rb) { e.preventDefault(); resetParamField(rb); } });
     try {
       await DB.open();
