@@ -337,14 +337,24 @@ input, textarea { font-size: 15px; }
   outline-offset: 3px; }
 .block.block-text.selected .tnode-resize, .block.block-text.selected .tnode-rotate,
 .block.block-text.selected .tnode-edge { opacity: 1 !important; }
-/* handles stay usable while either Select tool is up (draw mode hides them
-   for every other tool, so put them back by display as well as opacity) */
-#stage.lassoing .block.selected .tnode-resize, #stage.lassoing .block.selected .tnode-rotate,
-#stage.lassoing .block.selected .tnode-edge,
-#stage.penning.selecting .block.selected .tnode-resize,
-#stage.penning.selecting .block.selected .tnode-rotate,
-#stage.penning.selecting .block.selected .tnode-edge {
-  display: block !important; opacity: 1 !important; pointer-events: auto; }
+/* While a Select tool is up the frame's grip is the one scale control, so the
+   per-block handles get out of the way (two grips a few pixels apart is worse
+   than one). They come back as soon as the tool is put down. */
+#stage.lassoing .block .tnode-resize, #stage.lassoing .block .tnode-rotate,
+#stage.lassoing .block .tnode-edge { display: none !important; }
+
+/* Selection frame: one dashed outline round everything picked up, with a grip
+   at its corner that scales the whole lot. This is how handwriting gets
+   resized — a word is many strokes, so per-stroke handles would be useless. */
+#sel-frame { position: absolute; z-index: 7; pointer-events: none;
+  border: 1px dashed color-mix(in srgb, var(--accent) 75%, transparent); border-radius: 4px; }
+#sel-frame .sel-grip { position: absolute; right: -7px; bottom: -7px; width: 14px; height: 14px;
+  background: var(--accent); border: 2px solid var(--panel); border-radius: 4px;
+  box-shadow: var(--shadow); pointer-events: auto; cursor: nwse-resize; touch-action: none; }
+@media (hover: none) and (pointer: coarse) {
+  #sel-frame .sel-grip { width: 22px; height: 22px; right: -11px; bottom: -11px; }
+}
+#app.reading #sel-frame { display: none; }
 
 .sel-modes { display: inline-flex; gap: 2px; }
 .sel-bar button.active { background: var(--grad); color: #fff; }

@@ -433,6 +433,7 @@
       : `${26 * scale}px ${26 * scale}px`;
     stage.style.backgroundPosition = `${tx}px ${ty}px`;
     positionSelBar();
+    positionSelFrame();
     const pct = Math.round(scale * 100) + '%';
     $('#btn-zoom-reset').textContent = pct;
     scheduleMinimap();
@@ -1636,10 +1637,154 @@
     bar.style.top = Math.round(top) + 'px';
   }
 
+  /* ----------------------- selection frame + scaling -------------------- *
+   * A dashed box round everything picked up by a Select tool, with a corner
+   * grip. Dragging the grip scales the whole selection about the box's
+   * top-left: handwriting keeps its shape, typed text grows its font, boxes
+   * and images grow their width and height.                                */
+  let selScale = null;
+
+  // Measured off the real elements, not b.w/b.h: a stroke is painted a few
+  // pixels wider than its point bounds (nib padding) and a rotated node is
+  // wider still, so block coordinates would draw the frame inside the ink.
+  function selectionWorldBox() {
+    const sr = stage.getBoundingClientRect();
+    const sc = state.view.scale || 1;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    state.selectedIds.forEach(id => {
+      const b = state.blocks.find(x => x.id === id); if (!b) return;
+      const el = state.els[id];
+      let x, y, w, h;
+      if (el) {
+        const r = el.getBoundingClientRect();
+        x = (r.left - sr.left - state.view.tx) / sc;
+        y = (r.top - sr.top - state.view.ty) / sc;
+        w = r.width / sc; h = r.height / sc;
+      } else {
+        const box = blockBox(b); x = box.x; y = box.y; w = box.w; h = box.h;
+      }
+      minX = Math.min(minX, x); maxX = Math.max(maxX, x + w);
+      minY = Math.min(minY, y); maxY = Math.max(maxY, y + h);
+    });
+    if (!isFinite(minX)) return null;
+    return { x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) };
+  }
+
+  function positionSelFrame() {
+    const f = $('#sel-frame'); if (!f) return;
+    const selecting = state.selectTool || state.penSelect;
+    if (!selecting || state.readOnly || !state.selectedIds.size || state.levelLayout !== 'canvas') {
+      f.hidden = true; return;
+    }
+    const box = selScale ? selScale.box : selectionWorldBox();
+    if (!box) { f.hidden = true; return; }
+    const sc = state.view.scale || 1;
+    const pad = 6;                                  // breathing room, in screen px
+    f.hidden = false;
+    f.style.left = Math.round(box.x * sc + state.view.tx - pad) + 'px';
+    f.style.top = Math.round(box.y * sc + state.view.ty - pad) + 'px';
+    f.style.width = Math.round(box.w * sc + pad * 2) + 'px';
+    f.style.height = Math.round(box.h * sc + pad * 2) + 'px';
+  }
+
+  // Snapshot every selected block so each move scales from the start state -
+  // rescaling the live values would drift.
+  function beginSelScale(e) {
+    const box = selectionWorldBox(); if (!box) return;
+    const items = [...state.selectedIds]
+      .map(id => state.blocks.find(x => x.id === id))
+      .filter(b => b && !b.locked);
+    if (!items.length) return;
+    selScale = {
+      pointerId: e.pointerId, box, box0: box, startX: e.clientX, startY: e.clientY,
+      before: { blocks: items.map(b => ({ ...b })), edges: [], files: [] },
+      items: items.map(b => ({
+        b,
+        x: b.x || 0, y: b.y || 0, w: b.w || 0, h: b.h || 0,
+        size: b.size || 0, fontSize: b.fontSize || 0, width: b.width || 0,
+        colW: (b.colW || []).slice(), rowH: (b.rowH || []).slice(),
+        pts: b.kind === 'ink' && Array.isArray(b.pts) ? b.pts.map(q => q.slice()) : null,
+      })),
+    };
+    try { e.target.setPointerCapture(e.pointerId); } catch (_) {}
+  }
+
+  function moveSelScale(e) {
+    if (!selScale) return;
+    const sc = state.view.scale || 1;
+    const box = selScale.box0;
+    // the grip sits at the box's bottom-right corner, so the drag along the
+    // diagonal is simply the box's new size
+    const dx = (e.clientX - selScale.startX) / sc, dy = (e.clientY - selScale.startY) / sc;
+    const ratio = clamp(((box.w + dx) / box.w + (box.h + dy) / box.h) / 2, 0.02, 200);
+    selScale.ratio = ratio;
+    for (const it of selScale.items) {
+      const b = it.b;
+      b.x = Math.round(box.x + (it.x - box.x) * ratio);
+      b.y = Math.round(box.y + (it.y - box.y) * ratio);
+      if (b.kind === 'ink') {
+        // handwriting scales by its actual points, so bounds, the eraser and
+        // every export keep working with no special case
+        if (it.pts) b.pts = it.pts.map(q => [q[0] * ratio, q[1] * ratio, q[2], q[3]]);
+        if (it.w) b.w = Math.max(1, it.w * ratio);
+        if (it.h) b.h = Math.max(1, it.h * ratio);
+        if (it.width) b.width = Math.max(0.4, it.width * ratio);
+      } else if (b.kind === 'text') {
+        if (it.size) b.size = clamp(Math.round(it.size * ratio), 4, 4000);
+        if (it.w) b.w = Math.max(20, Math.round(it.w * ratio));
+      } else if (b.kind === 'table') {
+        if (it.fontSize) b.fontSize = clamp(Math.round(it.fontSize * ratio), 5, 400);
+        if (it.w) b.w = Math.max(60, Math.round(it.w * ratio));
+        if (it.h) b.h = Math.max(40, Math.round(it.h * ratio));
+        if (it.colW.length) b.colW = it.colW.map(w => w ? Math.max(20, Math.round(w * ratio)) : w);
+        if (it.rowH.length) b.rowH = it.rowH.map(h => h ? Math.max(16, Math.round(h * ratio)) : h);
+      } else {
+        if (it.w) b.w = clamp(Math.round(it.w * ratio), 8, 200000);
+        if (it.h) b.h = clamp(Math.round(it.h * ratio), 8, 200000);
+      }
+      const el = state.els[b.id];
+      if (el) { el.style.left = b.x + 'px'; el.style.top = b.y + 'px'; }
+      refreshBlockCard(b.id);
+    }
+    selScale.box = { x: box.x, y: box.y, w: box.w * ratio, h: box.h * ratio };
+    positionSelFrame();
+    drawEdges();
+  }
+
+  async function endSelScale() {
+    if (!selScale) return;
+    const { items, before, ratio } = selScale;
+    selScale = null;
+    if (!ratio || Math.abs(ratio - 1) < 0.001) { positionSelFrame(); return; }
+    for (const it of items) { it.b.updatedAt = Date.now(); await DB.saveBlock(it.b); }
+    recordChange(before, { blocks: items.map(it => ({ ...it.b })), edges: [], files: [] });
+    positionSelFrame(); positionSelBar(); drawEdges();
+    toast(ratio > 1 ? 'Scaled up' : 'Scaled down');
+  }
+
+  function bindSelFrame() {
+    const grip = $('#sel-frame .sel-grip'); if (!grip) return;
+    grip.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || state.readOnly) return;
+      e.preventDefault(); e.stopPropagation();
+      beginSelScale(e);
+    });
+    window.addEventListener('pointermove', (e) => {
+      if (selScale && e.pointerId === selScale.pointerId) { e.preventDefault(); moveSelScale(e); }
+    }, { passive: false });
+    window.addEventListener('pointerup', (e) => {
+      if (selScale && e.pointerId === selScale.pointerId) endSelScale();
+    });
+    window.addEventListener('pointercancel', (e) => {
+      if (selScale && e.pointerId === selScale.pointerId) endSelScale();
+    });
+  }
+
   function applySelectionClasses() {
     $$('.block, .list-row').forEach(n => n.classList.toggle('selected', state.selectedIds.has(n.dataset.id)));
     syncSelectionButtons();
     positionSelBar();
+    positionSelFrame();
   }
   /* -------------------------- alignment guides -------------------------- *
    * While dragging, if an edge or centre comes within a few pixels of the
@@ -3577,7 +3722,7 @@
     // Floating UI sits inside the stage; a tap there is for that panel, not the
     // canvas. Without this the canvas cleared the selection first and every
     // button on the selection bar appeared to do nothing.
-    if (e.target.closest && e.target.closest('#sel-bar, #outline, #present-bar, #pen-bar, .banner-stack, #minimap')) return;
+    if (e.target.closest && e.target.closest('#sel-bar, #sel-frame, #outline, #present-bar, #pen-bar, .banner-stack, #minimap')) return;
     // read mode: panning and navigating still work, editing does not
     if (state.readOnly) {
       const onBlock = e.target.closest && e.target.closest('.block');
@@ -3617,7 +3762,7 @@
 
     // lasso select: circle anything freehand to pick it up. Starting on top of
     // something already selected drags the whole selection instead.
-    if (lassoActive() && !lasso) {
+    if (lassoActive() && !lasso && !(state.penMode && !inkAccepts(e))) {
       const hitBlock = e.target.closest('.block');
       const onPicked = hitBlock && state.selectedIds.has(hitBlock.dataset.id);
       // In the toolbar's Select tool a block still behaves normally (tap to
@@ -3636,8 +3781,9 @@
       // fall through: pointer landed on the selection, so the normal drag runs
     }
 
-    // pen eraser: wipe any ink stroke touched (drag continues in onPointerMove)
-    if (state.penMode && state.penEraser && !inking) {
+    // pen eraser: wipe any ink stroke touched (drag continues in onPointerMove).
+    // Stylus (or mouse) only, like the pen - a finger pans the page instead.
+    if (state.penMode && state.penEraser && !inking && inkAccepts(e)) {
       erasing = true;
       eraseInkAt(e.clientX, e.clientY);
       return;
@@ -4419,6 +4565,7 @@
     if (state.selectTool) toast('Select: circle anything to pick it up');
     syncSelectionButtons();
     positionSelBar();
+    positionSelFrame();
   }
 
   // lasso select sub-tool (mutually exclusive with the eraser)
@@ -6853,7 +7000,7 @@
     bindToolbar(); bindStage(); bindDrawerFields(); bindFileInputs();
     bindSearch(); bindMenu(); bindConfirm(); bindKeys();
     bindAddMenu(); bindListView(); bindHome(); bindPrompt(); bindBrandMenu(); bindAutosave(); bindProps(); bindAbout(); bindContextMenu();
-    bindTextEditor(); bindShapeEditor(); bindImageEditor(); bindInkEditor(); bindTableEditor(); bindImagePaste(); bindCmdk(); bindMinimap();
+    bindTextEditor(); bindShapeEditor(); bindImageEditor(); bindInkEditor(); bindTableEditor(); bindImagePaste(); bindCmdk(); bindMinimap(); bindSelFrame();
     document.addEventListener('click', (e) => { const rb = e.target.closest && e.target.closest('.param-reset'); if (rb) { e.preventDefault(); resetParamField(rb); } });
     try {
       await DB.open();
