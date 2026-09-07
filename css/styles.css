@@ -312,8 +312,10 @@ input, textarea { font-size: 15px; }
 
 /* the live ink surface: on top of the page, never in the way of input */
 .ink-live {
-  position: absolute; inset: 0; z-index: 6; pointer-events: none;
-  display: none; contain: strict;
+  /* Explicit size: `contain: strict` collapsed this to 0x0, so the stroke was
+     painted into the buffer but never shown. Paint containment alone is safe. */
+  position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+  z-index: 6; pointer-events: none; display: none; contain: paint;
 }
 #stage.penning .ink-live { display: block; }
 

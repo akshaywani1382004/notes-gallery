@@ -3349,7 +3349,8 @@
   }
   function sizeInkSurface() {
     const ctx = inkSurface(); if (!ctx) return;
-    const r = stage.getBoundingClientRect();
+    let r = inkCv.getBoundingClientRect();
+    if (!r.width || !r.height) r = stage.getBoundingClientRect();   // not laid out yet
     inkDpr = Math.min(window.devicePixelRatio || 1, 2.5);   // 2.5 is plenty, and cheaper
     const w = Math.max(1, Math.round(r.width * inkDpr)), h = Math.max(1, Math.round(r.height * inkDpr));
     if (inkCv.width !== w || inkCv.height !== h) { inkCv.width = w; inkCv.height = h; }
@@ -4252,6 +4253,7 @@
       if (keepLasso) setPenSelect(true);          // the lasso follows you in
       renderPenColors(); renderPenStyles(); syncPenSize(); updatePenTouchBtn();
       updateShapeSnapBtn(); loadPenBarPos();
+      requestAnimationFrame(sizeInkSurface);     // surface ready before the first mark
     } else {
       const keepLasso = state.penSelect;
       setEraser(false); setPenSelect(false);
@@ -5632,6 +5634,31 @@
     el.className = 'save-status-pill ' + cls;
     el.title = title;
   }
+  // Explain a failed file write and offer the one thing that fixes it:
+  // pointing the workspace at a file we can actually write.
+  let saveFailShown = false;
+  function reportSaveFailure(err, manual, where) {
+    const why = (err && (err.message || String(err))) || 'unknown error';
+    console.error('workspace save failed:', err);
+    state.dirty = true; setSaveState();
+    if (!manual && saveFailShown) return;          // don't nag on every autosave
+    saveFailShown = true;
+    const canRelink = SHELL || FS_OK;
+    confirmDialog(
+      'Could not save to the linked file',
+      `Your notes are safe inside the app — only the copy on disk failed.` +
+      (where ? `<br><br><span class="muted">${esc(where)}</span>` : '') +
+      `<br><br><span class="muted">${esc(why)}</span>` +
+      (canRelink ? '<br><br>Choose a new location for this file?' : ''),
+      canRelink ? 'Choose location…' : 'OK',
+      async () => {
+        if (!canRelink) return;
+        if (SHELL) await relinkWorkspace(state.ws);
+        else await linkWorkspaceFile(state.ws);
+        saveFailShown = false;
+      });
+  }
+
   async function saveCurrentWorkspace(manual) {
     if (state.ws == null) return;
     const rec = await DB.getHandleRec(state.ws);
@@ -5639,11 +5666,9 @@
       try {
         const payload = await workspacePayload(state.ws);
         await NGShell.writeFile(rec.path, JSON.stringify(payload));
-        state.dirty = false; setSaveState();
+        state.dirty = false; setSaveState(); saveFailShown = false;
       } catch (e) {
-        console.error(e);
-        state.dirty = true; setSaveState();
-        if (manual) toast('Could not write the file.');
+        reportSaveFailure(e, manual, rec.path);
       }
       return;
     }
@@ -5654,17 +5679,23 @@
       return;
     }
     const ok = await ensurePermission(rec.handle, 'readwrite');
-    if (!ok) { state.dirty = true; setSaveState(); if (manual) toast('Permission to write the file was denied.'); return; }
+    if (!ok) {
+      // Browsers only re-grant file permission during a click, so an autosave
+      // can never do it: flag it and ask next time the user saves by hand.
+      state.dirty = true; setSaveState();
+      if (manual) {
+        reportSaveFailure(new Error('The browser needs permission to write this file again.'),
+                          true, (rec.handle && rec.handle.name) || '');
+      }
+      return;
+    }
     try {
       const payload = await workspacePayload(state.ws);
       await writeToHandle(rec.handle, payload);
       state.dirty = false;
-      setSaveState();
+      setSaveState(); saveFailShown = false;
     } catch (e) {
-      console.error(e);
-      state.dirty = true;
-      setSaveState();
-      if (manual) toast('Could not write the file.');
+      reportSaveFailure(e, manual, (rec.handle && rec.handle.name) || '');
     }
   }
   // called after any edit; schedules a save (autosave) or flags dirty (manual)
@@ -6225,13 +6256,37 @@
   }
 
   // App shell: bind (or re-bind) a workspace to a real file via the native dialog.
+  // Web: point a workspace at a (new) file the browser can write to.
+  async function linkWorkspaceFile(id) {
+    if (!FS_OK || SHELL) return null;
+    const w = await DB.getWorkspace(id);
+    let handle = null;
+    try {
+      handle = await window.showSaveFilePicker({
+        suggestedName: safeFileName((w && w.name) || 'workspace') + '.notesgallery.json',
+        types: [{ description: 'Notes Gallery workspace', accept: { 'application/json': ['.json'] } }],
+      });
+    } catch (e) {
+      if (!(e && e.name === 'AbortError')) console.warn('file picker failed:', e);
+      return null;
+    }
+    await DB.saveHandleRec(id, handle);
+    try {
+      await writeToHandle(handle, await workspacePayload(id));
+      toast('Workspace linked to file');
+      state.dirty = false;
+    } catch (e) { reportSaveFailure(e, true, handle.name || ''); }
+    if (state.ws === id) setSaveState();
+    return handle;
+  }
+
   async function relinkWorkspace(id) {
     const w = await DB.getWorkspace(id);
     const path = await NGShell.saveDialog(safeFileName((w && w.name) || 'workspace') + '.notesgallery.json');
     if (!path) return null;
     await DB.savePathRec(id, path);
     try { await NGShell.writeFile(path, JSON.stringify(await workspacePayload(id))); toast('Workspace linked to file'); }
-    catch (e) { console.error(e); toast('Could not write the file.'); }
+    catch (e) { reportSaveFailure(e, true, path); }
     if (state.ws === id) setSaveState();
     return path;
   }
