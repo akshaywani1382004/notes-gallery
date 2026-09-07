@@ -293,7 +293,6 @@ input, textarea { font-size: 15px; }
 #stage.list-mode { cursor: default; }
 #stage.list-mode::before { opacity: .5; }
 #app.list-mode #btn-link,
-#app.list-mode #btn-fit,
 #app.list-mode #btn-zoom-in,
 #app.list-mode #btn-zoom-out,
 #app.list-mode #btn-zoom-reset,
@@ -333,6 +332,20 @@ input, textarea { font-size: 15px; }
 #stage[data-paper="blank"] { background-image: none; }
 
 /* ---- smart alignment guides ---- */
+/* a selected text block shows its box, so it is clear what will scale */
+.block.block-text.selected { outline: 1px dashed color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: 3px; }
+.block.block-text.selected .tnode-resize, .block.block-text.selected .tnode-rotate,
+.block.block-text.selected .tnode-edge { opacity: 1 !important; }
+/* handles stay usable while either Select tool is up (draw mode hides them
+   for every other tool, so put them back by display as well as opacity) */
+#stage.lassoing .block.selected .tnode-resize, #stage.lassoing .block.selected .tnode-rotate,
+#stage.lassoing .block.selected .tnode-edge,
+#stage.penning.selecting .block.selected .tnode-resize,
+#stage.penning.selecting .block.selected .tnode-rotate,
+#stage.penning.selecting .block.selected .tnode-edge {
+  display: block !important; opacity: 1 !important; pointer-events: auto; }
+
 .sel-modes { display: inline-flex; gap: 2px; }
 .sel-bar button.active { background: var(--grad); color: #fff; }
 .sel-bar button:disabled { opacity: .35; pointer-events: none; }
@@ -825,6 +838,8 @@ input, textarea { font-size: 15px; }
   -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4);
   border: 1px solid var(--line); border-radius: 14px;
   box-shadow: var(--shadow-lg); padding: 7px; min-width: 260px;
+  max-height: calc(100vh - var(--bar-h) - 20px); overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 .menu button { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; border: none; background: none; color: var(--text); padding: 10px 12px; border-radius: 10px; cursor: pointer; font-size: 14px; transition: background .12s; }
 .menu button .ic { width: 16px; height: 16px; color: var(--text-dim); }
@@ -986,9 +1001,7 @@ input, textarea { font-size: 15px; }
 #app.home-mode .add-wrap,
 #app.home-mode #btn-link,
 #app.home-mode #btn-pen,
-#app.home-mode #btn-map,
 #app.home-mode #save-status,
-#app.home-mode #btn-fit,
 #app.home-mode #btn-zoom-in,
 #app.home-mode #btn-zoom-out,
 #app.home-mode #btn-zoom-reset,
@@ -1043,8 +1056,13 @@ input, textarea { font-size: 15px; }
   .drawer { width: min(400px, 100%); }
   .bottombar { padding: 14px 20px; }
 }
+/* below this the row can no longer hold every tool — let it wrap instead of
+   pushing the last buttons (theme, More) off the right edge */
+@media (max-width: 960px) {
+  #topbar { flex-wrap: wrap; row-gap: 7px; height: auto; min-height: var(--bar-h); padding: 6px 12px; }
+}
 @media (max-width: 860px) {
-  #btn-fit, .divider { display: none; }
+  .divider { display: none; }
   .search { width: 100%; }
   .minimap { width: 150px; height: 104px; }
 }
@@ -1058,7 +1076,10 @@ input, textarea { font-size: 15px; }
   .bar-left { order: 1; }
   .bar-center { order: 2; flex: 1 1 0; min-width: 0; gap: 6px; }
   .search { min-width: 0; }
-  .bar-right { order: 3; flex-basis: 100%; margin-left: 0; flex-wrap: nowrap; justify-content: space-between; gap: 4px; }
+  /* the tool row wraps rather than running off the right edge — on a narrow
+     phone the last buttons (theme, More) used to sit past the screen */
+  .bar-right { order: 3; flex-basis: 100%; margin-left: 0; flex-wrap: wrap;
+    justify-content: center; gap: 4px; row-gap: 6px; }
   #app.home-mode .bar-right { justify-content: flex-end; flex-basis: auto; order: 2; margin-left: auto; }
   #app.home-mode .bar-center { order: 3; flex-basis: 100%; }
   /* #topbar prefix outweighs the (later) touch min-width bump so the row fits */

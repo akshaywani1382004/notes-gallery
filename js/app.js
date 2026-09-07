@@ -147,6 +147,7 @@
     hexagon: '<path d="M8.2 4h7.6l3.8 8-3.8 8H8.2L4.4 12Z"/>',
     lasso: '<path d="M12 5.2c4.4 0 8 2.1 8 4.8s-3.6 4.8-8 4.8c-1.4 0-2.8-.2-4-.6"/><path d="M8 14.2C5.5 13.4 4 11.9 4 10c0-1.7 1.3-3.2 3.4-4.1"/><path d="M7.7 14.4c-.6 1.6-.4 3.1.5 3.9"/><circle cx="9" cy="19.6" r="1.5"/>',
     grip: '<circle cx="9" cy="6" r="1.3"/><circle cx="15" cy="6" r="1.3"/><circle cx="9" cy="12" r="1.3"/><circle cx="15" cy="12" r="1.3"/><circle cx="9" cy="18" r="1.3"/><circle cx="15" cy="18" r="1.3"/>',
+    expand: '<path d="M9 4H4v5"/><path d="M15 4h5v5"/><path d="M9 20H4v-5"/><path d="M15 20h5v-5"/>',
     map: '<path d="M9 4 4 6v14l5-2 6 2 5-2V4l-5 2-6-2Z"/><line x1="9" y1="4" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="20"/>',
     undo: '<path d="M4 8h9.5a5.5 5.5 0 0 1 0 11H8"/><polyline points="7.5 4 4 8 7.5 12"/>',
     front: '<rect x="8" y="8" width="12" height="12" rx="2" fill="currentColor" stroke="none"/><path d="M4 14V5.5A1.5 1.5 0 0 1 5.5 4H14"/>',
@@ -444,7 +445,8 @@
   });
   function zoomAt(sx, sy, factor) {
     const before = screenToWorld(sx, sy);
-    state.view.scale = clamp(state.view.scale * factor, 0.25, 2.5);
+    // No practical zoom limit: from a whole wall of notes down to one letter.
+    state.view.scale = clamp(state.view.scale * factor, 0.02, 64);
     // keep the world point under the cursor fixed
     state.view.tx = sx - before.x * state.view.scale;
     state.view.ty = sy - before.y * state.view.scale;
@@ -1761,6 +1763,47 @@
     await createBlock('block', { x: box.x + box.w + 40, y: box.y });
   }
 
+  /* --------------------- full screen + axis locks ----------------------- *
+   * Full screen hides the browser chrome; in the app the system bars go too,
+   * and a swipe from the edge brings them back when needed.                */
+  function toggleMinimap() {
+    minimapOn = !minimapOn;
+    try { localStorage.setItem('ng-minimap', minimapOn ? '1' : '0'); } catch (_) {}
+    drawMinimap(); updateMenuStates();
+    toast(minimapOn ? 'Mini-map on' : 'Mini-map off');
+  }
+
+  function toggleFullscreen() {
+    const el = document.documentElement;
+    if (!document.fullscreenElement) {
+      (el.requestFullscreen ? el.requestFullscreen({ navigationUI: 'hide' }) : Promise.reject())
+        .catch(() => toast('Full screen is not available here.'));
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  }
+
+  // Pan on one axis only, for reading long notes without drifting sideways.
+  let axisLock = null;                       // null | 'x' | 'y'
+  try { axisLock = localStorage.getItem('ng-axis-lock') || null; } catch (_) {}
+  function setAxisLock(v) {
+    axisLock = v || null;
+    try { if (axisLock) localStorage.setItem('ng-axis-lock', axisLock); else localStorage.removeItem('ng-axis-lock'); } catch (_) {}
+    updateMenuStates();
+    toast(axisLock === 'x' ? 'Panning locked to horizontal'
+        : axisLock === 'y' ? 'Panning locked to vertical' : 'Panning unlocked');
+  }
+
+  // Keep the ... menu's little state labels honest.
+  function updateMenuStates() {
+    const set = (id, on) => { const e = $(id); if (e) e.textContent = on ? 'on' : 'off'; };
+    set('#map-state', minimapOn);
+    set('#autosave-state', !!($('#autosave') && $('#autosave').checked));
+    set('#lockx-state', axisLock === 'x');
+    set('#locky-state', axisLock === 'y');
+    set('#fs-state', !!document.fullscreenElement);
+  }
+
   /* ------------------------------ read mode ----------------------------- *
    * Everything visible, nothing changeable: no dragging, editing, deleting
    * or drawing — just look around and step into blocks.                    */
@@ -2916,7 +2959,7 @@
     $('#tbl-multi').addEventListener('click', () => { tmultiMode = !tmultiMode; $('#tbl-multi').classList.toggle('on', tmultiMode); toast(tmultiMode ? 'Tap cells to select multiple' : 'Multi-select off'); });
     $$('#tbl-font button').forEach(btn => btn.addEventListener('click', () => applyFmt('font', btn.dataset.font)));
     $('#tbl-header').addEventListener('change', (e) => { if (!tableBlock) return; tableBlock.header = e.target.checked; tableRepaint(); });
-    wireParam('tbl-fs-val', 'tbl-fs', (v) => { if (!tableBlock) return; tableBlock.fontSize = clamp(Math.round(v), 7, 60); tableRepaint(); });
+    wireParam('tbl-fs-val', 'tbl-fs', (v) => { if (!tableBlock) return; tableBlock.fontSize = clamp(Math.round(v), 5, 400); tableRepaint(); });
     $('#tbl-add-row').addEventListener('click', () => {
       if (!tableBlock) return; const cols = (tableBlock.rows || []).reduce((m, r) => Math.max(m, r.length), 1);
       tableBlock.rows.push(new Array(cols).fill('')); tableRepaint();
@@ -3808,10 +3851,11 @@
       const s = state.view.scale || 1;
       if (gizmo.mode === 'box') {
         const dxw = (e.clientX - gizmo.startX) / s, dyw = (e.clientY - gizmo.startY) / s;
-        if (gizmo.edge === 'e') b.w = clamp(Math.round(gizmo.startW + dxw), 40, 2000);
-        else if (gizmo.edge === 'w') { const nw = clamp(Math.round(gizmo.startW - dxw), 40, 2000); b.x = gizmo.startBX + (gizmo.startW - nw); b.w = nw; }
-        else if (gizmo.edge === 's') b.h = clamp(Math.round(gizmo.startH + dyw), 24, 2000);
-        else if (gizmo.edge === 'n') { const nh = clamp(Math.round(gizmo.startH - dyw), 24, 2000); b.y = gizmo.startBY + (gizmo.startH - nh); b.h = nh; }
+        // Only a floor, so a box can never collapse to nothing; no ceiling.
+        if (gizmo.edge === 'e') b.w = clamp(Math.round(gizmo.startW + dxw), 8, 200000);
+        else if (gizmo.edge === 'w') { const nw = clamp(Math.round(gizmo.startW - dxw), 8, 200000); b.x = gizmo.startBX + (gizmo.startW - nw); b.w = nw; }
+        else if (gizmo.edge === 's') b.h = clamp(Math.round(gizmo.startH + dyw), 8, 200000);
+        else if (gizmo.edge === 'n') { const nh = clamp(Math.round(gizmo.startH - dyw), 8, 200000); b.y = gizmo.startBY + (gizmo.startH - nh); b.h = nh; }
         const el = state.els[b.id]; if (el) { el.style.left = b.x + 'px'; el.style.top = b.y + 'px'; }
         refreshBlockCard(b.id);
         drawEdges();
@@ -3820,19 +3864,19 @@
       if (gizmo.mode === 'resize') {
         if (gizmo.isText) {
           const d = ((e.clientX - gizmo.startX) + (e.clientY - gizmo.startY)) / 2 / s;
-          b.size = clamp(Math.round(gizmo.startSize + d * 0.7), 8, 240);
+          b.size = clamp(Math.round(gizmo.startSize + d * 0.7), 4, 4000);
           // scale the wrap width by the same ratio so proportions stay constant
           if (gizmo.startWrapW) b.w = Math.max(40, Math.round(gizmo.startWrapW * (b.size / (gizmo.startSize || 1))));
           if (textBlock && textBlock.id === b.id) { $('#t-size').value = b.size; $('#t-size-val').value = b.size; }
         } else if (gizmo.isImage) {
           const ratio = gizmo.startH / (gizmo.startW || 1);
-          b.w = clamp(Math.round(gizmo.startW + (e.clientX - gizmo.startX) / s), 20, 2000);
+          b.w = clamp(Math.round(gizmo.startW + (e.clientX - gizmo.startX) / s), 20, 200000);
           b.h = Math.max(20, Math.round(b.w * ratio));   // keep aspect ratio
           if (imageBlock && imageBlock.id === b.id) { const W = $('#i-w'); if (W) { W.value = b.w; $('#i-w-val').value = b.w; } }
         } else if (gizmo.isTable) {
           // corner = scale the whole table: font size + (proportionally) any wrap w/h
           const d = ((e.clientX - gizmo.startX) + (e.clientY - gizmo.startY)) / 2 / s;
-          const nf = clamp(Math.round(gizmo.startFont + d * 0.12), 7, 60);
+          const nf = clamp(Math.round(gizmo.startFont + d * 0.12), 5, 400);
           const ratio = nf / (gizmo.startFont || 13);
           b.fontSize = nf;
           if (gizmo.startWrapW) b.w = Math.max(60, Math.round(gizmo.startWrapW * ratio));
@@ -3841,8 +3885,8 @@
           if (gizmo.startRowH && gizmo.startRowH.length) b.rowH = gizmo.startRowH.map(h => h ? Math.max(16, Math.round(h * ratio)) : h);
           if (tableBlock && tableBlock.id === b.id) { $('#tbl-fs').value = b.fontSize; $('#tbl-fs-val').value = b.fontSize; }
         } else {
-          b.w = clamp(Math.round(gizmo.startW + (e.clientX - gizmo.startX) / s), 20, 1400);
-          b.h = clamp(Math.round(gizmo.startH + (e.clientY - gizmo.startY) / s), 20, 1400);
+          b.w = clamp(Math.round(gizmo.startW + (e.clientX - gizmo.startX) / s), 12, 200000);
+          b.h = clamp(Math.round(gizmo.startH + (e.clientY - gizmo.startY) / s), 12, 200000);
           if (shapeBlock && shapeBlock.id === b.id) { const W = $('#s-w'), H = $('#s-h'); if (W) { W.value = b.w; $('#s-w-val').value = b.w; } if (H) { H.value = b.h; $('#s-h-val').value = b.h; } }
         }
       } else {
@@ -3892,8 +3936,8 @@
     }
 
     if (panning) {
-      state.view.tx = panning.tx + (e.clientX - panning.startX);
-      state.view.ty = panning.ty + (e.clientY - panning.startY);
+      if (axisLock !== 'y') state.view.tx = panning.tx + (e.clientX - panning.startX);
+      if (axisLock !== 'x') state.view.ty = panning.ty + (e.clientY - panning.startY);
       applyView();
     }
   }
@@ -4699,7 +4743,7 @@
     }
     const pad = 70;
     const w = maxX - minX + pad * 2, h = maxY - minY + pad * 2;
-    const scale = clamp(Math.min(r.width / w, r.height / h), 0.25, 1.4);
+    const scale = clamp(Math.min(r.width / w, r.height / h), 0.02, 8);
     state.view.scale = scale;
     state.view.tx = (r.width - (maxX + minX) * scale) / 2;
     state.view.ty = (r.height - (maxY + minY) * scale) / 2;
@@ -4863,12 +4907,7 @@
     cv.addEventListener('pointerdown', (e) => { dragging = true; cv.setPointerCapture(e.pointerId); minimapPan(e.clientX, e.clientY); });
     cv.addEventListener('pointermove', (e) => { if (dragging) minimapPan(e.clientX, e.clientY); });
     cv.addEventListener('pointerup', (e) => { dragging = false; try { cv.releasePointerCapture(e.pointerId); } catch (_) {} });
-    $('#btn-map').addEventListener('click', () => {
-      minimapOn = !minimapOn; try { localStorage.setItem('ng-minimap', minimapOn ? '1' : '0'); } catch (_) {}
-      $('#btn-map').classList.toggle('active', minimapOn);
-      drawMinimap();
-    });
-    $('#btn-map').classList.toggle('active', minimapOn);
+    drawMinimap();
   }
 
   /* ---------------------------- search --------------------------------- */
@@ -6263,13 +6302,20 @@
   /* ---------------------------- menu ----------------------------------- */
   function bindMenu() {
     const menu = $('#menu');
-    $('#btn-menu').addEventListener('click', (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; });
+    document.addEventListener('fullscreenchange', updateMenuStates);
+    $('#btn-menu').addEventListener('click', (e) => {
+      updateMenuStates(); e.stopPropagation(); menu.hidden = !menu.hidden; });
     menu.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-act]'); if (!btn) return;
       const act = btn.dataset.act;
       menu.hidden = true;
       if (act === 'export') exportWorkspaceFlow(state.ws);
       if (act === 'export-pdf') exportWorkspacePdfFlow(state.ws);
+      if (act === 'fullscreen') toggleFullscreen();
+      if (act === 'minimap') toggleMinimap();
+      if (act === 'autosave') { const cb = $('#autosave'); if (cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change', { bubbles: true })); } updateMenuStates(); }
+      if (act === 'lock-x') { setAxisLock(axisLock === 'x' ? null : 'x'); }
+      if (act === 'lock-y') { setAxisLock(axisLock === 'y' ? null : 'y'); }
       if (act === 'export-png') exportLevelImage('png');
       if (act === 'export-svg') exportLevelImage('svg');
       if (act === 'outline') toggleOutline();
@@ -6488,8 +6534,9 @@
         if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); gotoStop(presenting.at - 1); return; }
         if (e.key === 'Escape') { stopPresenting(); return; }
       }
+      if (e.key === 'F11') { e.preventDefault(); toggleFullscreen(); return; }
       if (e.key === 'o' || e.key === 'O') { toggleOutline(); return; }
-      if (e.key === 'm' || e.key === 'M') { minimapOn = !minimapOn; try { localStorage.setItem('ng-minimap', minimapOn ? '1' : '0'); } catch (_) {} $('#btn-map').classList.toggle('active', minimapOn); drawMinimap(); }
+      if (e.key === 'm' || e.key === 'M') toggleMinimap();
       if (e.key === 'f' || e.key === 'F') fitToView();
       if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedIds.size) deleteSelected();
       if (e.key === '/') { e.preventDefault(); $('#search').focus(); }
@@ -6688,8 +6735,7 @@
     }
     window.addEventListener('resize', () => { if (inking) { sizeInkSurface(); redrawInkStroke(); } });
     bindDrawTapGestures();
-    $('#btn-fit').addEventListener('click', fitToView);
-    $('#btn-help').addEventListener('click', () => openAbout('help'));
+
     $('#btn-theme').addEventListener('click', () =>
       setTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'));
     const r = () => stage.getBoundingClientRect();
