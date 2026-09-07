@@ -247,20 +247,32 @@
     el.style.mixBlendMode = s.blend || '';
   }
 
-  // Per-point half widths for a tapering stroke: pressure if the stylus gave
-  // us any, speed otherwise, and thinner towards both ends.
+  /* How wide is the nib at this moment? One rule, shared by the live preview
+     and the saved stroke, so the two can never disagree. Speed is real pen
+     velocity in screen pixels per millisecond, which is zoom-independent. */
+  const NIB_FAST = 2.6;                        // px/ms counts as a fast flick
+  function nibFactor(vel, pressure, taper) {
+    const f = 1 - taper * Math.min(1, (vel || 0) / NIB_FAST);   // faster -> thinner
+    const pf = pressure ? (0.45 + 1.1 * pressure) : 1;          // harder -> thicker
+    return Math.max(0.15, f * pf);
+  }
+
+  // Per-point half widths. Uses the factor recorded while writing when the
+  // stroke has one (every stroke drawn in-app does); older strokes and
+  // imports fall back to estimating it from the geometry.
   function taperWidths(P, half, taper) {
     const n = P.length, w = new Array(n);
     for (let i = 0; i < n; i++) {
-      const a = P[Math.max(0, i - 2)], b = P[Math.min(n - 1, i + 2)];
-      const span = Math.hypot(b[0] - a[0], b[1] - a[1]) / Math.max(1, Math.min(4, i + 1));
-      const f = 1 - taper * Math.min(1, span / 26);            // faster -> thinner
-      const press = P[i][2];
-      const pf = press ? (0.45 + 1.1 * press) : 1;
-      const ends = Math.min(1, Math.min(i, n - 1 - i) / 2.5);  // taper both ends
-      w[i] = half * f * pf * (0.4 + 0.6 * ends);
+      let k = P[i][3];
+      if (!k) {
+        const a = P[Math.max(0, i - 1)], b = P[Math.min(n - 1, i + 1)];
+        const span = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        k = nibFactor(span / 12, P[i][2], taper);
+      }
+      const ends = Math.min(1, Math.min(i, n - 1 - i) / 2);     // soften both tips
+      w[i] = half * k * (0.55 + 0.45 * ends);
     }
-    for (let k = 0; k < 3; k++)                                 // smooth the widths
+    for (let k2 = 0; k2 < 2; k2++)
       for (let i = 1; i < n - 1; i++) w[i] = (w[i - 1] + w[i] * 2 + w[i + 1]) / 4;
     return w;
   }
@@ -693,7 +705,7 @@
     const pad = (b.width || 3) + 2;
     const w = (b.w || 1) + pad * 2, h = (b.h || 1) + pad * 2;
     el.style.width = w + 'px'; el.style.height = h + 'px';
-    const pts = (b.pts || []).map(p => [p[0] + pad, p[1] + pad, p[2] || 0]);
+    const pts = (b.pts || []).map(p => [p[0] + pad, p[1] + pad, p[2] || 0, p[3] || 0]);
     const style = PEN_STYLES[b.style] ? b.style : 'pen';
     const width = b.width || 3;
     el.innerHTML =
@@ -3420,19 +3432,14 @@
     inking.taper = st.taper || 0;
   }
 
-  // Width for the piece being drawn right now — the same speed/pressure rule
-  // the finished stroke uses, so the preview does not change weight on lift.
+  // Width for the piece being drawn right now — straight from the factor
+  // stored on the point, which is what the saved stroke will use too.
   function liveWidth(i) {
     const base = Math.max(0.4, inking.width * state.view.scale);
     if (!inking.taper) return base;
-    const pts = inking.pts;
-    const a = pts[Math.max(0, i - 2)], b = pts[i];
-    const span = Math.hypot(b[0] - a[0], b[1] - a[1]);
-    const f = 1 - inking.taper * Math.min(1, span / 26);
-    const press = pts[i][2];
-    const pf = press ? (0.45 + 1.1 * press) : 1;
-    const ends = Math.min(1, i / 2.5);
-    return Math.max(0.4, base * f * pf * (0.4 + 0.6 * ends));
+    const k = inking.pts[i][3] || 1;
+    const ends = Math.min(1, i / 2);
+    return Math.max(0.4, base * k * (0.55 + 0.45 * ends));
   }
   // Draw only the newest piece of the curve — constant cost per sample.
   function drawInkSegment() {
@@ -3489,12 +3496,21 @@
     const r = inking.rect;
     const list = (e.getCoalescedEvents && e.getCoalescedEvents().length) ? e.getCoalescedEvents() : [e];
     const minStep = 0.7 / (state.view.scale || 1);
+    const taper = inking.taper || 0;
     for (const ev of list) {
       const p = screenToWorld(ev.clientX - r.left, ev.clientY - r.top);
       const last = inking.pts[inking.pts.length - 1];
       if (last && Math.hypot(p.x - last[0], p.y - last[1]) < minStep) continue;
-      inking.pts.push([Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10,
-                       inking.pressure ? (ev.pressure || e.pressure || 0.5) : 0]);
+      // pen velocity in screen px/ms, smoothed so the width does not flicker
+      const t = ev.timeStamp || e.timeStamp || performance.now();
+      const dt = Math.max(1, t - (inking.lastT || t - 8));
+      const dist = last ? Math.hypot(p.x - last[0], p.y - last[1]) * (state.view.scale || 1) : 0;
+      const v = dist / dt;
+      inking.vel = inking.vel == null ? v : inking.vel * 0.7 + v * 0.3;
+      inking.lastT = t;
+      const press = inking.pressure ? (ev.pressure || e.pressure || 0.5) : 0;
+      inking.pts.push([Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, press,
+                       taper ? Math.round(nibFactor(inking.vel, press, taper) * 1000) / 1000 : 0]);
       drawInkSegment();                  // straight to the glass
     }
   }
@@ -3612,10 +3628,13 @@
       // the styles that taper. Fingers and mice report nothing useful, so
       // they keep the speed-based width.
       const pen = e.pointerType === 'pen';
-      inking = { pts: [[p.x, p.y, pen ? (e.pressure || 0.5) : 0]], pointerId: e.pointerId,
-                 lastX: e.clientX, lastY: e.clientY,
+      const st0 = PEN_STYLES[penStyle] || PEN_STYLES.pen;
+      const press0 = pen ? (e.pressure || 0.5) : 0;
+      inking = { pts: [[p.x, p.y, press0, st0.taper ? nibFactor(0, press0, st0.taper) : 0]],
+                 pointerId: e.pointerId, lastX: e.clientX, lastY: e.clientY,
+                 lastT: e.timeStamp || performance.now(), vel: 0,
                  style: penStyle, color: penColor, width, pressure: pen, rect: r };
-      beginInkStroke(PEN_STYLES[penStyle] || PEN_STYLES.pen);
+      beginInkStroke(st0);
       try { stage.setPointerCapture(e.pointerId); } catch (_) {}   // never lose the stroke
       return;
     }
@@ -4581,9 +4600,12 @@
     const width = (stroke && stroke.width) || curWidth();
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const [x, y] of pts) { minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); }
-    const rel = pts.map(([x, y, pr]) => (pr
-      ? [Math.round((x - minX) * 10) / 10, Math.round((y - minY) * 10) / 10, Math.round(pr * 100) / 100]
-      : [Math.round((x - minX) * 10) / 10, Math.round((y - minY) * 10) / 10]));
+    const rel = pts.map(([x, y, pr, k]) => {
+      const q = [Math.round((x - minX) * 10) / 10, Math.round((y - minY) * 10) / 10];
+      if (pr || k) q.push(Math.round((pr || 0) * 100) / 100);
+      if (k) q.push(k);                    // the nib width the preview drew with
+      return q;
+    });
     const b = {
       id: uid(), ws: state.ws, parentId: state.level, kind: 'ink',
       title: '', color, width, style,
