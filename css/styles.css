@@ -310,6 +310,13 @@ input, textarea { font-size: 15px; }
 }
 #stage.panning { cursor: grabbing; }
 
+/* the live ink surface: on top of the page, never in the way of input */
+.ink-live {
+  position: absolute; inset: 0; z-index: 6; pointer-events: none;
+  display: none; contain: strict;
+}
+#stage.penning .ink-live { display: block; }
+
 /* ---- paper styles: the surface you write on ---- */
 #stage[data-paper="grid"] {
   background-image:

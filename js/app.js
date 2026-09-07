@@ -368,7 +368,7 @@
   }
 
   function applyView() {
-    if (inking) inking.rect = stage.getBoundingClientRect();
+    if (inking) { inking.rect = stage.getBoundingClientRect(); redrawInkStroke(); }
     const { scale, tx, ty } = state.view;
     world.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
     const paper = stage.dataset.paper || 'dots';
@@ -3334,23 +3334,100 @@
     return b;
   }
 
-  // One paint per animation frame: extend the path with the points added
-  // since the last frame instead of rebuilding the whole string.
-  function paintInkFrame() {
-    if (!inking) return;
-    inking.raf = 0;
+  /* ------------------------- live ink surface --------------------------- *
+   * A canvas the browser may hand us with a low-latency (desynchronized)
+   * path, so a mark reaches the glass in the next scan-out instead of after
+   * a full layout + composite of the page.                                 */
+  let inkCv = null, inkCtx = null, inkDpr = 1;
+  function inkSurface() {
+    if (inkCtx) return inkCtx;
+    inkCv = $('#ink-live');
+    if (!inkCv) return null;
+    try { inkCtx = inkCv.getContext('2d', { desynchronized: true, alpha: true }); }
+    catch (_) { inkCtx = inkCv.getContext('2d'); }
+    return inkCtx;
+  }
+  function sizeInkSurface() {
+    const ctx = inkSurface(); if (!ctx) return;
+    const r = stage.getBoundingClientRect();
+    inkDpr = Math.min(window.devicePixelRatio || 1, 2.5);   // 2.5 is plenty, and cheaper
+    const w = Math.max(1, Math.round(r.width * inkDpr)), h = Math.max(1, Math.round(r.height * inkDpr));
+    if (inkCv.width !== w || inkCv.height !== h) { inkCv.width = w; inkCv.height = h; }
+    ctx.setTransform(inkDpr, 0, 0, inkDpr, 0, 0);
+  }
+  const clearInkSurface = () => {
+    if (!inkCtx || !inkCv) return;
+    inkCtx.save(); inkCtx.setTransform(1, 0, 0, 1, 0, 0);
+    inkCtx.clearRect(0, 0, inkCv.width, inkCv.height);
+    inkCtx.restore();
+  };
+  // world -> screen, matching the #world transform
+  const wx = (x) => x * state.view.scale + state.view.tx;
+  const wy = (y) => y * state.view.scale + state.view.ty;
+
+  function beginInkStroke(st) {
+    const ctx = inkSurface(); if (!ctx) return;
+    sizeInkSurface();
+    clearInkSurface();
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.strokeStyle = inking.color;
+    ctx.globalAlpha = st.opacity;
+    ctx.lineWidth = Math.max(0.4, inking.width * state.view.scale);
+  }
+  // Draw only the newest piece of the curve — constant cost per sample.
+  function drawInkSegment() {
+    const ctx = inkCtx; if (!ctx || !inking) return;
+    const pts = inking.pts, n2 = pts.length;
+    if (n2 < 2) return;
+    const i = n2 - 1;
+    const a = pts[i - 1], b = pts[i];
+    ctx.beginPath();
+    if (i >= 2) {                        // curve through the midpoints
+      const prev = pts[i - 2];
+      const m0 = [(prev[0] + a[0]) / 2, (prev[1] + a[1]) / 2];
+      const m1 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      ctx.moveTo(wx(m0[0]), wy(m0[1]));
+      ctx.quadraticCurveTo(wx(a[0]), wy(a[1]), wx(m1[0]), wy(m1[1]));
+      ctx.lineTo(wx(b[0]), wy(b[1]));    // reach the pen, no visible lag
+    } else {
+      ctx.moveTo(wx(a[0]), wy(a[1]));
+      ctx.lineTo(wx(b[0]), wy(b[1]));
+    }
+    ctx.stroke();
+  }
+  // Repaint the whole in-progress stroke (only needed if the view moves).
+  function redrawInkStroke() {
+    if (!inking || !inkCtx) return;
+    const st = PEN_STYLES[inking.style] || PEN_STYLES.pen;
+    beginInkStroke(st);
     const pts = inking.pts;
     if (pts.length < 2) return;
-    let d = inking.d;
-    // midpoint quadratics, same shape as inkPathD, appended piece by piece
-    for (let i = Math.max(1, inking.drawn); i < pts.length - 1; i++) {
-      const mx = (pts[i][0] + pts[i + 1][0]) / 2, my = (pts[i][1] + pts[i + 1][1]) / 2;
-      d += ` Q${pts[i][0]} ${pts[i][1]} ${mx} ${my}`;
+    inkCtx.beginPath();
+    inkCtx.moveTo(wx(pts[0][0]), wy(pts[0][1]));
+    for (let i = 1; i < pts.length - 1; i++) {
+      const m = [(pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2];
+      inkCtx.quadraticCurveTo(wx(pts[i][0]), wy(pts[i][1]), wx(m[0]), wy(m[1]));
     }
-    inking.d = d;
-    inking.drawn = Math.max(1, pts.length - 1);
     const l = pts[pts.length - 1];
-    inking.path.setAttribute('d', d + ` L${l[0]} ${l[1]}`);   // live tail
+    inkCtx.lineTo(wx(l[0]), wy(l[1]));
+    inkCtx.stroke();
+  }
+
+  // Take every sample the digitiser reported and paint each one at once.
+  function addInkSamples(e) {
+    if (!inking || e.pointerId !== inking.pointerId) return;
+    inking.lastX = e.clientX; inking.lastY = e.clientY;
+    const r = inking.rect;
+    const list = (e.getCoalescedEvents && e.getCoalescedEvents().length) ? e.getCoalescedEvents() : [e];
+    const minStep = 0.7 / (state.view.scale || 1);
+    for (const ev of list) {
+      const p = screenToWorld(ev.clientX - r.left, ev.clientY - r.top);
+      const last = inking.pts[inking.pts.length - 1];
+      if (last && Math.hypot(p.x - last[0], p.y - last[1]) < minStep) continue;
+      inking.pts.push([Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10,
+                       inking.pressure ? (ev.pressure || e.pressure || 0.5) : 0]);
+      drawInkSegment();                  // straight to the glass
+    }
   }
 
   // Smooth ink path (midpoint quadratic curves) — pen strokes render as fluid
@@ -3446,9 +3523,8 @@
         && inkAccepts(e)) {
       if (inking) {
         // a second finger landed mid-stroke → discard the stroke, navigate instead
-        if (inking.raf) cancelAnimationFrame(inking.raf);
         try { stage.releasePointerCapture(inking.pointerId); } catch (_) {}
-        inking.path.remove();
+        clearInkSurface();
         pointers.set(inking.pointerId, { x: inking.lastX, y: inking.lastY });
         inking = null;
         pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -3458,35 +3534,19 @@
       }
       const r = stage.getBoundingClientRect();
       const p = screenToWorld(e.clientX - r.left, e.clientY - r.top);
-      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path.setAttribute('shape-rendering', 'optimizeSpeed');   // no AA cost mid-stroke
+
       // The nib keeps the thickness you picked on screen, whatever the zoom:
       // strokes live in world units, so divide by the current scale — write
       // zoomed out and the mark is the same weight under your hand.
       const width = curWidth() / (state.view.scale || 1);
-      applyInkStyle(path, penStyle, penColor, width);
-      svg.appendChild(path);
       // A stylus reports how hard you press; that drives the stroke width for
       // the styles that taper. Fingers and mice report nothing useful, so
       // they keep the speed-based width.
       const pen = e.pointerType === 'pen';
-      inking = { pts: [[p.x, p.y, pen ? (e.pressure || 0.5) : 0]], path, pointerId: e.pointerId,
+      inking = { pts: [[p.x, p.y, pen ? (e.pressure || 0.5) : 0]], pointerId: e.pointerId,
                  lastX: e.clientX, lastY: e.clientY,
-                 style: penStyle, color: penColor, width, pressure: pen,
-                 rect: r, d: 'M' + p.x + ' ' + p.y, drawn: 1, raf: 0 };
-      // While drawing, every style previews as a plain centreline; the
-      // tapering ones build their real outline on lift. Keeps the per-frame
-      // cost flat no matter how long the stroke gets.
-      const st = PEN_STYLES[penStyle] || PEN_STYLES.pen;
-      if (st.taper > 0) {
-        path.setAttribute('fill', 'none');
-        path.setAttribute('stroke', penColor);
-        path.setAttribute('stroke-width', width);
-        path.setAttribute('stroke-linecap', 'round');
-        path.setAttribute('stroke-linejoin', 'round');
-        path.setAttribute('opacity', st.opacity);
-      }
-      path.setAttribute('d', inking.d);
+                 style: penStyle, color: penColor, width, pressure: pen, rect: r };
+      beginInkStroke(PEN_STYLES[penStyle] || PEN_STYLES.pen);
       try { stage.setPointerCapture(e.pointerId); } catch (_) {}   // never lose the stroke
       return;
     }
@@ -3626,22 +3686,7 @@
 
     if (inking) {
       if (e.pointerId !== inking.pointerId) return;   // ignore stray pointers mid-stroke
-      inking.lastX = e.clientX; inking.lastY = e.clientY;
-      const r = inking.rect;                          // cached: no layout per event
-      // A stylus reports far faster than the screen refreshes; take every
-      // sample the browser buffered so nothing is lost.
-      const samples = (e.getCoalescedEvents && e.getCoalescedEvents().length)
-        ? e.getCoalescedEvents() : [e];
-      const minStep = 0.7 / (state.view.scale || 1);   // sub-pixel points add nothing
-      for (const ev of samples) {
-        const p = screenToWorld(ev.clientX - r.left, ev.clientY - r.top);
-        const last = inking.pts[inking.pts.length - 1];
-        if (last && Math.hypot(p.x - last[0], p.y - last[1]) < minStep) continue;
-        inking.pts.push([Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10,
-                         inking.pressure ? (ev.pressure || e.pressure || 0.5) : 0]);
-      }
-      // Paint once per frame, appending only what is new.
-      if (!inking.raf) inking.raf = requestAnimationFrame(paintInkFrame);
+      addInkSamples(e);      // raw updates get there first; repeats filter out
       return;
     }
     if (lpTimer && (Math.abs(e.clientX - lpX) + Math.abs(e.clientY - lpY) > 8)) { clearTimeout(lpTimer); lpTimer = null; }
@@ -3795,9 +3840,8 @@
     if (inking) {
       if (e.pointerId !== inking.pointerId) { pointers.delete(e.pointerId); return; }
       const stroke = inking; inking = null;
-      if (stroke.raf) cancelAnimationFrame(stroke.raf);
       try { stage.releasePointerCapture(e.pointerId); } catch (_) {}
-      stroke.path.remove();
+      clearInkSurface();
       const pts = stroke.pts;
       if (pts.length >= 2) {
         const hit = shapeSnap ? recognizeShape(pts) : null;
@@ -6492,6 +6536,12 @@
     $('#pres-exit').addEventListener('click', stopPresenting);
     bindEdgeEditor();
     bindPenBarDrag();
+    // pointerrawupdate fires as soon as the digitiser reports, ahead of the
+    // throttled pointermove — the lowest-latency input the web offers.
+    if ('onpointerrawupdate' in window) {
+      stage.addEventListener('pointerrawupdate', (e) => { if (inking) addInkSamples(e); });
+    }
+    window.addEventListener('resize', () => { if (inking) { sizeInkSurface(); redrawInkStroke(); } });
     bindDrawTapGestures();
     $('#btn-fit').addEventListener('click', fitToView);
     $('#btn-help').addEventListener('click', () => openAbout('help'));
@@ -6518,9 +6568,8 @@
       clearTimeout(lpTimer); lpTimer = null; lpFired = false;
       colResize = null; rowResize = null; erasing = false;
       if (inking) {
-        if (inking.raf) cancelAnimationFrame(inking.raf);
         try { stage.releasePointerCapture(inking.pointerId); } catch (_) {}
-        inking.path.remove(); inking = null;                 // drop a half-drawn stroke
+        clearInkSurface(); inking = null;                    // drop a half-drawn stroke
       }
       if (lasso) { lasso.path.remove(); lasso = null; }
     };
