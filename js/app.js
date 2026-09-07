@@ -247,35 +247,83 @@
     el.style.mixBlendMode = s.blend || '';
   }
 
-  // Filled outline for tapered styles: half-width follows stroke speed, so
-  // fast strokes thin out and stroke ends taper like a real brush.
-  function inkTaperD(pts, width, taper) {
-    if (pts.length < 2) return '';
-    const half = width / 2, n = pts.length;
-    const w = new Array(n);
+  // Per-point half widths for a tapering stroke: pressure if the stylus gave
+  // us any, speed otherwise, and thinner towards both ends.
+  function taperWidths(P, half, taper) {
+    const n = P.length, w = new Array(n);
     for (let i = 0; i < n; i++) {
-      const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
-      const speed = Math.hypot(b[0] - a[0], b[1] - a[1]);
-      const f = 1 - taper * Math.min(1, speed / 26);          // faster -> thinner
-      const ends = Math.min(1, Math.min(i, n - 1 - i) / 3);   // taper both ends
-      const press = pts[i][2];                                // 0 = not from a stylus
-      const pf = press ? (0.45 + 1.1 * press) : 1;            // harder -> thicker
-      w[i] = half * f * pf * (0.35 + 0.65 * ends);
+      const a = P[Math.max(0, i - 2)], b = P[Math.min(n - 1, i + 2)];
+      const span = Math.hypot(b[0] - a[0], b[1] - a[1]) / Math.max(1, Math.min(4, i + 1));
+      const f = 1 - taper * Math.min(1, span / 26);            // faster -> thinner
+      const press = P[i][2];
+      const pf = press ? (0.45 + 1.1 * press) : 1;
+      const ends = Math.min(1, Math.min(i, n - 1 - i) / 2.5);  // taper both ends
+      w[i] = half * f * pf * (0.4 + 0.6 * ends);
     }
-    for (let k = 0; k < 2; k++)                                // smooth the widths
+    for (let k = 0; k < 3; k++)                                 // smooth the widths
       for (let i = 1; i < n - 1; i++) w[i] = (w[i - 1] + w[i] * 2 + w[i + 1]) / 4;
-    const L = [], R = [];
-    for (let i = 0; i < n; i++) {
-      const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
-      let dx = b[0] - a[0], dy = b[1] - a[1];
-      const len = Math.hypot(dx, dy) || 1; dx /= len; dy /= len;
-      L.push([pts[i][0] - dy * w[i], pts[i][1] + dx * w[i]]);
-      R.push([pts[i][0] + dy * w[i], pts[i][1] - dx * w[i]]);
-    }
-    const seg = (arr) => arr.map((p, i) => (i ? 'L' : '') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
-    return 'M' + seg(L) + ' L' + seg(R.reverse()) + ' Z';
+    return w;
   }
 
+  // Resample to a sensible spacing and smooth: adjacent raw samples are a
+  // fraction of a pixel apart, and normals taken across them jitter, which is
+  // what made the outline serrated.
+  function taperCentreline(pts, width) {
+    const minGap = Math.max(1.1, width * 0.45);
+    const P = [pts[0]];
+    for (let i = 1; i < pts.length; i++) {
+      const last = P[P.length - 1];
+      if (Math.hypot(pts[i][0] - last[0], pts[i][1] - last[1]) >= minGap) P.push(pts[i]);
+    }
+    const tail = pts[pts.length - 1];
+    const lastKept = P[P.length - 1];
+    if (lastKept !== tail && Math.hypot(tail[0] - lastKept[0], tail[1] - lastKept[1]) > 0.01) P.push(tail);
+    if (P.length < 3) return P.map(q => [q[0], q[1], q[2] || 0]);
+    const C = P.map((q, i) => {
+      if (i === 0 || i === P.length - 1) return [q[0], q[1], q[2] || 0];
+      const a = P[i - 1], b = P[i], c = P[i + 1];
+      return [(a[0] + 2 * b[0] + c[0]) / 4, (a[1] + 2 * b[1] + c[1]) / 4, b[2] || 0];
+    });
+    return C;
+  }
+
+  // Filled outline for tapered styles: a smooth ribbon around the centreline.
+  function inkTaperD(pts, width, taper) {
+    if (!pts || pts.length < 2) return '';
+    const C = taperCentreline(pts, width);
+    const n = C.length;
+    if (n < 2) return '';
+    const half = width / 2;
+    const w = taperWidths(C, half, taper);
+    const L = [], R = [];
+    for (let i = 0; i < n; i++) {
+      // direction over a window, not between neighbours — steady normals
+      const a = C[Math.max(0, i - 1)], b = C[Math.min(n - 1, i + 1)];
+      let dx = b[0] - a[0], dy = b[1] - a[1];
+      const len = Math.hypot(dx, dy);
+      if (len < 1e-6) { dx = 1; dy = 0; } else { dx /= len; dy /= len; }
+      L.push([C[i][0] - dy * w[i], C[i][1] + dx * w[i]]);
+      R.push([C[i][0] + dy * w[i], C[i][1] - dx * w[i]]);
+    }
+    // curved edges: quadratics through the midpoints of each side
+    const side = (arr) => {
+      let d = '';
+      for (let i = 1; i < arr.length - 1; i++) {
+        const mx = (arr[i][0] + arr[i + 1][0]) / 2, my = (arr[i][1] + arr[i + 1][1]) / 2;
+        d += ` Q${arr[i][0].toFixed(1)} ${arr[i][1].toFixed(1)} ${mx.toFixed(1)} ${my.toFixed(1)}`;
+      }
+      const l = arr[arr.length - 1];
+      return d + ` L${l[0].toFixed(1)} ${l[1].toFixed(1)}`;
+    };
+    R.reverse();
+    return `M${L[0][0].toFixed(1)} ${L[0][1].toFixed(1)}` + side(L) + side(R) + ' Z';
+  }
+
+  function updateShapeSnapBtn() {
+    const b = $('#pen-snap'); if (!b) return;
+    b.classList.toggle('active', shapeSnap);
+    b.title = shapeSnap ? 'Shape snapping: on' : 'Shape snapping: off';
+  }
   /* ------------------- palm + finger detection (Samsung-style) ---------- *
    * A palm resting on the screen makes a big, low-pressure contact — those
    * are dropped outright so they neither draw nor pan. Fingers draw until a
@@ -302,11 +350,6 @@
       return true;
     }
     return true;                                              // mouse / trackpad
-  }
-  function updateShapeSnapBtn() {
-    const b = $('#pen-snap'); if (!b) return;
-    b.classList.toggle('active', shapeSnap);
-    b.title = shapeSnap ? 'Shape snapping: on' : 'Shape snapping: off';
   }
   function updatePenTouchBtn() {
     const b = $('#pen-touch'); if (!b) return;
@@ -3374,6 +3417,22 @@
     ctx.strokeStyle = inking.color;
     ctx.globalAlpha = st.opacity;
     ctx.lineWidth = Math.max(0.4, inking.width * state.view.scale);
+    inking.taper = st.taper || 0;
+  }
+
+  // Width for the piece being drawn right now — the same speed/pressure rule
+  // the finished stroke uses, so the preview does not change weight on lift.
+  function liveWidth(i) {
+    const base = Math.max(0.4, inking.width * state.view.scale);
+    if (!inking.taper) return base;
+    const pts = inking.pts;
+    const a = pts[Math.max(0, i - 2)], b = pts[i];
+    const span = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const f = 1 - inking.taper * Math.min(1, span / 26);
+    const press = pts[i][2];
+    const pf = press ? (0.45 + 1.1 * press) : 1;
+    const ends = Math.min(1, i / 2.5);
+    return Math.max(0.4, base * f * pf * (0.4 + 0.6 * ends));
   }
   // Draw only the newest piece of the curve — constant cost per sample.
   function drawInkSegment() {
@@ -3382,6 +3441,7 @@
     if (n2 < 2) return;
     const i = n2 - 1;
     const a = pts[i - 1], b = pts[i];
+    ctx.lineWidth = liveWidth(i);
     ctx.beginPath();
     if (i >= 2) {                        // curve through the midpoints
       const prev = pts[i - 2];
@@ -3403,15 +3463,23 @@
     beginInkStroke(st);
     const pts = inking.pts;
     if (pts.length < 2) return;
-    inkCtx.beginPath();
-    inkCtx.moveTo(wx(pts[0][0]), wy(pts[0][1]));
-    for (let i = 1; i < pts.length - 1; i++) {
-      const m = [(pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2];
-      inkCtx.quadraticCurveTo(wx(pts[i][0]), wy(pts[i][1]), wx(m[0]), wy(m[1]));
+    // redraw segment by segment so tapering widths survive the repaint
+    for (let i = 1; i < pts.length; i++) {
+      inkCtx.lineWidth = liveWidth(i);
+      inkCtx.beginPath();
+      if (i >= 2) {
+        const prev = pts[i - 2], a2 = pts[i - 1], b2 = pts[i];
+        const m0 = [(prev[0] + a2[0]) / 2, (prev[1] + a2[1]) / 2];
+        const m1 = [(a2[0] + b2[0]) / 2, (a2[1] + b2[1]) / 2];
+        inkCtx.moveTo(wx(m0[0]), wy(m0[1]));
+        inkCtx.quadraticCurveTo(wx(a2[0]), wy(a2[1]), wx(m1[0]), wy(m1[1]));
+        inkCtx.lineTo(wx(b2[0]), wy(b2[1]));
+      } else {
+        inkCtx.moveTo(wx(pts[i - 1][0]), wy(pts[i - 1][1]));
+        inkCtx.lineTo(wx(pts[i][0]), wy(pts[i][1]));
+      }
+      inkCtx.stroke();
     }
-    const l = pts[pts.length - 1];
-    inkCtx.lineTo(wx(l[0]), wy(l[1]));
-    inkCtx.stroke();
   }
 
   // Take every sample the digitiser reported and paint each one at once.
