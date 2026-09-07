@@ -6313,7 +6313,13 @@
       if (act === 'export-pdf') exportWorkspacePdfFlow(state.ws);
       if (act === 'fullscreen') toggleFullscreen();
       if (act === 'minimap') toggleMinimap();
-      if (act === 'autosave') { const cb = $('#autosave'); if (cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change', { bubbles: true })); } updateMenuStates(); }
+      if (act === 'autosave') {
+        // the switch itself now lives off the toolbar, so say what changed
+        const cb = $('#autosave');
+        if (cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change', { bubbles: true }));
+          toast(cb.checked ? 'Autosave on' : 'Autosave off'); }
+        updateMenuStates();
+      }
       if (act === 'lock-x') { setAxisLock(axisLock === 'x' ? null : 'x'); }
       if (act === 'lock-y') { setAxisLock(axisLock === 'y' ? null : 'y'); }
       if (act === 'export-png') exportLevelImage('png');
