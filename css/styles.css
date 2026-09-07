@@ -107,7 +107,7 @@ input, textarea { font-size: 15px; }
 }
 .bar-group { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .bar-left { flex: none; }
-.bar-center { flex: 1 1 auto; justify-content: center; gap: 10px; min-width: 0; }
+.bar-center { flex: 1 1 auto; justify-content: flex-start; gap: 10px; min-width: 0; }
 .navgroup { display: flex; align-items: center; gap: 4px; flex: none; }
 .btn:disabled { opacity: .38; cursor: default; pointer-events: none; }
 .bar-right { flex: none; }
@@ -143,6 +143,10 @@ input, textarea { font-size: 15px; }
 .crumb-sep { color: var(--text-mute); font-size: 13px; opacity: .6; }
 
 .search { position: relative; width: min(560px, 100%); }
+/* search lives in a popover under its toolbar button */
+.search-pop { position: fixed; z-index: 70; }
+.search-pop[hidden] { display: none; }
+.search-pop #search { background: var(--panel); box-shadow: var(--shadow-lg); }
 .search-ico { position: absolute; left: 13px; top: 50%; transform: translateY(-50%); color: var(--text-mute); pointer-events: none; }
 .search-ico .ic { width: 16px; height: 16px; }
 #search {
@@ -359,8 +363,6 @@ input, textarea { font-size: 15px; }
 .sel-modes { display: inline-flex; gap: 2px; }
 .sel-bar button.active { background: var(--grad); color: #fff; }
 .sel-bar button:disabled { opacity: .35; pointer-events: none; }
-.pen-lasso-modes { display: inline-flex; gap: 4px; }
-.pen-lasso-modes[hidden] { display: none; }
 
 /* read mode: look, navigate, change nothing */
 #app.reading .block-actions { opacity: 0 !important; }
@@ -450,16 +452,23 @@ input, textarea { font-size: 15px; }
 .ink-svg { display: block; overflow: visible; pointer-events: none; }
 .ink-svg path { pointer-events: stroke; }
 #stage.penning { cursor: crosshair; }
-#stage.penning.erasing { cursor: cell; }
+/* the eraser, with or without the draw panel */
+#stage.erasing { cursor: cell; }
+#stage.erasing.erase-normal { cursor: none; }
+#stage.erasing #world .block .block-actions,
+#stage.erasing #world .tnode-rotate, #stage.erasing #world .tnode-resize,
+#stage.erasing #world .tnode-edge, #stage.erasing #world .col-resize,
+#stage.erasing #world .row-resize { display: none; }
+#stage.erasing #world .block:hover { box-shadow: none; transform: none; }
 /* Samsung-Notes-style draw mode: the page is just paper — blocks/strokes are
    inert (no hover chrome, no selection, no dragging), the pen only draws.
    Eraser mode keeps hit-testing on so it can find strokes to wipe. */
-#stage.penning:not(.erasing):not(.selecting) #world .block { pointer-events: none; }
-/* lasso select: blocks are grabbable again so a picked group can be dragged */
-#stage.penning.selecting, #stage.lassoing { cursor: crosshair; }
-#stage.penning.selecting #world .block { pointer-events: auto; }
+#stage.penning:not(.erasing) #world .block { pointer-events: none; }
+#stage.lassoing { cursor: crosshair; }
 .lasso-path { fill: color-mix(in srgb, var(--accent) 14%, transparent); stroke: var(--accent);
   stroke-width: 1.5; stroke-dasharray: 6 5; vector-effect: non-scaling-stroke; }
+/* the eraser's loop is red: what is inside goes away */
+.lasso-path.erase { fill: rgba(239, 68, 68, .12); stroke: #ef4444; }
 #stage.penning #world .block .block-actions,
 #stage.penning #world .tnode-rotate, #stage.penning #world .tnode-resize,
 #stage.penning #world .tnode-edge, #stage.penning #world .col-resize,
@@ -478,48 +487,62 @@ input, textarea { font-size: 15px; }
 .pen-colors .pen-dot.active { border-color: var(--text); }
 #pen-size { width: 96px; accent-color: var(--accent); }
 
-/* ---- draw panel: styles, thickness, drag handle ---- */
+/* ---- draw panel: tools, thickness, drag + snap ---- */
 .btn.icon.dimmed { opacity: .45; }
-.pen-styles { display: inline-flex; gap: 4px; align-items: center; }
+.pen-ic { display: inline-flex; }
 .pen-sep { width: 1px; height: 22px; background: var(--line); flex: none; }
-.pen-grip { display: inline-flex; align-items: center; color: var(--text-mute);
-  cursor: grab; touch-action: none; margin: -4px 2px -4px -6px; padding: 4px 2px; flex: none; }
-.pen-grip:hover { color: var(--text); }
-#pen-bar.dragging { cursor: grabbing; box-shadow: 0 18px 46px rgba(0,0,0,.45); }
-#pen-bar.dragging .pen-grip { cursor: grabbing; }
 .pen-size-wrap { display: inline-flex; align-items: center; gap: 7px; }
+.pen-size-wrap.dimmed { opacity: .4; pointer-events: none; }
 .pen-size-val { font-size: 12px; color: var(--text-mute); min-width: 34px; text-align: right;
   font-variant-numeric: tabular-nums; }
-/* the panel is a direct child of #app so it can be dragged freely */
+/* a tool button with options: the small dots badge opens them */
+.pen-menu-btn { position: relative; overflow: visible; }
+.pen-more { position: absolute; right: -5px; bottom: -5px; width: 14px; height: 14px; border-radius: 999px;
+  background: var(--panel); border: 1px solid var(--line); display: grid; place-items: center;
+  color: var(--text-mute); cursor: pointer; }
+.pen-more .ic { width: 9px; height: 9px; stroke-width: 2.6; }
+.pen-tool.active .pen-more { color: var(--text); border-color: var(--accent); }
+.pen-menu { position: fixed; z-index: 90; min-width: 214px; padding: 6px; border-radius: 12px; background: var(--panel);
+  border: 1px solid var(--line); box-shadow: var(--shadow-lg); display: flex; flex-direction: column; gap: 2px; }
+.pen-menu[hidden] { display: none; }
+.pen-menu button { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: none;
+  background: none; color: var(--text); padding: 8px 10px; border-radius: 9px; cursor: pointer; font-size: 13.5px; }
+.pen-menu button:hover { background: var(--panel-2); }
+.pen-menu button.active { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.pen-menu button .ic { width: 18px; height: 18px; }
+.pen-menu .pm-hint { margin-left: auto; padding-left: 10px; font-size: 11px; color: var(--text-mute); }
+/* the panel is a direct child of #app so it can go anywhere; drag it from any
+   part of its body (the slider keeps its own drag) */
 #pen-bar { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
-  z-index: 40; pointer-events: auto; max-width: calc(100vw - 12px); flex-wrap: wrap; }
+  z-index: 40; pointer-events: auto; max-width: calc(100vw - 12px); flex-wrap: wrap; justify-content: center;
+  padding: 8px 10px; gap: 9px; touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; }
 #pen-bar.moved { top: 0; bottom: auto; transform: none; }
 #pen-bar[hidden] { display: none; }
-
-/* ---- docked to a screen edge: the bar takes that edge's orientation ---- */
-#pen-bar.dock-left, #pen-bar.dock-right {
-  flex-direction: column; flex-wrap: nowrap; border-radius: 22px;
-  padding: 10px 8px; gap: 9px; max-width: none; max-height: calc(100vh - 16px);
-}
-#pen-bar.dock-top, #pen-bar.dock-bottom { flex-direction: row; }
-/* vertical: stack the tool groups, wrap the colours into a 2-wide block */
-#pen-bar.dock-left .pen-styles, #pen-bar.dock-right .pen-styles { flex-direction: column; }
-#pen-bar.dock-left .pen-colors, #pen-bar.dock-right .pen-colors {
-  flex-wrap: wrap; width: 40px; justify-content: center; gap: 5px 4px;
-}
-#pen-bar.dock-left .pen-sep, #pen-bar.dock-right .pen-sep { width: 24px; height: 1px; }
-#pen-bar.dock-left .pen-size-wrap, #pen-bar.dock-right .pen-size-wrap { flex-direction: column; gap: 5px; }
-#pen-bar.dock-left #pen-size, #pen-bar.dock-right #pen-size {
-  writing-mode: vertical-lr; direction: rtl; width: 22px; height: 96px; appearance: slider-vertical;
-}
-#pen-bar.dock-left .pen-size-val, #pen-bar.dock-right .pen-size-val { min-width: 0; text-align: center; }
-#pen-bar.dock-left #pen-exit, #pen-bar.dock-right #pen-exit { padding: 6px 10px; font-size: 12px; }
-#pen-bar.dock-left .pen-grip, #pen-bar.dock-right .pen-grip { margin: -2px 0 0; transform: rotate(90deg); }
-/* the docked edge sits flush, so square off that side */
-#pen-bar.dock-left { border-top-left-radius: 10px; border-bottom-left-radius: 10px; }
-#pen-bar.dock-right { border-top-right-radius: 10px; border-bottom-right-radius: 10px; }
-#pen-bar.dock-top { border-top-left-radius: 12px; border-top-right-radius: 12px; }
-#pen-bar.dock-bottom { border-bottom-left-radius: 12px; border-bottom-right-radius: 12px; }
+#pen-bar.dragging { cursor: grabbing; box-shadow: 0 18px 46px rgba(0,0,0,.45); }
+#pen-bar button, #pen-bar .pen-dot, #pen-bar input { cursor: pointer; }
+/* standing up along a side: one column, colours two abreast, slider upright */
+#pen-bar.vert { flex-direction: column; flex-wrap: nowrap; border-radius: 22px; padding: 10px 8px; gap: 9px;
+  max-width: none; max-height: calc(100vh - 16px); overflow-y: auto; scrollbar-width: none; }
+#pen-bar.vert::-webkit-scrollbar { display: none; }
+#pen-bar.vert .pen-colors { flex-wrap: wrap; width: 40px; justify-content: center; gap: 5px 4px; }
+#pen-bar.vert .pen-sep { width: 24px; height: 1px; }
+#pen-bar.vert .pen-size-wrap { flex-direction: column; gap: 5px; }
+#pen-bar.vert #pen-size { writing-mode: vertical-lr; direction: rtl; width: 22px; height: 96px; appearance: slider-vertical; }
+#pen-bar.vert .pen-size-val { min-width: 0; text-align: center; }
+#pen-bar.vert #pen-exit { padding: 6px 9px; font-size: 12px; }
+/* the edges it touches are squared off */
+#pen-bar.edge-l { border-top-left-radius: 10px; border-bottom-left-radius: 10px; }
+#pen-bar.edge-r { border-top-right-radius: 10px; border-bottom-right-radius: 10px; }
+#pen-bar.edge-t { border-top-left-radius: 10px; border-top-right-radius: 10px; }
+#pen-bar.edge-b { border-bottom-left-radius: 10px; border-bottom-right-radius: 10px; }
+/* where the panel will land when let go */
+.pen-dock-hint { position: fixed; z-index: 39; width: 16px; height: 16px; border-radius: 999px; background: var(--accent);
+  box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 22%, transparent); transform: translate(-50%, -50%); pointer-events: none; }
+.pen-dock-hint[hidden] { display: none; }
+/* the eraser's footprint on the page */
+.eraser-cursor { position: fixed; z-index: 38; border-radius: 999px; border: 1.5px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent); transform: translate(-50%, -50%); pointer-events: none; }
+.eraser-cursor[hidden] { display: none; }
 @media (max-width: 560px) { .minimap { width: 130px; height: 90px; right: 8px; bottom: 64px; } }
 
 /* tag chips on cards */
@@ -916,9 +939,13 @@ input, textarea { font-size: 15px; }
   border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px; font-family: var(--font);
 }
 
+/* a frosted note in the theme's own colours, not an inverted box */
 .toast {
   position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%) translateY(10px);
-  background: var(--text); color: var(--bg); padding: 11px 18px; border-radius: 11px;
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4);
+  color: var(--text); border: 1px solid var(--line);
+  padding: 11px 18px; border-radius: 12px;
   font-size: 14px; font-weight: 500; z-index: 100; box-shadow: var(--shadow-lg); opacity: 0;
   transition: opacity .2s, transform .2s;
 }

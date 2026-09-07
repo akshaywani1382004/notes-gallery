@@ -105,7 +105,8 @@
     filetext: '<path d="M13 3.5H7.5A1.5 1.5 0 0 0 6 5v14a1.5 1.5 0 0 0 1.5 1.5h9A1.5 1.5 0 0 0 18 19V8.5Z"/><polyline points="13 3.5 13 8.5 18 8.5"/><line x1="8.7" y1="12.5" x2="15.3" y2="12.5"/><line x1="8.7" y1="15" x2="15.3" y2="15"/><line x1="8.7" y1="17.5" x2="12.8" y2="17.5"/>',
     layers: '<path d="M12 3.5 20 8l-8 4.5L4 8Z"/><path d="M4 12l8 4.5L20 12"/>',
     clip: '<path d="M18 11.5 12 17.5a3.5 3.5 0 0 1-5-5l6.5-6.5a2.3 2.3 0 0 1 3.3 3.3L10 15.7a1.1 1.1 0 0 1-1.6-1.6l5.6-5.6"/>',
-    pencil: '<path d="M4 20h4L18.5 9.5a1.8 1.8 0 0 0 0-2.5l-1.5-1.5a1.8 1.8 0 0 0-2.5 0L4 16Z"/><line x1="13.5" y1="7" x2="17" y2="10.5"/>',
+    pencil: '<path d="M4.8 19.2l1.5-4.7 9.8-9.8a2.3 2.3 0 0 1 3.2 0l.1.1a2.3 2.3 0 0 1 0 3.2l-9.8 9.8Z"/><path d="M6.3 14.5l3.2 3.2"/><path d="M14.2 6.6l3.2 3.2"/><path d="M4.8 19.2l1-3.2 2.2 2.2Z" fill="currentColor" stroke="none"/>',
+    sidebar: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><line x1="9.5" y1="4.5" x2="9.5" y2="19.5"/><line x1="6" y1="8.2" x2="7.3" y2="8.2"/><line x1="6" y1="11" x2="7.3" y2="11"/>',
     info: '<circle cx="12" cy="12" r="8.5"/><line x1="12" y1="11" x2="12" y2="16"/><circle cx="12" cy="7.8" r="0.9" fill="currentColor" stroke="none"/>',
     square: '<rect x="4.5" y="4.5" width="15" height="15" rx="3"/>',
     list: '<line x1="9" y1="6.5" x2="20" y2="6.5"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="17.5" x2="20" y2="17.5"/><circle cx="4.9" cy="6.5" r="1.15" fill="currentColor" stroke="none"/><circle cx="4.9" cy="12" r="1.15" fill="currentColor" stroke="none"/><circle cx="4.9" cy="17.5" r="1.15" fill="currentColor" stroke="none"/>',
@@ -126,10 +127,12 @@
     line: '<line x1="4.5" y1="19.5" x2="19.5" y2="4.5"/>',
     table: '<rect x="4" y="5" width="16" height="14" rx="2"/><line x1="4" y1="10" x2="20" y2="10"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="5" x2="10" y2="19"/>',
     image: '<rect x="3.5" y="5" width="17" height="14" rx="2.2"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M4 17l4.5-4.5 3 3L15 12l5 5"/>',
-    pen: '<path d="M4 20l1-4L16 5a2 2 0 0 1 3 3L8 19l-4 1Z"/><line x1="14" y1="7" x2="17" y2="10"/>',
-    eraser: '<path d="M9 20H20"/><path d="M15.5 5.5l3 3a2 2 0 0 1 0 2.8L11 19l-4.5-4.5a2 2 0 0 1 0-2.8l6.2-6.2a2 2 0 0 1 2.8 0Z"/><line x1="8" y1="9" x2="14" y2="15"/>',
-    brush: '<path d="M6.5 15.5 15 7a2.1 2.1 0 0 1 3 3l-8.5 8.5"/><path d="M6.5 15.5c-1.6.5-2 2-2 3.2 0 .7-.4 1.2-1 1.5 1.6.9 4.4.8 5.4-1.2.5-1 .2-2.3-.9-3.1a2 2 0 0 0-1.5-.4Z"/>',
-    highlighter: '<path d="M4 20h6"/><path d="M12.5 18.5H8l-1.5-3 7-7a1.8 1.8 0 0 1 2.6 0l1.4 1.4a1.8 1.8 0 0 1 0 2.6Z"/><line x1="12" y1="7.5" x2="16.5" y2="12"/>',
+    pen: '<path d="M4.5 19.5l2.4-7.1a3.4 3.4 0 0 1 .8-1.3l6.6-6.6a2.7 2.7 0 0 1 3.8 0l1.4 1.4a2.7 2.7 0 0 1 0 3.8l-6.6 6.6a3.4 3.4 0 0 1-1.3.8Z"/><path d="M4.5 19.5l5.3-5.3"/><circle cx="11.2" cy="12.8" r="1.4"/>',
+    eraser: '<path d="M7.7 19.3 4.4 16a2 2 0 0 1 0-2.8l7-7a2 2 0 0 1 2.8 0l5.1 5.1a2 2 0 0 1 0 2.8l-5.2 5.2H7.7Z"/><path d="M8.4 10.6l6 6"/><path d="M4 21h16"/>',
+    'eraser-stroke': '<path d="M9.6 16.8 7 14.2a1.8 1.8 0 0 1 0-2.6l5.6-5.6a1.8 1.8 0 0 1 2.6 0l3.4 3.4a1.8 1.8 0 0 1 0 2.6l-4.8 4.8H9.6Z"/><path d="M9.9 9.5l4.6 4.6"/><path d="M2.5 20.2c1.5-1.8 3-1.8 4.5 0"/><path d="M13 20.2c1.5-1.8 3-1.8 4.5 0 .9 1.1 1.9 1.1 3 0"/>',
+    'eraser-lasso': '<path d="M12 3.5c4.7 0 8.5 2.3 8.5 5.2S16.7 13.9 12 13.9 3.5 11.6 3.5 8.7 7.3 3.5 12 3.5Z" stroke-dasharray="2.4 2.2"/><path d="M10.4 21l-2.1-2.1a1.5 1.5 0 0 1 0-2.1l3.6-3.6a1.5 1.5 0 0 1 2.1 0l2.4 2.4a1.5 1.5 0 0 1 0 2.1L13.1 21h-2.7Z"/>',
+    brush: '<path d="M11.7 12.3l6.6-6.6a1.9 1.9 0 0 1 2.7 2.7l-6.6 6.6"/><path d="M11.7 12.3l2.7 2.7"/><path d="M11.4 13.4c-2.9-.6-5 .9-5.5 3.3-.2 1.1-.8 1.9-1.7 2.4 2.2 1.1 5.6 1 7.4-.9 1.1-1.2 1.3-2.7.5-4.2Z"/>',
+    highlighter: '<path d="M9.5 3.5h5.5a1 1 0 0 1 1 1V12l-1.6 3.6H10L8.5 12V4.5a1 1 0 0 1 1-1Z"/><path d="M8.5 8h7.5"/><path d="M10 15.6v2.4h4.4v-2.4"/><path d="M4 21h16" stroke-width="3" opacity=".55"/>',
     marker: '<path d="M4.5 19.5h7"/><path d="M9 16.5 6.8 14.3l7.5-7.5a2.4 2.4 0 0 1 3.4 0l.5.5a2.4 2.4 0 0 1 0 3.4L10.7 18.2Z"/>',
     hand: '<path d="M9 11V5.6a1.6 1.6 0 0 1 3.2 0V11m0-1.2V4.8a1.6 1.6 0 0 1 3.2 0V11m0-.8a1.6 1.6 0 0 1 3.2 0v4.4a5.6 5.6 0 0 1-5.6 5.6h-1a5 5 0 0 1-3.8-1.7L5 17.4a1.6 1.6 0 0 1 2.2-2.3L9 16.6V7.6a1.6 1.6 0 0 0-3.2 0V13"/>',
     select: '<path d="M4 8.5V6.5A2.5 2.5 0 0 1 6.5 4h2M15.5 4h2A2.5 2.5 0 0 1 20 6.5v2M20 15.5v2a2.5 2.5 0 0 1-2.5 2.5h-2M8.5 20h-2A2.5 2.5 0 0 1 4 17.5v-2"/><rect x="8.5" y="8.5" width="7" height="7" rx="1.2"/>',
@@ -145,7 +148,7 @@
     diamond: '<path d="M12 3.5 20.5 12 12 20.5 3.5 12Z"/>',
     pentagon: '<path d="M12 3.5 20.5 9.7 17.2 19.8H6.8L3.5 9.7Z"/>',
     hexagon: '<path d="M8.2 4h7.6l3.8 8-3.8 8H8.2L4.4 12Z"/>',
-    lasso: '<path d="M12 5.2c4.4 0 8 2.1 8 4.8s-3.6 4.8-8 4.8c-1.4 0-2.8-.2-4-.6"/><path d="M8 14.2C5.5 13.4 4 11.9 4 10c0-1.7 1.3-3.2 3.4-4.1"/><path d="M7.7 14.4c-.6 1.6-.4 3.1.5 3.9"/><circle cx="9" cy="19.6" r="1.5"/>',
+    lasso: '<path d="M6.4 12.6C4 10.2 6.6 5.3 12.4 4.5c5.6-.8 9.8 2.3 9 5.5-.4 1.6-2 2.9-4.2 3.6"/><circle cx="5.6" cy="14.3" r="1.9"/><path d="M4.4 15.8l-1 2.6"/><path d="M11.5 10.6v10.6l2.7-2.8 2 3.6 1.9-1.1-2-3.6 3.5-.5Z" fill="currentColor" stroke="none"/>',
     grip: '<circle cx="9" cy="6" r="1.3"/><circle cx="15" cy="6" r="1.3"/><circle cx="9" cy="12" r="1.3"/><circle cx="15" cy="12" r="1.3"/><circle cx="9" cy="18" r="1.3"/><circle cx="15" cy="18" r="1.3"/>',
     expand: '<path d="M9 4H4v5"/><path d="M15 4h5v5"/><path d="M9 20H4v-5"/><path d="M15 20h5v-5"/>',
     map: '<path d="M9 4 4 6v14l5-2 6 2 5-2V4l-5 2-6-2Z"/><line x1="9" y1="4" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="20"/>',
@@ -162,6 +165,7 @@
     serif: '"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif',
     mono: 'ui-monospace, "Cascadia Code", "Consolas", "Courier New", monospace',
   };
+  ICON['hand-off'] = ICON.hand + '<line x1="3.5" y1="3.5" x2="20.5" y2="20.5"/>';
   const ic = (name) => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICON[name] || ''}</svg>`;
   function hydrateIcons(root = document) {
     root.querySelectorAll('[data-icon]').forEach(el => {
@@ -214,7 +218,7 @@
     pen:         { label: 'Ink pen',     icon: 'pen',         mul: 1,    min: 1,   opacity: 1,    cap: 'round',  taper: 0,    blend: '' },
     brush:       { label: 'Brush',       icon: 'brush',       mul: 2.1,  min: 1.5, opacity: .95,  cap: 'round',  taper: .55,  blend: '' },
     pencil:      { label: 'Pencil',      icon: 'pencil',      mul: .75,  min: 1,   opacity: .72,  cap: 'round',  taper: 0,    blend: '', grain: true },
-    marker:      { label: 'Marker',      icon: 'marker',      mul: 1.7,  min: 2,   opacity: .92,  cap: 'square', taper: .18,  blend: '' },
+    marker:      { label: 'Marker',      icon: 'marker',      mul: 1.7,  min: 2,   opacity: .92,  cap: 'square', taper: .18,  blend: '', hidden: true },
     highlighter: { label: 'Highlighter', icon: 'highlighter', mul: 3.4,  min: 6,   opacity: .32,  cap: 'butt',   taper: 0,    blend: 'multiply' },
   };
   let penStyle = 'pen', penSize = 12;          // penSize is the 1-100% slider
@@ -344,8 +348,15 @@
    * instead (the "auto" mode most note apps use). The toolbar button forces
    * finger drawing on or off when auto isn't what you want.                */
   let sawStylus = false;                       // a real pen/stylus has been used
-  let fingerDraw = 'auto';                     // 'auto' | 'on' | 'off'
-  try { const f = localStorage.getItem('ng-finger-draw'); if (f) fingerDraw = f; } catch (_) {}
+  let fingerDraw = 'off';                      // 'on' | 'off': do fingers draw, or only the stylus?
+  try { const f = localStorage.getItem('ng-finger-draw'); if (f === 'on' || f === 'off') fingerDraw = f; } catch (_) {}
+  // Said once per session, the first time a finger is turned away by a tool.
+  let fingerHinted = false;
+  function fingerHint() {
+    if (fingerHinted || !(state.penMode || state.penEraser || state.selectTool)) return;
+    fingerHinted = true;
+    toast('Stylus only — tap the hand in the draw panel to let fingers draw too');
+  }
 
   function isPalm(e) {
     if (e.pointerType !== 'touch') return false;
@@ -355,22 +366,21 @@
   }
   // Should this pointer lay down ink?
   function inkAccepts(e) {
-    if (e.pointerType === 'pen') { sawStylus = true; updatePenTouchBtn(); return true; }
+    if (e.pointerType === 'pen') { sawStylus = true; return true; }
     if (e.pointerType === 'touch') {
       if (isPalm(e)) return false;
-      if (fingerDraw === 'off') return false;
-      if (fingerDraw === 'auto' && sawStylus) return false;   // stylus present: fingers navigate
+      if (fingerDraw !== 'on') { fingerHint(); return false; }   // stylus only: fingers navigate
       return true;
     }
     return true;                                              // mouse / trackpad
   }
   function updatePenTouchBtn() {
     const b = $('#pen-touch'); if (!b) return;
-    const drawing = fingerDraw === 'on' || (fingerDraw === 'auto' && !sawStylus);
-    b.classList.toggle('active', drawing);
-    b.title = fingerDraw === 'auto'
-      ? (sawStylus ? 'Finger drawing: auto (stylus detected — fingers pan)' : 'Finger drawing: auto (fingers draw)')
-      : (fingerDraw === 'on' ? 'Finger drawing: always on' : 'Finger drawing: off (stylus only)');
+    const on = fingerDraw === 'on';
+    b.classList.toggle('active', on);
+    b.innerHTML = ic(on ? 'hand' : 'hand-off');
+    b.title = on ? 'Finger drawing: on — fingers draw as well as the stylus'
+                 : 'Finger drawing: off — stylus only, fingers move the page';
   }
 
   // The path data for a stroke, in whichever form its style needs.
@@ -403,8 +413,7 @@
     selectedIds: new Set(),  // multi-selection (canvas)
     tagFilter: null,         // active #tag filter (dims non-matching)
     penMode: false,          // freehand ink drawing mode
-    penEraser: false,        // eraser sub-tool within pen mode (removes ink strokes)
-    penSelect: false,        // lasso select sub-tool within pen mode
+    penEraser: false,        // the eraser, with or without the draw panel
     readOnly: false,         // read mode: look and navigate only
     selectTool: false,       // toolbar Select tool: lasso-pick on the canvas
     view: { scale: 1, tx: 60, ty: 40 },
@@ -1617,7 +1626,7 @@
     const ids = [...state.selectedIds];
     // Only while the Select tool is up — it used to pop over whatever you had
     // just written, which got in the way.
-    const selecting = state.selectTool || state.penSelect;
+    const selecting = state.selectTool;
     if (!ids.length || !selecting || state.levelLayout !== 'canvas') { bar.hidden = true; return; }
     // align/distribute need two; with one item only the style tools apply
     bar.querySelectorAll('[data-align]').forEach(b => { b.disabled = ids.length < 2; });
@@ -1689,7 +1698,7 @@
 
   function positionSelFrame() {
     const f = $('#sel-frame'); if (!f) return;
-    const selecting = state.selectTool || state.penSelect;
+    const selecting = state.selectTool;
     if (!selecting || state.readOnly || !state.selectedIds.size || state.levelLayout !== 'canvas') {
       f.hidden = true; return;
     }
@@ -1974,7 +1983,7 @@
     document.getElementById('app').classList.toggle('reading', state.readOnly);
     $('#btn-read')?.classList.toggle('active', state.readOnly);
     if (state.readOnly) {
-      setPenMode(false); setLinkMode(false); setSelectMode(false);
+      setPenMode(false); setEraser(false, true); setLinkMode(false); setSelectMode(false);
       clearSelection(); closeOtherEditors();
     }
     toast(state.readOnly ? 'Read mode on — nothing can be changed' : 'Read mode off');
@@ -2832,7 +2841,7 @@
     const wrap = $('#k-styles'); if (!wrap) return;
     wrap.innerHTML = '';
     const cur = PEN_STYLES[b.style] ? b.style : 'pen';
-    Object.keys(PEN_STYLES).forEach(key => {
+    Object.keys(PEN_STYLES).filter(k => !PEN_STYLES[k].hidden || k === cur).forEach(key => {
       const btn = document.createElement('button');
       btn.className = 'pen-tool' + (key === cur ? ' active' : '');
       btn.title = PEN_STYLES[key].label;
@@ -3341,7 +3350,7 @@
   let gizmo = null;                    // rotate/resize handle drag {id, mode, ...}
   let lastPointer = null;              // last pointer position (screen coords) for paste-at-cursor
   let inking = null;                   // active freehand stroke {pts, path, pointerId, lastX, lastY}
-  let erasing = false;                 // pen eraser drag in progress
+  let erasing = null;                  // eraser drag in progress: { pointerId, lx, ly }
   let lasso = null;                    // freehand selection loop {pts, path, pointerId}
   let lastPointerType = 'mouse';       // dblclick has no pointerType of its own
 
@@ -3358,7 +3367,6 @@
   let lassoMode = 'replace';        // replace | add | remove
   function setLassoMode(m) {
     lassoMode = m;
-    $$('#pen-lasso-modes button').forEach(b => b.classList.toggle('active', b.dataset.lmode === m));
     $$('#sel-modes button').forEach(b => b.classList.toggle('active', b.dataset.lmode === m));
   }
   function selectInsideLasso(poly) {
@@ -3846,39 +3854,45 @@
     // a palm resting on the page while writing does nothing at all
     if (state.penMode && isPalm(e)) return;
 
-    // lasso select: circle anything freehand to pick it up. Starting on top of
-    // something already selected drags the whole selection instead.
-    if (lassoActive() && !lasso && !(state.penMode && !inkAccepts(e))) {
+    const offTools = !e.target.closest('#pen-bar') && !e.target.closest('.banner-stack') && !e.target.closest('#minimap');
+
+    // a freehand loop: the Select tool picks up what is circled, the eraser's
+    // "erase with selection" removes it. Stylus (or mouse) only, like the pen;
+    // a finger pans the page instead.
+    if (lassoActive() && !lasso && inkAccepts(e) && offTools) {
+      const erase = eraseLasso();
       const hitBlock = e.target.closest('.block');
-      const onPicked = hitBlock && state.selectedIds.has(hitBlock.dataset.id);
-      // In the toolbar's Select tool a block still behaves normally (tap to
-      // pick, drag to move); the lasso starts from empty canvas.
-      const skip = onPicked || (state.selectTool && !state.penMode && hitBlock);
-      if (!skip && !e.target.closest('#pen-bar') && !e.target.closest('.banner-stack')) {
+      // With the Select tool a block still behaves normally (tap to pick,
+      // drag to move) and the loop starts from empty canvas. The eraser's
+      // loop starts anywhere.
+      if (erase || !hitBlock) {
         const r = stage.getBoundingClientRect();
         const p = screenToWorld(e.clientX - r.left, e.clientY - r.top);
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        path.setAttribute('class', 'lasso-path');
+        path.setAttribute('class', 'lasso-path' + (erase ? ' erase' : ''));
         svg.appendChild(path);
-        lasso = { pts: [[p.x, p.y]], path, pointerId: e.pointerId };
+        lasso = { pts: [[p.x, p.y]], path, pointerId: e.pointerId, erase };
         path.setAttribute('d', 'M' + p.x + ' ' + p.y);
         return;
       }
-      // fall through: pointer landed on the selection, so the normal drag runs
+      // fall through: pointer landed on a block, so the normal tap/drag runs
     }
 
-    // pen eraser: wipe any ink stroke touched (drag continues in onPointerMove).
-    // Stylus (or mouse) only, like the pen - a finger pans the page instead.
-    if (state.penMode && state.penEraser && !inking && inkAccepts(e)) {
-      erasing = true;
-      eraseInkAt(e.clientX, e.clientY);
+    // the eraser (with or without the draw panel): rub out what is under the
+    // stylus, and keep going as it moves (onPointerMove)
+    if (state.penEraser && eraserMode !== 'lasso' && !inking && inkAccepts(e) && offTools) {
+      erasing = { pointerId: e.pointerId, lx: e.clientX, ly: e.clientY };
+      beginEraseBatch();
+      if (eraserMode === 'stroke') eraseStrokeAt(e.clientX, e.clientY);
+      else eraseSweepAt(e.clientX, e.clientY, e.clientX, e.clientY);
+      try { stage.setPointerCapture(e.pointerId); } catch (_) {}
       return;
     }
 
     // freehand pen (Samsung-Notes model): while draw mode is on, the pen ALWAYS
     // draws — over empty canvas, over blocks, over earlier strokes. Nothing gets
     // selected or dragged. Two fingers = pan/zoom the page.
-    if (state.penMode && !state.penEraser && !state.penSelect && state.levelLayout === 'canvas'
+    if (state.penMode && !state.penEraser && state.levelLayout === 'canvas'
         && !e.target.closest('.banner-stack') && !e.target.closest('#pen-bar') && !e.target.closest('#minimap')
         && inkAccepts(e)) {
       if (inking) {
@@ -3934,10 +3948,12 @@
     // starts on a stroke pans the page, so writing never shifts by accident
     // while you are moving around. (A tap still selects it - see onPointerUp.)
     let inkPassThrough = null;
-    if (blockEl && !state.selectTool && !state.penSelect) {
+    if (blockEl && !state.selectTool) {
       const hb = state.blocks.find(x => x.id === blockEl.dataset.id);
       if (hb && hb.kind === 'ink') { inkPassThrough = hb.id; blockEl = null; }
     }
+    // with the eraser up, a finger (the stylus never gets here) only pans
+    if (blockEl && state.penEraser) { blockEl = null; inkPassThrough = null; }
     // clicked a different block (or empty canvas) while a table's cells were active → leave cell mode
     if (editTableId && (!blockEl || blockEl.dataset.id !== editTableId)) closeTableEditor();
     if (blockEl) {
@@ -4044,7 +4060,18 @@
 
   function onPointerMove(e) {
     lastPointer = { x: e.clientX, y: e.clientY };   // for paste-at-cursor
-    if (erasing) { eraseInkAt(e.clientX, e.clientY); return; }
+    if (erasing) {
+      if (e.pointerId !== erasing.pointerId) return;
+      if (eraserMode === 'stroke') eraseStrokeAt(e.clientX, e.clientY);
+      else { eraseSweepAt(erasing.lx, erasing.ly, e.clientX, e.clientY); showEraserCursor(e.clientX, e.clientY); }
+      erasing.lx = e.clientX; erasing.ly = e.clientY;
+      return;
+    }
+    // hovering with the eraser: show its footprint
+    if (state.penEraser && eraserMode === 'normal' && e.pointerType !== 'touch') {
+      if (e.target === stage || (e.target.closest && e.target.closest('#stage'))) showEraserCursor(e.clientX, e.clientY);
+      else hideEraserCursor();
+    }
     if (lasso) {
       if (e.pointerId !== lasso.pointerId) return;
       const r = stage.getBoundingClientRect();
@@ -4208,12 +4235,19 @@
       }
       rowResize = null; pointers.delete(e.pointerId); return;
     }
-    if (erasing) { erasing = false; pointers.delete(e.pointerId); return; }
+    if (erasing) {
+      if (e.pointerId !== erasing.pointerId) { pointers.delete(e.pointerId); return; }
+      erasing = null;
+      try { stage.releasePointerCapture(e.pointerId); } catch (_) {}
+      commitEraseBatch();
+      pointers.delete(e.pointerId); return;
+    }
     if (lasso) {
       if (e.pointerId !== lasso.pointerId) { pointers.delete(e.pointerId); return; }
       const shape = lasso; lasso = null;
       shape.path.remove();
-      if (shape.pts.length >= 3) selectInsideLasso(shape.pts);
+      if (shape.erase) { if (shape.pts.length >= 3) eraseInsideLasso(shape.pts); }
+      else if (shape.pts.length >= 3) selectInsideLasso(shape.pts);
       else clearSelection();
       return;
     }
@@ -4576,7 +4610,7 @@
     }
     // while drawing, a stylus double-tap is just two dots of ink - never a new
     // block. A finger (or mouse) double-tap still adds one, as does Add.
-    if (state.penMode && lastPointerType === 'pen') return;
+    if ((state.penMode || state.penEraser) && lastPointerType === 'pen') return;
     if (e.target.closest('[data-blk]')) return; // action buttons, not "open"
     const blockEl = e.target.closest('.block');
     if (blockEl) {
@@ -4631,210 +4665,415 @@
   }
 
   /* ---------------------------- freehand pen --------------------------- */
+  /* ------------------------------ tools --------------------------------- *
+   * Draw, Eraser and Select are one-at-a-time: switching one on puts the
+   * others away. The eraser works on its own or with the draw panel open,
+   * and never opens the panel by itself.                                    */
   function setPenMode(on) {
+    on = !!on;
     if (on && state.readOnly) { toast('Read mode is on.'); return; }
     if (on && (state.ws == null || state.levelLayout !== 'canvas')) return;
     state.penMode = on;
-    $('#btn-pen').classList.toggle('active', on);
     stage.classList.toggle('penning', on);
     $('#pen-bar').hidden = !on;
     if (on) {
       setLinkMode(false); closeDrawerIfOpen(); clearSelection();
-      const keepLasso = state.selectTool;
-      setSelectMode(false);
-      if (keepLasso) setPenSelect(true);          // the lasso follows you in
-      renderPenColors(); renderPenStyles(); syncPenSize(); updatePenTouchBtn();
+      if (state.selectTool) setSelectMode(false);
+      if (state.penEraser) setEraser(false, true);       // the panel opens on the pen
+      renderPenTools(); renderPenColors(); syncPenSize(); updatePenTouchBtn();
       updateShapeSnapBtn(); loadPenBarPos();
-      requestAnimationFrame(sizeInkSurface);     // surface ready before the first mark
+      requestAnimationFrame(sizeInkSurface);            // surface ready before the first mark
     } else {
-      const keepLasso = state.penSelect;
-      setEraser(false); setPenSelect(false);
-      if (keepLasso) setSelectMode(true);         // ...and follows you back out
+      closePenMenu(); hideDockHint();
+      if (state.penEraser) setEraser(false, true);       // Done means done
     }
-    $('#btn-pen')?.classList.toggle('active', on && !state.penEraser);
-    $('#btn-eraser')?.classList.toggle('active', on && state.penEraser);
+    syncToolButtons();
+  }
+  function syncToolButtons() {
+    $('#btn-pen')?.classList.toggle('active', state.penMode && !state.penEraser);
+    $('#btn-eraser')?.classList.toggle('active', state.penEraser);
+    $('#btn-select')?.classList.toggle('active', state.selectTool);
+  }
+  // The pen button: with the eraser up it means "back to the pen", otherwise
+  // it opens or closes the draw panel.
+  function penButton() {
+    if (state.penEraser) { if (state.penMode) setEraser(false); else setPenMode(true); return; }
+    setPenMode(!state.penMode);
   }
   // Doing something else (adding a block, opening a menu, stepping into a
   // block) puts the pen / eraser / lasso away, so they never linger.
   function dropActiveTools(why) {
     let dropped = false;
     if (state.penMode) { setPenMode(false); dropped = true; }
+    if (state.penEraser) { setEraser(false, true); dropped = true; }
     if (state.selectTool) { setSelectMode(false); dropped = true; }
     if (state.linkMode) { setLinkMode(false); dropped = true; }
     if (dropped && why) toast(why);
   }
 
-  // Is a freehand selection loop available right now?
-  const lassoActive = () => (state.penMode && state.penSelect) || (!state.penMode && state.selectTool);
+  // A freehand loop is drawn by the Select tool, or by the eraser in its
+  // "erase what I circle" mode.
+  const eraseLasso = () => state.penEraser && eraserMode === 'lasso';
+  const lassoActive = () => state.selectTool || eraseLasso();
 
   // Toolbar Select tool: circle things on the canvas to pick them up.
   function setSelectMode(on) {
-    state.selectTool = !!on;
-    $('#btn-select')?.classList.toggle('active', state.selectTool);
-    stage.classList.toggle('lassoing', state.selectTool);
-    if (!state.selectTool && lasso) { lasso.path.remove(); lasso = null; }
-    if (state.selectTool) toast('Select: circle anything to pick it up');
-    syncSelectionButtons();
-    positionSelBar();
-    positionSelFrame();
+    on = !!on;
+    if (on && state.readOnly) { toast('Read mode is on.'); return; }
+    if (on) {                                            // one tool at a time
+      if (state.penMode) setPenMode(false);
+      if (state.penEraser) setEraser(false, true);
+      setLinkMode(false);
+    }
+    state.selectTool = on;
+    stage.classList.toggle('lassoing', on);
+    if (!on && lasso && !lasso.erase) { lasso.path.remove(); lasso = null; }
+    if (on) toast('Select: circle anything with the stylus to pick it up');
+    syncSelectionButtons(); positionSelBar(); positionSelFrame(); syncToolButtons();
   }
 
-  // lasso select sub-tool (mutually exclusive with the eraser)
-  function setPenSelect(on) {
-    state.penSelect = !!on;
-    if (state.penSelect) setEraser(false);
-    $('#pen-select')?.classList.toggle('active', state.penSelect);
-    $('#btn-select')?.classList.toggle('active', state.penSelect || state.selectTool);
-    const modes = $('#pen-lasso-modes'); if (modes) modes.hidden = !state.penSelect;
-    if (!state.penSelect && !state.selectTool) setLassoMode('replace');
-    positionSelBar();
-    stage.classList.toggle('selecting', state.penSelect);
-    renderPenStyles();
-    if (!state.penSelect) { clearSelection(); if (lasso) { lasso.path.remove(); lasso = null; } }
+  /* ------------------------------ eraser -------------------------------- *
+   * Three erasers, picked from the dots on the eraser button:
+   *   normal - rubs out just the part of a stroke swept over, splitting it
+   *   stroke - removes a whole stroke at a touch
+   *   lasso  - removes every stroke inside a drawn loop
+   * A finger pans while the stylus erases, by the same rule as the pen.     */
+  const ERASER_MODES = {
+    normal: { label: 'Eraser',               hint: 'rubs out what you sweep over', icon: 'eraser' },
+    stroke: { label: 'Stroke eraser',        hint: 'removes a whole stroke',       icon: 'eraser-stroke' },
+    lasso:  { label: 'Erase with selection', hint: 'circle what to remove',        icon: 'eraser-lasso' },
+  };
+  let eraserMode = 'normal', eraserSize = 24;
+  try {
+    const m = localStorage.getItem('ng-eraser-mode'); if (m && ERASER_MODES[m]) eraserMode = m;
+    const z = +(localStorage.getItem('ng-eraser-size')); if (z >= 1 && z <= 100) eraserSize = z;
+  } catch (_) {}
+  const eraserRadiusPx = () => 3 + eraserSize * 0.35;          // on screen, so zoom does not change the feel
+
+  function setEraser(on, quiet) {
+    on = !!on;
+    if (on && state.readOnly) { toast('Read mode is on.'); return; }
+    if (on && (state.ws == null || state.levelLayout !== 'canvas')) return;
+    const was = state.penEraser;
+    state.penEraser = on;
+    if (on) { if (state.selectTool) setSelectMode(false); setLinkMode(false); }
+    stage.classList.toggle('erasing', on);
+    stage.classList.toggle('erase-normal', on && eraserMode === 'normal');
+    if (!on) { hideEraserCursor(); if (lasso && lasso.erase) { lasso.path.remove(); lasso = null; } }
+    renderPenTools(); syncPenSize(); syncToolButtons();
+    if (!quiet && was !== on) {
+      toast(on ? ERASER_MODES[eraserMode].label + ' \u2014 ' + ERASER_MODES[eraserMode].hint
+               : (state.penMode ? 'Back to the pen' : 'Eraser off'));
+    }
   }
-  function setEraser(on) {
-    if (on && state.penSelect) setPenSelect(false);
-    state.penEraser = !!on;
-    const btn = $('#pen-eraser'); if (btn) btn.classList.toggle('active', state.penEraser);
-    stage.classList.toggle('erasing', state.penEraser);
-    renderPenStyles();
-    $('#btn-eraser')?.classList.toggle('active', state.penMode && state.penEraser);
-    $('#btn-pen')?.classList.toggle('active', state.penMode && !state.penEraser);
+  function setEraserMode(m) {
+    if (!ERASER_MODES[m]) return;
+    eraserMode = m;
+    try { localStorage.setItem('ng-eraser-mode', m); } catch (_) {}
+    if (lasso && lasso.erase) { lasso.path.remove(); lasso = null; }
+    if (!state.penEraser) { setEraser(true); return; }
+    stage.classList.toggle('erase-normal', m === 'normal');
+    renderPenTools(); syncPenSize();
+    toast(ERASER_MODES[m].label + ' \u2014 ' + ERASER_MODES[m].hint);
   }
-  // Remove any ink stroke under the pointer (whole-stroke eraser). Undoable.
-  async function eraseInkAt(clientX, clientY) {
+  function showEraserCursor(x, y) {
+    const c = $('#eraser-cursor'); if (!c) return;
+    const d = Math.round(eraserRadiusPx() * 2);
+    c.hidden = false; c.style.width = c.style.height = d + 'px';
+    c.style.left = x + 'px'; c.style.top = y + 'px';
+  }
+  function hideEraserCursor() { const c = $('#eraser-cursor'); if (c) c.hidden = true; }
+
+  // Everything one eraser gesture removes or creates is one undo entry.
+  let eraseBatch = null;
+  function beginEraseBatch() { if (!eraseBatch) eraseBatch = { removed: [], added: new Map() }; }
+  async function commitEraseBatch() {
+    if (!eraseBatch) return;
+    const { removed, added } = eraseBatch; eraseBatch = null;
+    const after = [...added.values()];
+    if (!removed.length && !after.length) return;
+    for (const b of removed) await DB.deleteBlockDeep(b.id);
+    for (const b of after) await DB.saveBlock(b);
+    recordChange({ blocks: removed, edges: [], files: [] }, { blocks: after, edges: [], files: [] });
+  }
+  // Take a stroke off the page (DOM + state), remembering it for undo.
+  function removeInkBlock(b) {
+    beginEraseBatch();
+    if (eraseBatch.added.has(b.id)) eraseBatch.added.delete(b.id);   // born and gone in one gesture
+    else eraseBatch.removed.push({ ...b });
+    state.blocks = state.blocks.filter(x => x.id !== b.id);
+    state.selectedIds.delete(b.id);
+    const el = state.els[b.id]; if (el) el.remove();
+    delete state.els[b.id]; delete state.childCounts[b.id];
+  }
+  function addInkBlock(nb) {
+    beginEraseBatch();
+    eraseBatch.added.set(nb.id, nb);
+    state.blocks.push(nb);
+    state.childCounts[nb.id] = { blocks: 0, files: 0 };
+    world.appendChild(makeBlockEl(nb));
+  }
+  // whole-stroke eraser: whatever stroke is under the point goes
+  function eraseStrokeAt(clientX, clientY) {
     const el = document.elementFromPoint(clientX, clientY);
     const node = el && el.closest ? el.closest('.block-ink') : null;
-    if (!node || node.dataset.erasing) return;
-    const id = node.dataset.id;
-    const b = state.blocks.find(x => x.id === id);
-    if (!b || b.kind !== 'ink') return;
-    node.dataset.erasing = '1';               // guard against re-entry during async delete
-    const removal = await gatherRemoval([id]);
-    await DB.deleteBlockDeep(id);
-    recordChange(removal, emptySet());
-    state.blocks = state.blocks.filter(x => x.id !== id);
-    delete state.els[id];
-    node.remove();
+    if (!node) return;
+    const b = state.blocks.find(x => x.id === node.dataset.id);
+    if (!b || b.kind !== 'ink' || b.locked) return;
+    removeInkBlock(b);
   }
-  // pen style picker (ink pen / brush / pencil / marker / highlighter)
-  function renderPenStyles() {
-    const wrap = $('#pen-styles'); if (!wrap) return;
-    wrap.innerHTML = '';
-    Object.keys(PEN_STYLES).forEach(key => {
-      const s = PEN_STYLES[key];
-      const b = document.createElement('button');
-      // While the eraser or lasso is active no style is "current" — the pen
-      // is not what a tap would do.
-      b.className = 'pen-tool' + (key === penStyle && !state.penEraser && !state.penSelect ? ' active' : '');
-      b.title = s.label;
-      b.innerHTML = ic(s.icon);
-      b.addEventListener('click', () => {
-        penStyle = key;
-        try { localStorage.setItem('ng-pen-style', key); } catch (_) {}
-        setEraser(false); setPenSelect(false);        // back to drawing
-        renderPenStyles(); syncPenSize();
-      });
-      wrap.appendChild(b);
+  // A stroke's points in world units (they are stored relative to its box).
+  const inkPad = (b) => (b.width || 3) + 2;
+  function inkWorldPts(b) {
+    const pad = inkPad(b), ox = (b.x || 0) + pad, oy = (b.y || 0) + pad;
+    return (b.pts || []).map(p => [ox + p[0], oy + p[1], p[2] || 0, p[3] || 0]);
+  }
+  // A new stroke with the same look as `src`, from world-space points.
+  function inkFromWorldPts(src, pts) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const [x, y] of pts) { minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); }
+    const width = src.width || 3;
+    const rel = pts.map(([x, y, pr, k]) => {
+      const q = [Math.round((x - minX) * 10) / 10, Math.round((y - minY) * 10) / 10];
+      if (pr || k) q.push(Math.round((pr || 0) * 100) / 100);
+      if (k) q.push(Math.round(k * 1000) / 1000);
+      return q;
     });
+    return { ...src, id: uid(), pts: rel, w: Math.round(maxX - minX), h: Math.round(maxY - minY),
+      x: Math.round(minX - width - 2), y: Math.round(minY - width - 2), createdAt: Date.now(), updatedAt: Date.now() };
   }
+  const distToSeg = (px, py, ax, ay, bx, by) => {
+    const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+    let t = l2 ? ((px - ax) * dx + (py - ay) * dy) / l2 : 0; t = Math.max(0, Math.min(1, t));
+    return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+  };
+  // Rub out whatever lies under the eraser's sweep from (x0,y0) to (x1,y1),
+  // all in world units. A stroke cut in the middle becomes two strokes.
+  function eraseSweep(x0, y0, x1, y1, R) {
+    const sx = Math.min(x0, x1) - R, sy = Math.min(y0, y1) - R, ex = Math.max(x0, x1) + R, ey = Math.max(y0, y1) + R;
+    for (const b of state.blocks.slice()) {
+      if (b.kind !== 'ink' || b.parentId !== state.level || b.locked) continue;
+      const pad = inkPad(b), bw = (b.w || 0) + pad * 2, bh = (b.h || 0) + pad * 2;
+      if (b.x > ex || b.y > ey || b.x + bw < sx || b.y + bh < sy) continue;     // nowhere near
+      const thr = R + (b.width || 3) / 2;
+      // densify, so a quick sweep cannot slip between two samples of a stroke
+      const src = inkWorldPts(b), pts = [];
+      for (let i = 0; i < src.length; i++) {
+        pts.push(src[i]);
+        const nx = src[i + 1]; if (!nx) break;
+        const d = Math.hypot(nx[0] - src[i][0], nx[1] - src[i][1]);
+        const steps = Math.min(40, Math.floor(d / Math.max(2, R)));
+        for (let k = 1; k <= steps; k++) {
+          const t = k / (steps + 1);
+          pts.push([src[i][0] + (nx[0] - src[i][0]) * t, src[i][1] + (nx[1] - src[i][1]) * t,
+                    src[i][2] + (nx[2] - src[i][2]) * t, src[i][3] + (nx[3] - src[i][3]) * t]);
+        }
+      }
+      let hit = false;
+      const keep = pts.map(q => { const k = distToSeg(q[0], q[1], x0, y0, x1, y1) > thr; if (!k) hit = true; return k; });
+      if (!hit) continue;
+      const runs = []; let run = [];
+      pts.forEach((q, i) => { if (keep[i]) run.push(q); else { if (run.length > 1) runs.push(run); run = []; } });
+      if (run.length > 1) runs.push(run);
+      removeInkBlock(b);
+      for (const r of runs) addInkBlock(inkFromWorldPts(b, r));
+    }
+  }
+  function eraseSweepAt(cx0, cy0, cx1, cy1) {
+    const r = stage.getBoundingClientRect();
+    const a = screenToWorld(cx0 - r.left, cy0 - r.top), z = screenToWorld(cx1 - r.left, cy1 - r.top);
+    eraseSweep(a.x, a.y, z.x, z.y, eraserRadiusPx() / (state.view.scale || 1));
+  }
+  // erase with selection: a stroke goes when most of it lies inside the loop
+  function eraseInsideLasso(poly) {
+    beginEraseBatch();
+    let n = 0;
+    for (const b of state.blocks.slice()) {
+      if (b.kind !== 'ink' || b.parentId !== state.level || b.locked) continue;
+      const pts = inkWorldPts(b); if (!pts.length) continue;
+      const step = Math.max(1, Math.floor(pts.length / 24));
+      let inside = 0, total = 0;
+      for (let i = 0; i < pts.length; i += step) { total++; if (pointInPoly(pts[i][0], pts[i][1], poly)) inside++; }
+      if (inside * 2 >= total) { removeInkBlock(b); n++; }
+    }
+    commitEraseBatch();
+    toast(n ? n + (n === 1 ? ' stroke erased' : ' strokes erased') : 'Nothing inside the loop');
+  }
+
+  /* --------------------------- draw panel ------------------------------- *
+   * Two tool buttons carry a small dots badge: tap the button for the tool,
+   * tap the dots (or the button again while it is already the active tool)
+   * for its options. Each button's icon shows the current choice.           */
+  const PEN_ORDER = ['pencil', 'pen', 'brush', 'highlighter'];
+  function renderPenTools() {
+    const st = PEN_STYLES[penStyle] || PEN_STYLES.pen, em = ERASER_MODES[eraserMode];
+    const sb = $('#pen-style'), sic = $('#pen-style-ic');
+    if (sb) { sb.classList.toggle('active', !state.penEraser); sb.title = st.label + ' \u2014 tap the dots for other styles'; }
+    if (sic) sic.innerHTML = ic(st.icon);
+    const eb = $('#pen-eraser'), eic = $('#pen-eraser-ic');
+    if (eb) { eb.classList.toggle('active', state.penEraser); eb.title = em.label + ' (E) \u2014 tap the dots for other erasers'; }
+    if (eic) eic.innerHTML = ic(em.icon);
+    const sw = $('#pen-bar .pen-size-wrap');
+    if (sw) sw.classList.toggle('dimmed', state.penEraser && eraserMode !== 'normal');
+  }
+  // the one slider serves the pen's thickness or the eraser's size
   function syncPenSize() {
     const sl = $('#pen-size'), lab = $('#pen-size-val');
-    if (sl) sl.value = penSize;
-    if (lab) lab.textContent = penSize + '%';
-    const prev = $('#pen-size-wrap-preview');
-    if (prev) prev.style.height = Math.min(22, curWidth()) + 'px';
+    const forEraser = state.penEraser && eraserMode === 'normal';
+    const v = forEraser ? eraserSize : penSize;
+    if (sl) { sl.value = v; sl.title = forEraser ? 'Eraser size' : 'Thickness'; }
+    if (lab) lab.textContent = v + '%';
+  }
+  function choosePenStyle(key) {
+    if (!PEN_STYLES[key]) return;
+    penStyle = key;
+    try { localStorage.setItem('ng-pen-style', key); } catch (_) {}
+    if (state.penEraser) setEraser(false, true);         // choosing a pen means "draw"
+    renderPenTools(); syncPenSize();
+  }
+
+  // ---- the options menu under a tool button ----
+  function closePenMenu() { const m = $('#pen-menu'); if (m) { m.hidden = true; m.innerHTML = ''; m.dataset.kind = ''; } }
+  function openPenMenu(kind, anchor, below) {
+    const m = $('#pen-menu'); if (!m || !anchor) return;
+    m.innerHTML = ''; m.dataset.kind = kind;
+    const items = kind === 'style'
+      ? PEN_ORDER.map(k => ({ k, icon: PEN_STYLES[k].icon, label: PEN_STYLES[k].label, hint: '', on: k === penStyle && !state.penEraser }))
+      : Object.keys(ERASER_MODES).map(k => ({ k, icon: ERASER_MODES[k].icon, label: ERASER_MODES[k].label, hint: ERASER_MODES[k].hint, on: k === eraserMode && state.penEraser }));
+    items.forEach(it => {
+      const b = document.createElement('button');
+      b.className = it.on ? 'active' : ''; b.dataset.v = it.k;
+      b.innerHTML = ic(it.icon) + '<span>' + esc(it.label) + '</span>' + (it.hint ? '<span class="pm-hint">' + esc(it.hint) + '</span>' : '');
+      b.addEventListener('click', (e) => { e.stopPropagation(); closePenMenu(); if (kind === 'style') choosePenStyle(it.k); else setEraserMode(it.k); });
+      m.appendChild(b);
+    });
+    m.hidden = false;
+    // beside an upright panel, above or below a flat one; never off screen
+    const r = anchor.getBoundingClientRect(), vw = window.innerWidth, vh = window.innerHeight;
+    const mw = m.offsetWidth, mh = m.offsetHeight;
+    let left, top;
+    if (!below && state.penMode && penBarVert) { left = r.left + r.width / 2 < vw / 2 ? r.right + 8 : r.left - mw - 8; top = r.top; }
+    else { left = r.left + r.width / 2 - mw / 2; top = (!below && r.top + r.height / 2 > vh / 2) ? r.top - mh - 8 : r.bottom + 8; }
+    m.style.left = Math.round(clamp(left, 6, Math.max(6, vw - mw - 6))) + 'px';
+    m.style.top = Math.round(clamp(top, 6, Math.max(6, vh - mh - 6))) + 'px';
+  }
+  function bindPenMenus() {
+    // primary() does the button's own job and says whether the menu should open instead
+    const wire = (id, kind, primary) => {
+      const btn = $(id); if (!btn) return;
+      btn.addEventListener('click', (e) => {
+        if (penBarJustDragged) return;
+        const m = $('#pen-menu');
+        if (e.target.closest('.pen-more') || primary()) {
+          if (m && !m.hidden && m.dataset.kind === kind) closePenMenu(); else openPenMenu(kind, btn);
+        } else closePenMenu();
+      });
+      btn.addEventListener('contextmenu', (e) => { e.preventDefault(); openPenMenu(kind, btn); });
+    };
+    wire('#pen-style', 'style', () => { if (state.penEraser) { setEraser(false); return false; } return true; });
+    wire('#pen-eraser', 'eraser', () => { if (!state.penEraser) { setEraser(true); return false; } return true; });
+    // the toolbar eraser has no badge: right-click / long-press opens the modes
+    $('#btn-eraser')?.addEventListener('contextmenu', (e) => { e.preventDefault(); openPenMenu('eraser', $('#btn-eraser'), true); });
+    document.addEventListener('click', (e) => {
+      const m = $('#pen-menu'); if (!m || m.hidden) return;
+      if (!m.contains(e.target) && !e.target.closest('#pen-style, #pen-eraser, #btn-eraser')) closePenMenu();
+    });
   }
 
   /* ------------------- draggable draw panel ---------------------------- *
-   * The bar lives outside .banner-stack (a transformed parent would trap a
-   * fixed child), so it can be dragged anywhere and its spot remembered.   */
+   * Drag it from anywhere on its body (the slider keeps its own drag). When
+   * let go it snaps to the nearest of seven spots: the middle of any edge or
+   * a corner - not the bottom-right one, where the mini-map lives. Along the
+   * top or bottom it lies flat, down a side it stands up, and in a corner it
+   * keeps whichever way it was last.                                        */
+  const PEN_ANCHORS = ['tm', 'bm', 'lm', 'rm', 'tl', 'tr', 'bl'];
+  let penBarAnchor = 'bm', penBarVert = false, penBarJustDragged = false;
   function penBarHost() { return $('#app') || document.body; }
-  function loadPenBarPos() {
-    const bar = $('#pen-bar'); if (!bar) return;
-    if (bar.parentElement !== penBarHost()) penBarHost().appendChild(bar);
-    let pos = null;
-    try { pos = JSON.parse(localStorage.getItem('ng-pen-bar-pos') || 'null'); } catch (_) {}
-    if (pos && typeof pos.left === 'number') placePenBar(pos.left, pos.top, pos.dock || null);
-    else resetPenBarPos();
-  }
-  const PEN_DOCKS = ['dock-left', 'dock-right', 'dock-top', 'dock-bottom'];
-
-  // Which edge is the pointer hugging? Inside the snap zone the bar docks to
-  // that edge and takes its orientation (vertical down the sides, horizontal
-  // along the top and bottom); anywhere else it floats where it was dropped.
-  // This follows the pointer, not the bar's own edges — a wide bar would
-  // otherwise always be touching something and could never float free.
-  // The panel lives between the toolbar and the breadcrumb bar — docking to
-  // the top means sitting just under the menu, never behind it.
+  // between the toolbar and the breadcrumb bar
   function penBarBounds() {
     const bar = $('#topbar'), foot = $('#bottombar');
     const top = bar ? bar.getBoundingClientRect().bottom + 6 : 6;
     const footH = foot && !foot.hidden ? foot.getBoundingClientRect().height : 0;
     return { top, bottom: window.innerHeight - footH - 6 };
   }
-  function dockForPointer(px, py) {
-    const S = 70, vw = window.innerWidth;
-    const b = penBarBounds();
-    const d = { left: px, right: vw - px, top: py - b.top, bottom: b.bottom - py };
-    const near = Object.keys(d).filter(k => d[k] <= S);
-    if (!near.length) return null;
-    return 'dock-' + near.reduce((a, x) => (d[x] < d[a] ? x : a));
+  function anchorPoints() {
+    const vw = window.innerWidth, b = penBarBounds(), my = (b.top + b.bottom) / 2;
+    return { tm: [vw / 2, b.top], bm: [vw / 2, b.bottom], lm: [0, my], rm: [vw, my],
+             tl: [0, b.top], tr: [vw, b.top], bl: [0, b.bottom] };
   }
-  function applyPenDock(bar, dock) {
-    PEN_DOCKS.forEach(c => bar.classList.toggle(c, c === dock));
+  function nearestAnchor(px, py) {
+    const pts = anchorPoints();
+    const d = (a) => Math.hypot(px - pts[a][0], py - pts[a][1]);
+    return PEN_ANCHORS.reduce((best, a) => (d(a) < d(best) ? a : best), 'bm');
   }
-  function placePenBar(left, top, dock, save = true) {
+  const anchorVert = (a, prev) => (a === 'lm' || a === 'rm') ? true : (a === 'tm' || a === 'bm') ? false : !!prev;
+  function loadPenBarPos() {
     const bar = $('#pen-bar'); if (!bar) return;
-    bar.classList.add('moved');
-    applyPenDock(bar, dock);
-    const r = bar.getBoundingClientRect();           // orientation may have changed the size
-    const w = r.width || 320, h = r.height || 46;
+    if (bar.parentElement !== penBarHost()) penBarHost().appendChild(bar);
+    let pos = null;
+    try { pos = JSON.parse(localStorage.getItem('ng-pen-bar-pos') || 'null'); } catch (_) {}
+    const anchor = pos && PEN_ANCHORS.includes(pos.anchor) ? pos.anchor : 'bm';
+    placePenBar(anchor, anchorVert(anchor, pos && pos.vert), false);
+  }
+  function placePenBar(anchor, vert, save = true) {
+    const bar = $('#pen-bar'); if (!bar) return;
+    penBarAnchor = anchor; penBarVert = !!vert;
+    bar.classList.add('moved'); bar.classList.toggle('vert', penBarVert);
+    bar.style.left = '0px'; bar.style.top = '0px';                 // measure at its natural size
+    const r = bar.getBoundingClientRect(), w = r.width || 320, h = r.height || 46;
     const vw = window.innerWidth, b = penBarBounds();
-    if (dock === 'dock-left') left = 0;
-    else if (dock === 'dock-right') left = vw - w;
-    else if (dock === 'dock-top') top = b.top;
-    else if (dock === 'dock-bottom') top = b.bottom - h;
-    left = clamp(left, dock ? 0 : 6, Math.max(0, vw - w - (dock ? 0 : 6)));
-    top = clamp(top, b.top, Math.max(b.top, b.bottom - h));
-    bar.style.left = Math.round(left) + 'px';
-    bar.style.top = Math.round(top) + 'px';
-    if (save) {
-      try { localStorage.setItem('ng-pen-bar-pos', JSON.stringify({ left: Math.round(left), top: Math.round(top), dock })); } catch (_) {}
-    }
+    const atL = anchor === 'lm' || anchor === 'tl' || anchor === 'bl', atR = anchor === 'rm' || anchor === 'tr';
+    const atT = anchor === 'tm' || anchor === 'tl' || anchor === 'tr', atB = anchor === 'bm' || anchor === 'bl';
+    const left = atL ? 0 : atR ? vw - w : (vw - w) / 2;
+    const top = atT ? b.top : atB ? b.bottom - h : (b.top + b.bottom - h) / 2;
+    bar.style.left = Math.round(clamp(left, 0, Math.max(0, vw - w))) + 'px';
+    bar.style.top = Math.round(clamp(top, b.top, Math.max(b.top, b.bottom - h))) + 'px';
+    bar.classList.toggle('edge-l', atL); bar.classList.toggle('edge-r', atR);
+    bar.classList.toggle('edge-t', atT); bar.classList.toggle('edge-b', atB);
+    bar.dataset.anchor = anchor;
+    if (save) { try { localStorage.setItem('ng-pen-bar-pos', JSON.stringify({ anchor, vert: penBarVert })); } catch (_) {} }
   }
-  function resetPenBarPos() {
-    const bar = $('#pen-bar'); if (!bar) return;
-    bar.classList.remove('moved');
-    applyPenDock(bar, null);
-    bar.style.left = bar.style.top = '';
-    try { localStorage.removeItem('ng-pen-bar-pos'); } catch (_) {}
+  function showDockHint(a) {
+    const h = $('#pen-dock-hint'); if (!h) return;
+    const p = anchorPoints()[a]; h.hidden = false;
+    h.style.left = Math.round(clamp(p[0], 10, window.innerWidth - 10)) + 'px';
+    h.style.top = Math.round(p[1]) + 'px';
   }
+  function hideDockHint() { const h = $('#pen-dock-hint'); if (h) h.hidden = true; }
   function bindPenBarDrag() {
-    const bar = $('#pen-bar'), grip = $('#pen-grip');
-    if (!bar || !grip) return;
+    const bar = $('#pen-bar'); if (!bar) return;
     let drag = null;
-    grip.addEventListener('pointerdown', (e) => {
-      e.preventDefault(); e.stopPropagation();
+    bar.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || e.target.closest('input')) return;      // the slider drags itself
       const r = bar.getBoundingClientRect();
-      drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
-      bar.classList.add('dragging');
-      try { grip.setPointerCapture(e.pointerId); } catch (_) {}
+      drag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, dx: e.clientX - r.left, dy: e.clientY - r.top, live: false };
     });
-    grip.addEventListener('dblclick', (e) => { e.preventDefault(); resetPenBarPos(); });
-    const move = (e) => {
-      if (!drag) return;
-      placePenBar(e.clientX - drag.dx, e.clientY - drag.dy, dockForPointer(e.clientX, e.clientY));
+    window.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      if (!drag.live) {
+        if (Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 8) return;   // a tap, not a drag
+        drag.live = true; bar.classList.add('dragging'); closePenMenu();
+        try { bar.setPointerCapture(e.pointerId); } catch (_) {}
+      }
+      bar.style.left = Math.round(e.clientX - drag.dx) + 'px';
+      bar.style.top = Math.round(e.clientY - drag.dy) + 'px';
+      showDockHint(nearestAnchor(e.clientX, e.clientY));
+    });
+    const end = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const was = drag; drag = null;
+      if (!was.live) return;
+      bar.classList.remove('dragging'); hideDockHint();
+      try { bar.releasePointerCapture(e.pointerId); } catch (_) {}
+      const a = nearestAnchor(e.clientX, e.clientY);
+      placePenBar(a, anchorVert(a, penBarVert));
+      penBarJustDragged = true; setTimeout(() => { penBarJustDragged = false; }, 0);
     };
-    const end = () => { if (drag) { drag = null; bar.classList.remove('dragging'); } };
-    window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', end);
     window.addEventListener('pointercancel', end);
-    window.addEventListener('resize', () => {
-      if (!bar.classList.contains('moved')) return;
-      const dock = PEN_DOCKS.find(c => bar.classList.contains(c)) || null;
-      placePenBar(parseFloat(bar.style.left) || 0, parseFloat(bar.style.top) || 0, dock);
-    });
+    // a drag must not also press whatever button it started on
+    bar.addEventListener('click', (e) => { if (penBarJustDragged) { e.stopPropagation(); e.preventDefault(); } }, true);
+    window.addEventListener('resize', () => { if (!bar.hidden) placePenBar(penBarAnchor, penBarVert, false); });
   }
 
   // Ctrl+A — select everything on this level.
@@ -4850,11 +5089,13 @@
      drawing, and only for a real tap: no movement, no long hold — so it can
      never be confused with a pinch or a two-finger pan.                    */
   function bindDrawTapGestures() {
-    const TAP_MS = 400, SLOP = 14;
+    const TAP_MS = 650, SLOP = 26;
     let g = null;
     const done = () => { g = null; };
     stage.addEventListener('pointerdown', (e) => {
-      if (e.pointerType !== 'touch' || isPalm(e)) return;
+      // no palm filter here: three fingers tapping firmly look broad, and a
+      // resting palm never makes a quick, still tap anyway
+      if (e.pointerType !== 'touch') return;
       const now = Date.now();
       if (!g || now - g.start > 700) g = { start: now, max: 0, moved: false, pts: new Map() };
       g.pts.set(e.pointerId, { x: e.clientX, y: e.clientY, live: true });
@@ -4878,7 +5119,7 @@
       else { redo(); toast('Redo'); }
     };
     window.addEventListener('pointerup', lift, true);
-    window.addEventListener('pointercancel', (e) => { if (g && g.pts.has(e.pointerId)) done(); }, true);
+    window.addEventListener('pointercancel', lift, true);
   }
 
   function renderPenColors() {
@@ -4891,8 +5132,8 @@
       d.addEventListener('click', () => {
         penColor = col;
         try { localStorage.setItem('ng-pen-color', col); } catch (_) {}
-        setEraser(false); setPenSelect(false);        // choosing ink means "draw"
-        renderPenColors(); renderPenStyles();
+        if (state.penEraser) setEraser(false, true);  // choosing ink means "draw"
+        renderPenColors(); renderPenTools();
       });
       wrap.appendChild(d);
     });
@@ -5183,6 +5424,24 @@
     input.addEventListener('focus', () => { if (input.value.trim()) runSearch(input.value.trim()); });
   }
   function hideSearchResults() { const r = $('#search-results'); r.hidden = true; r.innerHTML = ''; }
+  // Search opens under its toolbar button, sized to the screen.
+  function openSearch() {
+    const pop = $('#search-pop'), btn = $('#btn-search'); if (!pop) return;
+    pop.hidden = false;
+    const tb = $('#topbar'), top = tb ? tb.getBoundingClientRect().bottom + 6 : 60;
+    const w = Math.min(560, window.innerWidth - 24);
+    const left = btn ? btn.getBoundingClientRect().left : 12;
+    pop.style.top = Math.round(top) + 'px';
+    pop.style.left = Math.round(clamp(left, 12, Math.max(12, window.innerWidth - w - 12))) + 'px';
+    pop.style.width = w + 'px';
+    btn?.classList.add('active');
+    const input = $('#search'); input.focus(); input.select();
+    if (input.value.trim()) runSearch(input.value.trim());
+  }
+  function closeSearch() {
+    const pop = $('#search-pop'); if (!pop || pop.hidden) return;
+    pop.hidden = true; hideSearchResults(); $('#btn-search')?.classList.remove('active');
+  }
 
   async function runSearch(q) {
     const box = $('#search-results');
@@ -5232,7 +5491,7 @@
           <div class="r-sub">${esc(h.sub || '')}</div>
         </div>
         <div class="r-tag">${elsewhere ? esc(wsName[h.b.ws] || 'other') : 'open'}</div>`;
-      row.addEventListener('click', () => { hideSearchResults(); $('#search').value = ''; goToBlock(h.b); });
+      row.addEventListener('click', () => { hideSearchResults(); closeSearch(); $('#search').value = ''; goToBlock(h.b); });
       box.appendChild(row);
     });
   }
@@ -5791,6 +6050,7 @@
   async function toggleOutline(force) {
     outlineOpen = force === undefined ? !outlineOpen : !!force;
     $('#outline').hidden = !outlineOpen;
+    $('#btn-outline')?.classList.toggle('active', outlineOpen);
     if (outlineOpen) await renderOutline();
   }
   async function renderOutline() {
@@ -6172,7 +6432,7 @@
   async function goHome() {
     state.ws = null; state.wsName = '';
     clearHistory();
-    closeDrawer(); hideSearchResults();
+    closeDrawer(); hideSearchResults(); closeSearch();
     $('#menu').hidden = true; $('#add-menu').hidden = true; $('#brand-menu').hidden = true;
     if (state.linkMode) setLinkMode(false);
     if (state.penMode) setPenMode(false);
@@ -6602,7 +6862,7 @@
     $('#import-input').addEventListener('change', (e) => { if (e.target.files[0]) importWorkspaceFile(e.target.files[0]); e.target.value = ''; });
     document.addEventListener('click', (e) => {
       if (!menu.hidden && !menu.contains(e.target) && e.target.id !== 'btn-menu') menu.hidden = true;
-      if (!e.target.closest('.search')) hideSearchResults();
+      if (!e.target.closest('.search') && !e.target.closest('#btn-search')) { hideSearchResults(); closeSearch(); }
     });
   }
 
@@ -6722,12 +6982,15 @@
       if (e.key === 'Escape') {
         if (presenting) { stopPresenting(); return; }        // leave the slideshow
         if (!$('#cmdk').hidden) { closeCmdk(); return; }
+        if (!$('#pen-menu').hidden) { closePenMenu(); return; }
+        if (!$('#search-pop').hidden) { closeSearch(); return; }
         if (!$('#ctxmenu').hidden) { hideCtxMenu(); }
         else if (!$('#prompt').hidden) { $('#prompt').hidden = true; promptCb = null; }
         else if (!$('#props').hidden) { $('#props').hidden = true; propsWs = null; }
         else if (!$('#confirm').hidden) { $('#confirm').hidden = true; confirmCb = null; }
         else if (!$('#about').hidden) $('#about').hidden = true;
         else if (state.penMode) setPenMode(false);
+        else if (state.penEraser) setEraser(false);
         else if (state.selectTool) setSelectMode(false);      // put the lasso away
         else if (state.linkMode) setLinkMode(false);
         else if (!$('#text-drawer').hidden) closeTextEditor();
@@ -6783,9 +7046,8 @@
       }
       if (e.key === 'n' || e.key === 'N') { e.preventDefault(); createBlock('block'); }
       if (e.key === 'l' || e.key === 'L') setLinkMode(!state.linkMode);
-      if (e.key === 'p' || e.key === 'P') setPenMode(!state.penMode);
-      if (e.key === 'e' || e.key === 'E') { if (!state.penMode) setPenMode(true); if (state.penMode) setEraser(!state.penEraser); }
-      if (e.key === 's' || e.key === 'S') { if (!state.penMode) setPenMode(true); if (state.penMode) setPenSelect(!state.penSelect); }
+      if (e.key === 'p' || e.key === 'P') penButton();
+      if (e.key === 'e' || e.key === 'E') setEraser(!state.penEraser);
       // Tab drops a sibling next to the selected block and selects it
       if (e.key === 'Tab' && state.selectedIds.size === 1 && state.levelLayout === 'canvas') {
         e.preventDefault();
@@ -6807,7 +7069,7 @@
       if (e.key === 'm' || e.key === 'M') toggleMinimap();
       if (e.key === 'f' || e.key === 'F') fitToView();
       if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedIds.size) deleteSelected();
-      if (e.key === '/') { e.preventDefault(); $('#search').focus(); }
+      if (e.key === '/') { e.preventDefault(); openSearch(); }
     });
   }
 
@@ -6916,35 +7178,24 @@
     $('#btn-link').addEventListener('click', () => setLinkMode(!state.linkMode));
     $('#link-exit').addEventListener('click', () => setLinkMode(false));
     $('#tag-filter-clear').addEventListener('click', () => setTagFilter(state.tagFilter));
-    $('#btn-pen').addEventListener('click', () => {
-      // While the eraser or lasso is up, the pen button means "back to the pen"
-      // (with whatever style was last used) — not "leave draw mode".
-      if (state.penMode && (state.penEraser || state.penSelect)) {
-        setEraser(false); setPenSelect(false);
-        return;
-      }
-      setPenMode(!state.penMode);
-    });
+    $('#btn-pen').addEventListener('click', penButton);
     $('#pen-exit').addEventListener('click', () => setPenMode(false));
-    $('#pen-eraser').addEventListener('click', () => setEraser(!state.penEraser));
     $('#pen-size').addEventListener('input', (e) => {
-      penSize = clamp(parseInt(e.target.value, 10) || 12, 1, 100);
-      try { localStorage.setItem('ng-pen-size', penSize); } catch (_) {}
+      const v = clamp(parseInt(e.target.value, 10) || 12, 1, 100);
+      if (state.penEraser && eraserMode === 'normal') { eraserSize = v; try { localStorage.setItem('ng-eraser-size', v); } catch (_) {} }
+      else { penSize = v; try { localStorage.setItem('ng-pen-size', v); } catch (_) {} }
       syncPenSize();
     });
-    // eraser button in the toolbar, right of the pen button
-    $('#btn-eraser').addEventListener('click', () => {
-      if (!state.penMode) setPenMode(true);          // opens draw mode with the eraser
-      setEraser(!state.penEraser);                   // off -> back to the pen, still drawing
-    });
+    // the toolbar eraser: on its own or alongside the draw panel, never
+    // opening the panel and never leaving it on when switched off
+    $('#btn-eraser').addEventListener('click', () => setEraser(!state.penEraser));
     // finger drawing: auto (default) -> always on -> off (stylus only)
     $('#pen-touch').addEventListener('click', () => {
-      fingerDraw = fingerDraw === 'auto' ? 'on' : (fingerDraw === 'on' ? 'off' : 'auto');
+      fingerDraw = fingerDraw === 'on' ? 'off' : 'on';
       try { localStorage.setItem('ng-finger-draw', fingerDraw); } catch (_) {}
       updatePenTouchBtn();
-      toast(fingerDraw === 'auto' ? 'Finger drawing: auto' : fingerDraw === 'on' ? 'Finger drawing: always on' : 'Finger drawing: off — stylus only');
+      toast(fingerDraw === 'on' ? 'Finger drawing on' : 'Finger drawing off — stylus only');
     });
-    $('#pen-select').addEventListener('click', () => setPenSelect(!state.penSelect));
     $('#pen-snap').addEventListener('click', () => {
       shapeSnap = !shapeSnap;
       try { localStorage.setItem('ng-shape-snap', shapeSnap ? '1' : '0'); } catch (_) {}
@@ -6952,12 +7203,9 @@
       toast(shapeSnap ? 'Shape snapping on — draw a circle, box, triangle or line'
                       : 'Shape snapping off');
     });
-    $('#btn-select').addEventListener('click', () => {
-      // Works in draw mode too: there it drives the pen panel's lasso, so the
-      // one button always means "circle things to pick them up".
-      if (state.penMode) setPenSelect(!state.penSelect);
-      else setSelectMode(!state.selectTool);
-    });
+    $('#btn-select').addEventListener('click', () => setSelectMode(!state.selectTool));
+    $('#btn-outline').addEventListener('click', () => toggleOutline());
+    $('#btn-search').addEventListener('click', (e) => { e.stopPropagation(); if ($('#search-pop').hidden) openSearch(); else closeSearch(); });
     $('#btn-delete').addEventListener('click', () => {
       if (!state.selectedIds.size) { toast('Select something first.'); return; }
       deleteSelected();
@@ -6970,10 +7218,6 @@
     $('#btn-redo').addEventListener('click', () => redo());
     $('#btn-read').addEventListener('click', () => setReadMode(!state.readOnly));
     $('#sel-modes').addEventListener('click', (e) => {
-      const b = e.target.closest('button[data-lmode]'); if (!b) return;
-      setLassoMode(b.dataset.lmode);
-    });
-    $('#pen-lasso-modes').addEventListener('click', (e) => {
       const b = e.target.closest('button[data-lmode]'); if (!b) return;
       setLassoMode(b.dataset.lmode);
     });
@@ -6996,7 +7240,7 @@
     $('#pres-next').addEventListener('click', () => gotoStop(presenting ? presenting.at + 1 : 0));
     $('#pres-exit').addEventListener('click', stopPresenting);
     bindEdgeEditor();
-    bindPenBarDrag();
+    bindPenBarDrag(); bindPenMenus();
     // pointerrawupdate fires as soon as the digitiser reports, ahead of the
     // throttled pointermove — the lowest-latency input the web offers.
     if ('onpointerrawupdate' in window) {
@@ -7026,7 +7270,7 @@
       if (dragging) { state.els[dragging.primary]?.classList.remove('dragging'); dragging = null; }
       if (panning) { stage.classList.remove('panning'); panning = null; }
       clearTimeout(lpTimer); lpTimer = null; lpFired = false;
-      colResize = null; rowResize = null; erasing = false;
+      colResize = null; rowResize = null; erasing = null; commitEraseBatch();
       if (inking) {
         try { stage.releasePointerCapture(inking.pointerId); } catch (_) {}
         clearInkSurface(); inking = null;                    // drop a half-drawn stroke

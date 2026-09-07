@@ -9,7 +9,7 @@
   <link rel="apple-touch-icon" href="icon.svg" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Notes Gallery" />
-  <link rel="stylesheet" href="css/styles.css?v=107" />
+  <link rel="stylesheet" href="css/styles.css?v=108" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cdefs%3E%3ClinearGradient%20id='g'%20x1='0'%20y1='0'%20x2='1'%20y2='1'%3E%3Cstop%20offset='0'%20stop-color='%234353ff'/%3E%3Cstop%20offset='1'%20stop-color='%23146ef5'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20width='24'%20height='24'%20rx='6'%20fill='url(%23g)'/%3E%3Cg%20transform='translate(12%2012)%20scale(0.76)%20translate(-12%20-12)'%20fill='none'%20stroke='%23fff'%20stroke-width='1.5'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M12%203.6C14.7%203.6%2016.1%205.8%2015.9%208L12.5%2018.6C12.3%2019.4%2011.7%2019.4%2011.5%2018.6L8.1%208C7.9%205.8%209.3%203.6%2012%203.6Z'/%3E%3Cline%20x1='12'%20y1='10.6'%20x2='12'%20y2='18'/%3E%3Ccircle%20cx='12'%20cy='9'%20r='1.15'/%3E%3C/g%3E%3C/svg%3E" />
 </head>
 <body>
@@ -24,15 +24,16 @@
       </div>
 
       <div class="bar-group bar-center">
+        <div class="navgroup tools-left">
+          <button id="btn-outline" class="btn icon" title="Outline sidebar (O)"><span data-icon="sidebar"></span></button>
+          <button id="btn-search" class="btn icon" title="Search all workspaces (/)"><span data-icon="search"></span></button>
+          <button id="btn-read" class="btn icon" title="Read mode — look without changing anything"><span data-icon="eye"></span></button>
+        </div>
+        <span class="divider"></span>
         <div class="navgroup">
           <button id="btn-home" class="btn icon" title="Workspace home"><span data-icon="home"></span></button>
           <button id="btn-back" class="btn icon" title="Back"><span data-icon="arrow-left"></span></button>
           <button id="btn-forward" class="btn icon" title="Forward"><span data-icon="arrow-right"></span></button>
-        </div>
-        <div class="search">
-          <span class="search-ico" data-icon="search"></span>
-          <input id="search" type="search" placeholder="Search notes, blocks, files…" autocomplete="off" />
-          <div id="search-results" class="search-results" hidden></div>
         </div>
       </div>
 
@@ -45,8 +46,8 @@
         <button id="btn-link" class="btn icon" title="Connect two blocks"><span data-icon="link"></span></button>
         <span class="bar-break" aria-hidden="true"></span>
         <button id="btn-pen" class="btn icon" title="Freehand pen (draw)"><span data-icon="pen"></span></button>
-        <button id="btn-eraser" class="btn icon" title="Eraser (E)"><span data-icon="eraser"></span></button>
-        <button id="btn-select" class="btn icon" title="Select — circle objects to pick them up (Ctrl+A selects all)"><span data-icon="lasso"></span></button>
+        <button id="btn-eraser" class="btn icon" title="Eraser (E) — right-click or hold for the other erasers"><span data-icon="eraser"></span></button>
+        <button id="btn-select" class="btn icon" title="Select — circle objects with the stylus to pick them up (Ctrl+A selects all)"><span data-icon="lasso"></span></button>
         <button id="btn-delete" class="btn icon" title="Delete the selected objects (Del)"><span data-icon="trash"></span></button>
         <span id="save-status" class="save-status-pill" title="Save state"></span>
         <span class="divider"></span>
@@ -55,12 +56,24 @@
         <button id="btn-zoom-out" class="btn icon" title="Zoom out"><span data-icon="minus"></span></button>
         <button id="btn-zoom-reset" class="btn zoom-label" title="Reset zoom">100%</button>
         <button id="btn-zoom-in" class="btn icon" title="Zoom in"><span data-icon="plus"></span></button>
-        <button id="btn-read" class="btn icon" title="Read mode — look without changing anything"><span data-icon="eye"></span></button>
         <span class="divider"></span>
         <button id="btn-theme" class="btn icon" title="Toggle light / dark"><span data-icon="moon"></span></button>
         <button id="btn-menu" class="btn icon" title="More"><span data-icon="more"></span></button>
       </div>
     </header>
+
+    <!-- search: a popover under its toolbar button -->
+    <div id="search-pop" class="search-pop" hidden>
+      <div class="search">
+        <span class="search-ico" data-icon="search"></span>
+        <input id="search" type="search" placeholder="Search notes, blocks, files…" autocomplete="off" />
+        <div id="search-results" class="search-results" hidden></div>
+      </div>
+    </div>
+    <!-- draw panel extras: tool dropdown, snap target, eraser footprint -->
+    <div id="pen-menu" class="pen-menu" hidden></div>
+    <div id="pen-dock-hint" class="pen-dock-hint" hidden></div>
+    <div id="eraser-cursor" class="eraser-cursor" hidden></div>
 
     <!-- ================= CANVAS ================= -->
     <main id="stage">
@@ -126,9 +139,9 @@
         </div>
 
         <div id="pen-bar" class="link-banner" hidden>
-          <span id="pen-grip" class="pen-grip" data-icon="grip" title="Drag to move this panel (double-click to reset)"></span>
-          <span id="pen-styles" class="pen-styles"></span>
+          <button id="pen-eraser" class="pen-tool pen-menu-btn" title="Eraser (E)"><span id="pen-eraser-ic" class="pen-ic"></span><span class="pen-more" title="Eraser options"><span data-icon="more"></span></span></button>
           <span class="pen-sep"></span>
+          <button id="pen-style" class="pen-tool pen-menu-btn active" title="Pen style"><span id="pen-style-ic" class="pen-ic"></span><span class="pen-more" title="Pen styles"><span data-icon="more"></span></span></button>
           <span id="pen-colors" class="pen-colors"></span>
           <span class="pen-size-wrap">
             <input id="pen-size" type="range" min="1" max="100" step="1" title="Thickness" />
@@ -137,14 +150,7 @@
           <span class="pen-sep"></span>
           <button id="pen-touch" class="pen-tool" title="Finger drawing"><span data-icon="hand"></span></button>
           <button id="pen-snap" class="pen-tool" title="Shape snapping"><span data-icon="shapes"></span></button>
-          <button id="pen-select" class="pen-tool" title="Lasso select (S) — circle anything to pick it up"><span data-icon="lasso"></span></button>
-          <span id="pen-lasso-modes" class="pen-lasso-modes" hidden>
-            <button data-lmode="replace" class="pen-tool active" title="New selection"><span data-icon="select"></span></button>
-            <button data-lmode="add" class="pen-tool" title="Add to selection"><span data-icon="plus"></span></button>
-            <button data-lmode="remove" class="pen-tool" title="Remove from selection"><span data-icon="minus"></span></button>
-          </span>
-          <button id="pen-eraser" class="pen-tool" title="Eraser (E)"><span data-icon="eraser"></span></button>
-          <button id="pen-exit">Done</button>
+          <button id="pen-exit" title="Close the draw panel">Done</button>
         </div>
       </div>
 
@@ -665,7 +671,7 @@
             <h4>Moving around</h4>
             <ul class="help-list">
               <li><b>Move a block</b> — drag it. <b>Move the view</b> — drag an empty area.</li>
-              <li><b>Zoom</b> — mouse wheel, or pinch on a touch screen. <b>Fit</b> — the frame button shows everything.</li>
+              <li><b>Zoom</b> — mouse wheel, or pinch on a touch screen. <b>Fit</b> — in the ⋯ menu, shows everything.</li>
               <li><b>Select many</b> — Shift-click blocks, or right-drag a box around them. Dragging one moves the whole group.</li>
               <li><b>Layer order</b> — right-click a block to bring it forward or send it back.</li>
               <li><b>Lock a direction</b> — the ⋯ menu can lock panning to horizontal or vertical, so a long page does not drift sideways.</li>
@@ -676,8 +682,10 @@
             <h4>Writing by hand</h4>
             <ul class="help-list">
               <li><b>Draw</b> — the pen button opens draw mode. The pen always writes: over empty paper, over blocks, over earlier strokes. Two fingers pan and zoom.</li>
-              <li><b>Stylus first</b> — once you have used a stylus, the pen, eraser and Select tool answer only to the stylus and your fingers move the page instead. On a device with no stylus a finger does everything. The hand button in the draw panel overrides this either way.</li>
-              <li><b>Erase</b> — the eraser removes whole strokes as you sweep over them.</li>
+              <li><b>Stylus only</b> — the pen, eraser and Select tool answer to the stylus, and fingers move the page. On a device with no stylus, tap the hand in the draw panel to let fingers draw too; it stays how you set it.</li>
+              <li><b>Erase</b> — the eraser works with or without the draw panel. It has three modes, picked from the small dots on its button (or by holding the toolbar button): <b>Eraser</b> rubs out just the part you sweep over, <b>Stroke eraser</b> removes a whole stroke at a touch, and <b>Erase with selection</b> removes everything you circle.</li>
+              <li><b>Pen styles</b> — the dots on the pen button switch between pencil, pen, brush and highlighter; the button shows the one in use.</li>
+              <li><b>The panel</b> — drag it from anywhere on its body. It snaps to the middle of any edge or into a corner; along the top or bottom it lies flat, down a side it stands up, and in a corner it keeps whichever way it was.</li>
               <li><b>Select</b> — circle anything with the Select tool to pick it up. A dashed frame appears round it; drag the corner grip to make the writing bigger or smaller.</li>
             </ul>
           </div>
@@ -688,7 +696,7 @@
               <div><span class="kbd">N</span></div><div>New block</div>
               <div><span class="kbd">L</span></div><div>Link (connect) mode</div>
               <div><span class="kbd">P</span></div><div>Freehand pen (draw)</div>
-              <div><span class="kbd">E</span></div><div>Eraser (remove strokes)</div>
+              <div><span class="kbd">E</span></div><div>Eraser on / off</div>
               <div><span class="kbd">M</span></div><div>Toggle mini-map</div>
               <div><span class="kbd">F</span></div><div>Fit everything to view</div>
               <div><span class="kbd">F11</span></div><div>Full screen (hides the system bars)</div>
@@ -778,9 +786,9 @@
     <input type="file" id="xlsx-input" hidden accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" />
   </div>
 
-  <script src="js/platform.js?v=107"></script>
-  <script src="js/pdf.js?v=107"></script>
-  <script src="js/db.js?v=107"></script>
-  <script src="js/app.js?v=107"></script>
+  <script src="js/platform.js?v=108"></script>
+  <script src="js/pdf.js?v=108"></script>
+  <script src="js/db.js?v=108"></script>
+  <script src="js/app.js?v=108"></script>
 </body>
 </html>
