@@ -84,7 +84,7 @@
 
   /* ---- line-icon set (stroke SVGs, sized via CSS .ic) ------------------ */
   const ICON = {
-    diary: '<defs><linearGradient id="ngs" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4f6f9"/><stop offset="1" stop-color="#aeb6c2"/></linearGradient></defs><g stroke="url(#ngs)"><path d="M5.5 9.6V5.6A2.1 2.1 0 0 1 7.6 3.5H14.2L19.8 9.1V15.2L14.6 20.5H10.4"/><path d="M3.2 20.8L6.1 13.5C6.8 11.8 8.3 10.7 10.1 10.7H12.5V13.1C12.5 15.1 11.5 16.9 9.8 18Z"/><path d="M3.2 20.8L8.3 15.7"/><circle cx="8.8" cy="15.2" r="1.05"/><path d="M9.9 14.1L13.7 10.3"/></g><path d="M15.9 8.1L12.3 8.7L15.3 11.7Z" fill="#4f7cff" stroke="none"/><path d="M14.2 3.5V9.1H19.8Z" fill="#4f7cff" stroke="none"/><path d="M19.8 15.2H14.6V20.5Z" fill="#4f7cff" stroke="none"/><path d="M11.2 6.1L13.2 8.1" stroke="#4f7cff"/>',
+    diary: '<path d="M5.5 9.6V5.6A2.1 2.1 0 0 1 7.6 3.5H14.2L19.8 9.1V15.2L14.6 20.5H10.4"/><path d="M3.2 20.8L6.1 13.5C6.8 11.8 8.3 10.7 10.1 10.7H12.5V13.1C12.5 15.1 11.5 16.9 9.8 18Z"/><path d="M3.2 20.8L8.3 15.7"/><circle cx="8.8" cy="15.2" r="1.05"/><path d="M9.9 14.1L13.7 10.3"/><path d="M15.9 8.1L12.3 8.7L15.3 11.7Z" fill="#fff" stroke="none"/><path d="M14.2 3.5V9.1H19.8Z" fill="#fff" fill-opacity=".85" stroke="none"/><path d="M19.8 15.2H14.6V20.5Z" fill="#fff" fill-opacity=".85" stroke="none"/><path d="M11.2 6.1L13.2 8.1" stroke="#fff"/>',
     chev: '<path d="M6.5 9.5l5.5 5.5 5.5-5.5"/>',
     checkbox: '<rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8.2 12.2l2.6 2.6 5-5.4"/>',
     plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
@@ -226,7 +226,7 @@
     brush:       { label: 'Brush',       icon: 'brush',       mul: 2.1,  min: 1.5, opacity: .95,  cap: 'round',  taper: .55,  blend: '' },
     pencil:      { label: 'Pencil',      icon: 'pencil',      mul: .75,  min: 1,   opacity: .72,  cap: 'round',  taper: 0,    blend: '', grain: true },
     marker:      { label: 'Marker',      icon: 'marker',      mul: 1.7,  min: 2,   opacity: .92,  cap: 'square', taper: .18,  blend: '', hidden: true },
-    highlighter: { label: 'Highlighter', icon: 'highlighter', mul: 3.4,  min: 6,   opacity: .32,  cap: 'butt',   taper: 0,    blend: 'multiply' },
+    highlighter: { label: 'Highlighter', icon: 'highlighter', mul: 3.4,  min: 6,   opacity: .3,   cap: 'round',  taper: 0,    blend: '' },
   };
   let penStyle = 'pen', penSize = 12;          // penSize is the 1-100% slider
   try {
@@ -443,6 +443,7 @@
     if (inking) { inking.rect = stage.getBoundingClientRect(); redrawInkStroke(); }
     const { scale, tx, ty } = state.view;
     world.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+    world.style.setProperty('--inv', 1 / (scale || 1));
     const paper = stage.dataset.paper || 'dots';
     stage.style.backgroundSize = paper === 'lines'
       ? `100% ${30 * scale}px`
@@ -561,9 +562,7 @@
     el.innerHTML =
       `<span class="check-face" title="${b.checked ? 'Ticked' : 'Not ticked'}">` +
         `<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 12.5l3.6 3.6 7.4-8.2"/></svg>` +
-      `</span>` +
-      `<div class="block-actions"><button class="blk-btn" data-blk="edit" title="Checkbox options">${ic('pencil')}</button></div>` +
-      `<div class="tnode-resize" title="Resize"></div>`;
+      `</span>`;
   }
 
   // free image node (kind === 'image'); src is a data URL stored on the block
@@ -3766,7 +3765,10 @@
     }
     const w = maxX - minX, h = maxY - minY;
     const size = Math.max(w, h);
-    if (size < 28 || pathLen < 40) return null;               // too small to judge
+    // thresholds are in SCREEN pixels: a shape drawn while zoomed in is small
+    // in world units but plenty big to judge under the hand
+    const vsc = (typeof state !== 'undefined' && state.view && state.view.scale) || 1;
+    if (size * vsc < 24 || pathLen * vsc < 34) return null;   // too small to judge
     const a = raw[0], b = raw[raw.length - 1];
     const gap = Math.hypot(b[0] - a[0], b[1] - a[1]);
     // closed when the ends come back together - up to about half a side apart
@@ -3807,14 +3809,18 @@
                       : c <= 2 ? 'circle' : (c >= 9 && c <= 11 ? 'star' : null);
       if (byCorners && (byCorners === m.best.name || byCorners === m.second.name)) kind = byCorners;
     }
-    // circle, pentagon and hexagon are near-twins under wobble: how round the
-    // outline really is, and how many sharp corners it has, decide
+    // circle and the round-looking polygons are near-twins under wobble. The
+    // template can call a rounded rectangle a circle; the corner count and how
+    // round the outline actually is put it right.
     if (kind === 'circle' || kind === 'pentagon' || kind === 'hexagon') {
       const err = ellipseError(rs, minX, minY, w, h);
-      if (err < 0.075 && sc <= 2) kind = 'circle';
+      const round = err < 0.085;
+      if (round && sc <= 2) kind = 'circle';
+      else if (sc === 3 || (!round && c === 3)) kind = 'triangle';
+      else if (sc === 4 || (!round && c === 4)) kind = 'square';   // quad; rect vs diamond below
       else if (sc === 5) kind = 'pentagon';
       else if (sc === 6) kind = 'hexagon';
-      else if (sc <= 2 && err < 0.11) kind = 'circle';
+      else if (round) kind = 'circle';
     }
     if (kind === 'circle') return { shape: 'circle', ...box };
     if (kind === 'triangle') return { shape: 'triangle', ...box };

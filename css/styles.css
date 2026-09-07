@@ -106,24 +106,25 @@ input, textarea { font-size: 15px; }
   position: relative; z-index: 40;
 }
 .bar-group { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.bar-left { justify-self: start; gap: 10px; }
-.tools-left { margin-left: 12px; }                /* breathing room after the wordmark */
-.bar-tools { justify-self: center; gap: 6px; }
-.navgroup { display: flex; align-items: center; gap: 4px; flex: none; }
+.bar-left { justify-self: stretch; justify-content: space-between; gap: 10px; }
+.tools-left { gap: 6px; }
+.bar-tools { justify-self: center; gap: 10px; }
+.navgroup { display: flex; align-items: center; gap: 6px; flex: none; }
 .btn:disabled { opacity: .38; cursor: default; pointer-events: none; }
-.bar-right { justify-self: end; }
+.bar-right { justify-self: stretch; justify-content: space-between; gap: 8px; }
+/* autosave dot: a little air on each side of it */
+#topbar #save-status { margin: 0 4px 0 6px; }
 
 .brand { display: flex; align-items: center; gap: 10px; border: none; background: none; padding: 4px; margin: -4px; border-radius: 10px; cursor: pointer; transition: background .15s; }
 .brand:hover { background: var(--panel-2); }
-/* the mark: a quiet dark tile; the silver glyph itself carries the glow */
+/* the mark: the blue gradient tile with a white glyph, no glow */
 .brand-mark {
   width: 32px; height: 32px; flex: none; border-radius: 9px;
-  background: linear-gradient(145deg, #31353d, #14161a); color: #dfe3ea;
+  background: var(--grad); color: #fff;
   display: inline-grid; place-items: center;
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,.07), 0 4px 12px rgba(0,0,0,.35);
+  box-shadow: 0 4px 12px rgba(0,0,0,.3);
 }
-.brand-mark .ic { width: 25px; height: 25px; stroke-width: 1.7;
-  filter: drop-shadow(0 0 1.5px rgba(255,255,255,.7)) drop-shadow(0 0 5px rgba(205,214,228,.45)); }
+.brand-mark .ic { width: 22px; height: 22px; stroke-width: 1.7; }
 .brand-name { font-family: var(--serif); font-size: 18px; font-weight: 700; letter-spacing: -0.02em; }
 
 /* breadcrumb path bar — lives along the bottom */
@@ -486,6 +487,8 @@ input, textarea { font-size: 15px; }
 #stage.penning #world .tnode-rotate, #stage.penning #world .tnode-resize,
 #stage.penning #world .tnode-edge, #stage.penning #world .col-resize,
 #stage.penning #world .row-resize { display: none; }
+.pen-styles { display: flex; flex-wrap: wrap; gap: 9px; }
+.drawer .swatches { margin-top: 9px; }
 .pen-tool { display: inline-flex; align-items: center; justify-content: center; padding: 6px !important; width: 34px; height: 34px;
   border-radius: 10px !important; flex: none;
   background: transparent !important; color: var(--text-mute) !important; border: 1px solid var(--line) !important; }
@@ -637,7 +640,7 @@ input, textarea { font-size: 15px; }
 .block-actions, .lr-actions {
   display: flex; gap: 4px; opacity: 0; transition: opacity .14s ease;
 }
-.block-actions { position: absolute; top: 10px; right: 10px; }
+.block-actions { position: absolute; top: 10px; right: 10px; transform: scale(var(--inv, 1)); transform-origin: top right; }
 /* Edit marks appear only when a block is actually selected — hovering must
    not litter the page with pencils. */
 .block.selected .block-actions, .list-row.selected .lr-actions { opacity: 1; }
@@ -679,15 +682,15 @@ input, textarea { font-size: 15px; }
   background: var(--accent); border: 2px solid var(--panel); box-shadow: var(--shadow);
   opacity: 0; transition: opacity .12s; z-index: 3;
 }
-.tnode-rotate { top: -26px; left: 50%; transform: translateX(-50%); cursor: grab; }
+.tnode-rotate { top: -26px; left: 50%; transform: translateX(-50%) scale(var(--inv, 1)); cursor: grab; }
 .tnode-rotate::before { content: ""; position: absolute; left: 50%; top: 12px; width: 1.5px; height: 12px; background: var(--accent); transform: translateX(-50%); }
-.tnode-resize { right: -8px; bottom: -8px; border-radius: 4px; cursor: nwse-resize; }
+.tnode-resize { right: -8px; bottom: -8px; border-radius: 4px; cursor: nwse-resize; transform: scale(var(--inv, 1)); }
 /* box-resize edge handles (text nodes) — pill-shaped, on each side */
 .tnode-edge { position: absolute; background: var(--accent); border: 2px solid var(--panel); box-shadow: var(--shadow); opacity: 0; transition: opacity .12s; z-index: 3; border-radius: 999px; }
-.tnode-edge.e { right: -6px; top: 50%; transform: translateY(-50%); width: 8px; height: 22px; cursor: ew-resize; }
-.tnode-edge.w { left: -6px; top: 50%; transform: translateY(-50%); width: 8px; height: 22px; cursor: ew-resize; }
-.tnode-edge.n { top: -6px; left: 50%; transform: translateX(-50%); width: 22px; height: 8px; cursor: ns-resize; }
-.tnode-edge.s { bottom: -6px; left: 50%; transform: translateX(-50%); width: 22px; height: 8px; cursor: ns-resize; }
+.tnode-edge.e { right: -6px; top: 50%; transform: translateY(-50%) scale(var(--inv, 1)); width: 8px; height: 22px; cursor: ew-resize; }
+.tnode-edge.w { left: -6px; top: 50%; transform: translateY(-50%) scale(var(--inv, 1)); width: 8px; height: 22px; cursor: ew-resize; }
+.tnode-edge.n { top: -6px; left: 50%; transform: translateX(-50%) scale(var(--inv, 1)); width: 22px; height: 8px; cursor: ns-resize; }
+.tnode-edge.s { bottom: -6px; left: 50%; transform: translateX(-50%) scale(var(--inv, 1)); width: 22px; height: 8px; cursor: ns-resize; }
 .block.block-text:hover .tnode-rotate, .block.block-text.selected .tnode-rotate,
 .block.block-text:hover .tnode-resize, .block.block-text.selected .tnode-resize,
 .block.block-text:hover .tnode-edge, .block.block-text.selected .tnode-edge { opacity: 1; }
@@ -727,9 +730,10 @@ input, textarea { font-size: 15px; }
 .block.block-check.is-checked .check-face { background: var(--b-accent, var(--accent)); }
 .block.block-check.is-checked .check-face svg { opacity: 1; transform: scale(1); }
 .check-face:active { transform: scale(.94); }
-.block.block-check.selected { outline: 1px dashed color-mix(in srgb, var(--accent) 75%, transparent); outline-offset: 4px; box-shadow: none; }
-.block.block-check:hover .tnode-resize, .block.block-check.selected .tnode-resize { opacity: 1; }
-.block.block-check .block-actions { top: -15px; right: -10px; }
+/* a plain tap just ticks it - the box stays clean; the selection tool's
+   frame (or press-and-hold) is how it gets edited or resized */
+.block.block-check.selected { outline: none; box-shadow: none; }
+#stage.lassoing .block.block-check.selected { outline: 1px dashed color-mix(in srgb, var(--accent) 75%, transparent); outline-offset: 4px; }
 .check-row { display: flex; align-items: center; gap: 10px; font-size: 14px; margin-bottom: 8px; cursor: pointer; }
 .check-row input { width: 18px; height: 18px; accent-color: var(--accent); }
 .img-content { width: 100%; height: 100%; object-fit: cover; display: block; user-select: none; -webkit-user-drag: none; }
@@ -1014,11 +1018,9 @@ input, textarea { font-size: 15px; }
 /* hero (intro) — the big centered brand + typing tagline */
 .home-hero { position: relative; z-index: 1; text-align: center; padding: 64px 20px 26px; }
 .hero-brand { display: inline-flex; align-items: center; gap: 16px; transform-origin: 0 0; will-change: transform; }
-.hero-mark { width: 64px; height: 64px; border-radius: 18px; display: grid; place-items: center; color: #dfe3ea;
-  background: linear-gradient(145deg, #31353d, #14161a);
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,.07), 0 10px 26px rgba(0,0,0,.4); }
-.hero-mark .ic { width: 50px; height: 50px; stroke-width: 1.7;
-  filter: drop-shadow(0 0 2px rgba(255,255,255,.7)) drop-shadow(0 0 9px rgba(205,214,228,.5)); }
+.hero-mark { width: 64px; height: 64px; border-radius: 18px; display: grid; place-items: center; color: #fff;
+  background: var(--grad); box-shadow: var(--shadow-lg); }
+.hero-mark .ic { width: 40px; height: 40px; stroke-width: 1.7; }
 .hero-name { font-family: var(--serif); font-weight: 700; font-size: clamp(30px, 6vw, 48px); letter-spacing: -0.03em; }
 .hero-tag {
   max-width: 640px; margin: 24px auto 0; font-size: 16.5px; line-height: 1.65;
