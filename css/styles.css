@@ -114,11 +114,12 @@ input, textarea { font-size: 15px; }
 
 .brand { display: flex; align-items: center; gap: 10px; border: none; background: none; padding: 4px; margin: -4px; border-radius: 10px; cursor: pointer; transition: background .15s; }
 .brand:hover { background: var(--panel-2); }
+/* the mark: a dark tile, silver glyph, blue touches, and a soft blue glow */
 .brand-mark {
   width: 32px; height: 32px; flex: none; border-radius: 9px;
-  background: var(--grad); color: #fff;
+  background: linear-gradient(145deg, #31353d, #14161a); color: #d8dce3;
   display: inline-grid; place-items: center;
-  box-shadow: var(--glow-shadow);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.07), 0 0 16px 3px rgba(67,83,255,.38), 0 6px 16px rgba(0,0,0,.35);
 }
 .brand-mark .ic { width: 19px; height: 19px; stroke-width: 1.7; }
 .brand-name { font-family: var(--serif); font-size: 18px; font-weight: 700; letter-spacing: -0.02em; }
@@ -365,7 +366,6 @@ input, textarea { font-size: 15px; }
 }
 #app.reading #sel-frame { display: none; }
 
-.sel-modes { display: inline-flex; gap: 2px; }
 .sel-bar button.active { background: var(--grad); color: #fff; }
 .sel-bar button:disabled { opacity: .35; pointer-events: none; }
 
@@ -990,8 +990,10 @@ input, textarea { font-size: 15px; }
 /* hero (intro) — the big centered brand + typing tagline */
 .home-hero { position: relative; z-index: 1; text-align: center; padding: 64px 20px 26px; }
 .hero-brand { display: inline-flex; align-items: center; gap: 16px; transform-origin: 0 0; will-change: transform; }
-.hero-mark { width: 64px; height: 64px; border-radius: 18px; display: grid; place-items: center; color: #fff; background: var(--grad); box-shadow: var(--glow-shadow); }
-.hero-mark .ic { width: 34px; height: 34px; stroke-width: 2; }
+.hero-mark { width: 64px; height: 64px; border-radius: 18px; display: grid; place-items: center; color: #d8dce3;
+  background: linear-gradient(145deg, #31353d, #14161a);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.07), 0 0 34px 8px rgba(67,83,255,.42), 0 10px 26px rgba(0,0,0,.4); }
+.hero-mark .ic { width: 36px; height: 36px; stroke-width: 1.7; }
 .hero-name { font-family: var(--serif); font-weight: 700; font-size: clamp(30px, 6vw, 48px); letter-spacing: -0.03em; }
 .hero-tag {
   max-width: 640px; margin: 24px auto 0; font-size: 16.5px; line-height: 1.65;

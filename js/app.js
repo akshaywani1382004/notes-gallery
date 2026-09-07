@@ -84,7 +84,7 @@
 
   /* ---- line-icon set (stroke SVGs, sized via CSS .ic) ------------------ */
   const ICON = {
-    diary: '<path d="M5.5 9.6V5.6A2.1 2.1 0 0 1 7.6 3.5H14.2L19.8 9.1V15.2L14.6 20.5H10.4"/><path d="M3.2 20.8L6.1 13.5C6.8 11.8 8.3 10.7 10.1 10.7H12.5V13.1C12.5 15.1 11.5 16.9 9.8 18Z"/><path d="M3.2 20.8L8.3 15.7"/><circle cx="8.8" cy="15.2" r="1.05"/><path d="M9.9 14.1L13.7 10.3"/><path d="M15.9 8.1L12.3 8.7L15.3 11.7Z" fill="currentColor" stroke="none"/><path d="M14.2 3.5V9.1H19.8Z" fill="#d9a441" stroke="none"/><path d="M19.8 15.2H14.6V20.5Z" fill="#d9a441" stroke="none"/><path d="M11.2 6.1L13.2 8.1" stroke="#d9a441"/>',
+    diary: '<path d="M5.5 9.6V5.6A2.1 2.1 0 0 1 7.6 3.5H14.2L19.8 9.1V15.2L14.6 20.5H10.4"/><path d="M3.2 20.8L6.1 13.5C6.8 11.8 8.3 10.7 10.1 10.7H12.5V13.1C12.5 15.1 11.5 16.9 9.8 18Z"/><path d="M3.2 20.8L8.3 15.7"/><circle cx="8.8" cy="15.2" r="1.05"/><path d="M9.9 14.1L13.7 10.3"/><path d="M15.9 8.1L12.3 8.7L15.3 11.7Z" fill="#4f7cff" stroke="none"/><path d="M14.2 3.5V9.1H19.8Z" fill="#4f7cff" stroke="none"/><path d="M19.8 15.2H14.6V20.5Z" fill="#4f7cff" stroke="none"/><path d="M11.2 6.1L13.2 8.1" stroke="#4f7cff"/>',
     plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
     minus: '<line x1="5" y1="12" x2="19" y2="12"/>',
     link: '<line x1="9.5" y1="14.5" x2="14.5" y2="9.5"/><path d="M11 6.5 12 5.5a3.4 3.4 0 0 1 4.8 4.8l-1 1"/><path d="M13 17.5 12 18.5a3.4 3.4 0 0 1-4.8-4.8l1-1"/>',
@@ -166,6 +166,11 @@
     mono: 'ui-monospace, "Cascadia Code", "Consolas", "Courier New", monospace',
   };
   ICON['hand-off'] = ICON.hand + '<line x1="3.5" y1="3.5" x2="20.5" y2="20.5"/>';
+  // the Select tool wears its mode: a small mark top-right of the lasso
+  const LASSO_BASE = '<g transform="translate(-1 2.6) scale(.86)">' + ICON.lasso + '</g>';
+  ICON['lasso-new'] = LASSO_BASE + '<rect x="16.6" y="1.6" width="5.8" height="5.8" rx="1.3"/><circle cx="19.5" cy="4.5" r="1" fill="currentColor" stroke="none"/>';
+  ICON['lasso-add'] = LASSO_BASE + '<path d="M19.5 1.9v5.2M16.9 4.5h5.2"/>';
+  ICON['lasso-remove'] = LASSO_BASE + '<path d="M16.9 4.5h5.2"/>';
   const ic = (name) => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICON[name] || ''}</svg>`;
   function hydrateIcons(root = document) {
     root.querySelectorAll('[data-icon]').forEach(el => {
@@ -1620,13 +1625,14 @@
   // While dragging, the frame and the floating bar are moved by the drag
   // delta instead of re-measuring every selected element on each move.
   let selFrameBox = null;
+  const selectionHasInk = () => [...state.selectedIds].some(id => { const b = state.blocks.find(x => x.id === id); return b && b.kind === 'ink'; });
 
   function positionSelBar() {
     const bar = $('#sel-bar'); if (!bar) return;
     const ids = [...state.selectedIds];
-    // Only while the Select tool is up — it used to pop over whatever you had
-    // just written, which got in the way.
-    const selecting = state.selectTool;
+    // With the Select tool up, or when handwriting has been picked up by a
+    // tap — never over what you have just written.
+    const selecting = state.selectTool || selectionHasInk();
     if (!ids.length || !selecting || state.levelLayout !== 'canvas') { bar.hidden = true; return; }
     // align/distribute need two; with one item only the style tools apply
     bar.querySelectorAll('[data-align]').forEach(b => { b.disabled = ids.length < 2; });
@@ -1695,7 +1701,7 @@
 
   function positionSelFrame() {
     const f = $('#sel-frame'); if (!f) return;
-    const selecting = state.selectTool;
+    const selecting = state.selectTool || selectionHasInk();
     if (!selecting || state.readOnly || !state.selectedIds.size || state.levelLayout !== 'canvas') {
       f.hidden = true; return;
     }
@@ -3372,9 +3378,16 @@
   }
   // Pick every block on this level whose middle falls inside the loop.
   let lassoMode = 'replace';        // replace | add | remove
+  const LASSO_MODES = {
+    replace: { label: 'New selection',         hint: 'each loop starts fresh',  icon: 'lasso-new' },
+    add:     { label: 'Add to selection',      hint: 'each loop adds',          icon: 'lasso-add' },
+    remove:  { label: 'Remove from selection', hint: 'each loop takes away',    icon: 'lasso-remove' },
+  };
   function setLassoMode(m) {
+    if (!LASSO_MODES[m]) m = 'replace';
     lassoMode = m;
-    $$('#sel-modes button').forEach(b => b.classList.toggle('active', b.dataset.lmode === m));
+    const ic0 = $('#btn-select-ic'); if (ic0) ic0.innerHTML = ic(LASSO_MODES[m].icon);
+    const b = $('#btn-select'); if (b) b.title = 'Select: ' + LASSO_MODES[m].label.toLowerCase() + ' \u2014 circle with the stylus; the dots pick New / Add / Remove';
   }
   function selectInsideLasso(poly) {
     const hits = [];
@@ -3714,69 +3727,36 @@
     const ctx = inkSurface(); if (!ctx) return;
     sizeInkSurface();
     clearInkSurface();
-    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    ctx.strokeStyle = inking.color;
-    ctx.globalAlpha = st.opacity;
-    ctx.lineWidth = Math.max(0.4, inking.width * state.view.scale);
+    // the highlighter multiplies into the page; the canvas layer must too
+    if (inkCv) inkCv.style.mixBlendMode = st.blend || '';
     inking.taper = st.taper || 0;
   }
 
-  // Width for the piece being drawn right now — straight from the factor
-  // stored on the point, which is what the saved stroke will use too.
-  function liveWidth(i) {
-    const base = Math.max(0.4, inking.width * state.view.scale);
-    if (!inking.taper) return base;
-    const k = inking.pts[i][3] || 1;
-    const ends = Math.min(1, i / 2);
-    return Math.max(0.4, base * k * (0.55 + 0.45 * ends));
-  }
-  // Draw only the newest piece of the curve — constant cost per sample.
-  function drawInkSegment() {
+  /* The preview IS the result. Every sample repaints the whole in-progress
+     stroke from the same path generator and the same style attributes the
+     saved SVG uses (brush ribbon, pencil grain, highlighter blend), mapped
+     through the view transform. Nothing is approximated segment by segment,
+     so what is under the nib is exactly what stays on the page.            */
+  function paintLiveStroke() {
     const ctx = inkCtx; if (!ctx || !inking) return;
-    const pts = inking.pts, n2 = pts.length;
-    if (n2 < 2) return;
-    const i = n2 - 1;
-    const a = pts[i - 1], b = pts[i];
-    ctx.lineWidth = liveWidth(i);
-    ctx.beginPath();
-    if (i >= 2) {                        // curve through the midpoints
-      const prev = pts[i - 2];
-      const m0 = [(prev[0] + a[0]) / 2, (prev[1] + a[1]) / 2];
-      const m1 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-      ctx.moveTo(wx(m0[0]), wy(m0[1]));
-      ctx.quadraticCurveTo(wx(a[0]), wy(a[1]), wx(m1[0]), wy(m1[1]));
-      ctx.lineTo(wx(b[0]), wy(b[1]));    // reach the pen, no visible lag
-    } else {
-      ctx.moveTo(wx(a[0]), wy(a[1]));
-      ctx.lineTo(wx(b[0]), wy(b[1]));
-    }
-    ctx.stroke();
-  }
-  // Repaint the whole in-progress stroke (only needed if the view moves).
-  function redrawInkStroke() {
-    if (!inking || !inkCtx) return;
     const st = PEN_STYLES[inking.style] || PEN_STYLES.pen;
-    beginInkStroke(st);
-    const pts = inking.pts;
-    if (pts.length < 2) return;
-    // redraw segment by segment so tapering widths survive the repaint
-    for (let i = 1; i < pts.length; i++) {
-      inkCtx.lineWidth = liveWidth(i);
-      inkCtx.beginPath();
-      if (i >= 2) {
-        const prev = pts[i - 2], a2 = pts[i - 1], b2 = pts[i];
-        const m0 = [(prev[0] + a2[0]) / 2, (prev[1] + a2[1]) / 2];
-        const m1 = [(a2[0] + b2[0]) / 2, (a2[1] + b2[1]) / 2];
-        inkCtx.moveTo(wx(m0[0]), wy(m0[1]));
-        inkCtx.quadraticCurveTo(wx(a2[0]), wy(a2[1]), wx(m1[0]), wy(m1[1]));
-        inkCtx.lineTo(wx(b2[0]), wy(b2[1]));
-      } else {
-        inkCtx.moveTo(wx(pts[i - 1][0]), wy(pts[i - 1][1]));
-        inkCtx.lineTo(wx(pts[i][0]), wy(pts[i][1]));
-      }
-      inkCtx.stroke();
+    const pts = inking.pts; if (!pts.length) return;
+    clearInkSurface();
+    const sc = state.view.scale || 1;
+    const path = new Path2D(inkStrokeD(pts, inking.style, inking.width));
+    ctx.save();
+    ctx.setTransform(inkDpr * sc, 0, 0, inkDpr * sc, inkDpr * state.view.tx, inkDpr * state.view.ty);
+    ctx.globalAlpha = st.opacity;
+    if (st.taper > 0) { ctx.fillStyle = inking.color; ctx.fill(path); }
+    else {
+      ctx.strokeStyle = inking.color; ctx.lineWidth = inking.width;
+      ctx.lineCap = st.cap; ctx.lineJoin = 'round';
+      ctx.setLineDash(st.grain ? [inking.width * 1.1, inking.width * 0.55] : []);
+      ctx.stroke(path);
     }
+    ctx.restore();
   }
+  const redrawInkStroke = paintLiveStroke;      // the view moved: same picture, new place
 
   // Take every sample the digitiser reported and paint each one at once.
   function addInkSamples(e) {
@@ -3800,8 +3780,8 @@
       const press = inking.pressure ? (ev.pressure || e.pressure || 0.5) : 0;
       inking.pts.push([Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, press,
                        taper ? Math.round(nibFactor(inking.vel, press, taper) * 1000) / 1000 : 0]);
-      drawInkSegment();                  // straight to the glass
     }
+    paintLiveStroke();                   // straight to the glass, once per event
   }
 
   // Smooth ink path (midpoint quadratic curves) — pen strokes render as fluid
@@ -3957,7 +3937,8 @@
     let inkPassThrough = null;
     if (blockEl && !state.selectTool) {
       const hb = state.blocks.find(x => x.id === blockEl.dataset.id);
-      if (hb && hb.kind === 'ink') { inkPassThrough = hb.id; blockEl = null; }
+      // once picked up (tapped, or circled) a stroke drags like anything else
+      if (hb && hb.kind === 'ink' && !state.selectedIds.has(hb.id)) { inkPassThrough = hb.id; blockEl = null; }
     }
     // with the eraser up, a finger (the stylus never gets here) only pans
     if (blockEl && state.penEraser) { blockEl = null; inkPassThrough = null; }
@@ -4264,7 +4245,7 @@
       if (e.pointerId !== inking.pointerId) { pointers.delete(e.pointerId); return; }
       const stroke = inking; inking = null;
       try { stage.releasePointerCapture(e.pointerId); } catch (_) {}
-      clearInkSurface();
+      requestAnimationFrame(() => { if (!inking) clearInkSurface(); });
       const pts = stroke.pts;
       if (pts.length >= 2) {
         const hit = shapeSnap ? recognizeShape(pts) : null;
@@ -4339,7 +4320,7 @@
       if (moved < 4 && !state.linkMode) {
         // a drag that started on a stroke panned the page; a tap on one still
         // picks it up, so a single stroke can be deleted or restyled
-        if (inkTap) { closeDrawerIfOpen(); selectBlock(inkTap); }
+        if (inkTap) { closeDrawerIfOpen(); setSelection(withGroups([inkTap])); }
         else { closeDrawerIfOpen(); clearSelection(); }
       }
     }
@@ -4735,6 +4716,7 @@
     }
     state.selectTool = on;
     stage.classList.toggle('lassoing', on);
+    if (!on) setLassoMode('replace');
     if (!on && lasso && !lasso.erase) { lasso.path.remove(); lasso = null; }
     if (on) toast('Select: circle anything with the stylus to pick it up');
     syncSelectionButtons(); positionSelBar(); positionSelFrame(); syncToolButtons();
@@ -4841,14 +4823,16 @@
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const [x, y] of pts) { minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); }
     const width = src.width || 3;
+    const bx = Math.round(minX - width - 2), by = Math.round(minY - width - 2);
+    const ox = bx + width + 2, oy = by + width + 2;
     const rel = pts.map(([x, y, pr, k]) => {
-      const q = [Math.round((x - minX) * 10) / 10, Math.round((y - minY) * 10) / 10];
+      const q = [Math.round((x - ox) * 20) / 20, Math.round((y - oy) * 20) / 20];
       if (pr || k) q.push(Math.round((pr || 0) * 100) / 100);
       if (k) q.push(Math.round(k * 1000) / 1000);
       return q;
     });
-    return { ...src, id: uid(), pts: rel, w: Math.round(maxX - minX), h: Math.round(maxY - minY),
-      x: Math.round(minX - width - 2), y: Math.round(minY - width - 2), createdAt: Date.now(), updatedAt: Date.now() };
+    return { ...src, id: uid(), pts: rel, w: Math.round(maxX - ox), h: Math.round(maxY - oy),
+      x: bx, y: by, createdAt: Date.now(), updatedAt: Date.now() };
   }
   const distToSeg = (px, py, ax, ay, bx, by) => {
     const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
@@ -4921,6 +4905,8 @@
     const eb = $('#pen-eraser'), eic = $('#pen-eraser-ic');
     if (eb) { eb.classList.toggle('active', state.penEraser); eb.title = em.label + ' (E) \u2014 tap the dots for other erasers'; }
     if (eic) eic.innerHTML = ic(em.icon);
+    const tic = $('#btn-eraser-ic'); if (tic) tic.innerHTML = ic(em.icon);       // the toolbar button too
+    const tb = $('#btn-eraser'); if (tb) tb.title = em.label + ' (E) \u2014 the dots pick the eraser';
     const sw = $('#pen-bar .pen-size-wrap');
     if (sw) sw.classList.toggle('dimmed', state.penEraser && eraserMode !== 'normal');
   }
@@ -4947,12 +4933,19 @@
     m.innerHTML = ''; m.dataset.kind = kind;
     const items = kind === 'style'
       ? PEN_ORDER.map(k => ({ k, icon: PEN_STYLES[k].icon, label: PEN_STYLES[k].label, hint: '', on: k === penStyle && !state.penEraser }))
+      : kind === 'lasso'
+      ? Object.keys(LASSO_MODES).map(k => ({ k, icon: LASSO_MODES[k].icon, label: LASSO_MODES[k].label, hint: LASSO_MODES[k].hint, on: k === lassoMode && state.selectTool }))
       : Object.keys(ERASER_MODES).map(k => ({ k, icon: ERASER_MODES[k].icon, label: ERASER_MODES[k].label, hint: ERASER_MODES[k].hint, on: k === eraserMode && state.penEraser }));
     items.forEach(it => {
       const b = document.createElement('button');
       b.className = it.on ? 'active' : ''; b.dataset.v = it.k;
       b.innerHTML = ic(it.icon) + '<span>' + esc(it.label) + '</span>' + (it.hint ? '<span class="pm-hint">' + esc(it.hint) + '</span>' : '');
-      b.addEventListener('click', (e) => { e.stopPropagation(); closePenMenu(); if (kind === 'style') choosePenStyle(it.k); else setEraserMode(it.k); });
+      b.addEventListener('click', (e) => {
+        e.stopPropagation(); closePenMenu();
+        if (kind === 'style') choosePenStyle(it.k);
+        else if (kind === 'lasso') { setLassoMode(it.k); if (!state.selectTool) setSelectMode(true); else toast('Select: ' + LASSO_MODES[it.k].label.toLowerCase()); }
+        else setEraserMode(it.k);
+      });
       m.appendChild(b);
     });
     m.hidden = false;
@@ -4984,7 +4977,7 @@
     $('#btn-eraser')?.addEventListener('contextmenu', (e) => { e.preventDefault(); openPenMenu('eraser', $('#btn-eraser'), true); });
     document.addEventListener('click', (e) => {
       const m = $('#pen-menu'); if (!m || m.hidden) return;
-      if (!m.contains(e.target) && !e.target.closest('#pen-style, #pen-eraser, #btn-eraser')) closePenMenu();
+      if (!m.contains(e.target) && !e.target.closest('#pen-style, #pen-eraser, #btn-eraser, #btn-select')) closePenMenu();
     });
   }
 
@@ -5032,8 +5025,22 @@
     const vw = window.innerWidth, b = penBarBounds();
     const atL = anchor === 'lm' || anchor === 'tl' || anchor === 'bl', atR = anchor === 'rm' || anchor === 'tr';
     const atT = anchor === 'tm' || anchor === 'tl' || anchor === 'tr', atB = anchor === 'bm' || anchor === 'bl';
-    const left = atL ? 0 : atR ? vw - w : (vw - w) / 2;
-    const top = atT ? b.top : atB ? b.bottom - h : (b.top + b.bottom - h) / 2;
+    let left = atL ? 0 : atR ? vw - w : (vw - w) / 2;
+    let top = atT ? b.top : atB ? b.bottom - h : (b.top + b.bottom - h) / 2;
+    // never sit on the mini-map: slide sideways or up, whichever is the
+    // smaller move
+    const mm = $('#minimap');
+    if (mm && !mm.hidden) {
+      const m = mm.getBoundingClientRect(), M = 8;
+      const hits = left < m.right + M && left + w > m.left - M && top < m.bottom + M && top + h > m.top - M;
+      if (hits) {
+        const upTo = m.top - M - h, leftTo = m.left - M - w;
+        const sideways = (left + w) - (m.left - M), upward = (top + h) - (m.top - M);
+        if (!penBarVert && sideways <= upward && leftTo >= 0) left = leftTo;
+        else if (upTo >= b.top) top = upTo;
+        else if (leftTo >= 0) left = leftTo;
+      }
+    }
     bar.style.left = Math.round(clamp(left, 0, Math.max(0, vw - w))) + 'px';
     bar.style.top = Math.round(clamp(top, b.top, Math.max(b.top, b.bottom - h))) + 'px';
     bar.classList.toggle('edge-l', atL); bar.classList.toggle('edge-r', atR);
@@ -5155,8 +5162,10 @@
     const width = (stroke && stroke.width) || curWidth();
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const [x, y] of pts) { minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); }
+    const bx = Math.round(minX - width - 2), by = Math.round(minY - width - 2);
+    const ox = bx + width + 2, oy = by + width + 2;         // where the points are drawn from
     const rel = pts.map(([x, y, pr, k]) => {
-      const q = [Math.round((x - minX) * 10) / 10, Math.round((y - minY) * 10) / 10];
+      const q = [Math.round((x - ox) * 20) / 20, Math.round((y - oy) * 20) / 20];
       if (pr || k) q.push(Math.round((pr || 0) * 100) / 100);
       if (k) q.push(k);                    // the nib width the preview drew with
       return q;
@@ -5164,8 +5173,8 @@
     const b = {
       id: uid(), ws: state.ws, parentId: state.level, kind: 'ink',
       title: '', color, width, style,
-      pts: rel, w: Math.round(maxX - minX), h: Math.round(maxY - minY),
-      x: Math.round(minX - width - 2), y: Math.round(minY - width - 2),
+      pts: rel, w: Math.round(maxX - ox), h: Math.round(maxY - oy),
+      x: bx, y: by,
       z: 0, createdAt: Date.now(), updatedAt: Date.now(),
     };
     b.z = INK_Z;                 // drawing sits above the page by default
@@ -5277,7 +5286,9 @@
     const cv = $('#minimap');
     if (!cv) return;
     const show = minimapOn && state.ws != null && state.levelLayout === 'canvas' && state.blocks.length > 0;
+    const wasHidden = cv.hidden;
     cv.hidden = !show;
+    if (wasHidden !== cv.hidden && state.penMode) placePenBar(penBarAnchor, penBarVert, false);   // the panel dodges it
     if (!show) return;
     const dpr = window.devicePixelRatio || 1;
     const cssW = cv.clientWidth, cssH = cv.clientHeight;
@@ -7258,7 +7269,14 @@
       toast(shapeSnap ? 'Shape snapping on — draw a circle, box, triangle or line'
                       : 'Shape snapping off');
     });
-    $('#btn-select').addEventListener('click', () => setSelectMode(!state.selectTool));
+    $('#btn-select').addEventListener('click', (e) => {
+      if (e.target.closest('.pen-more')) {
+        const m = $('#pen-menu');
+        if (m && !m.hidden && m.dataset.kind === 'lasso') closePenMenu(); else openPenMenu('lasso', $('#btn-select'), true);
+        return;
+      }
+      setSelectMode(!state.selectTool);
+    });
     $('#btn-outline').addEventListener('click', () => toggleOutline());
     $('#btn-search').addEventListener('click', (e) => { e.stopPropagation(); if ($('#search-pop').hidden) openSearch(); else closeSearch(); });
     $('#btn-delete').addEventListener('click', () => {
@@ -7272,10 +7290,6 @@
     $('#btn-undo').addEventListener('click', () => undo());
     $('#btn-redo').addEventListener('click', () => redo());
     $('#btn-read').addEventListener('click', () => setReadMode(!state.readOnly));
-    $('#sel-modes').addEventListener('click', (e) => {
-      const b = e.target.closest('button[data-lmode]'); if (!b) return;
-      setLassoMode(b.dataset.lmode);
-    });
     $('#sel-bar').addEventListener('click', (e) => {
       const b = e.target.closest('button'); if (!b) return;
       if (b.dataset.align) alignSelection(b.dataset.align);
@@ -7302,6 +7316,7 @@
     $('#pres-exit').addEventListener('click', stopPresenting);
     bindEdgeEditor();
     bindPenBarDrag(); bindPenMenus(); bindOutlineDismiss();
+    renderPenTools(); setLassoMode('replace');
     // pointerrawupdate fires as soon as the digitiser reports, ahead of the
     // throttled pointermove — the lowest-latency input the web offers.
     if ('onpointerrawupdate' in window) {
