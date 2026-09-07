@@ -120,12 +120,12 @@ input, textarea { font-size: 15px; }
   display: inline-grid; place-items: center;
   box-shadow: var(--glow-shadow);
 }
-.brand-mark .ic { width: 18px; height: 18px; stroke-width: 2; }
+.brand-mark .ic { width: 19px; height: 19px; stroke-width: 1.7; }
 .brand-name { font-family: var(--serif); font-size: 18px; font-weight: 700; letter-spacing: -0.02em; }
 
 /* breadcrumb path bar — lives along the bottom */
 .bottombar {
-  position: fixed; left: 0; bottom: 0; z-index: 20;
+  position: fixed; left: 0; bottom: 0; z-index: 24;          /* above the outline */
   display: flex; align-items: center; padding: 18px 32px;
   background: transparent; pointer-events: none;   /* canvas stays draggable behind it */
 }
@@ -197,8 +197,13 @@ input, textarea { font-size: 15px; }
 .btn.wide { flex: 1; justify-content: center; }
 .btn.active { background: var(--grad); border: none; color: #fff; box-shadow: var(--glow-shadow); }
 .zoom-label { min-width: 56px; justify-content: center; font-variant-numeric: tabular-nums; font-size: 13px; color: var(--text-dim); }
-.divider { width: 1px; height: 24px; background: var(--line); margin: 0 3px; }
-.toolbar { gap: 8px; }
+.divider { width: 1px; height: 24px; background: var(--line); margin: 0 5px; flex: none; }
+.toolbar { gap: 6px; }
+.navgroup { gap: 6px; }
+/* a toolbar button with an options badge (the eraser) */
+.btn.icon.has-more { position: relative; overflow: visible; }
+.btn.icon .pen-more { right: -3px; bottom: -3px; width: 15px; height: 15px; }
+.btn.icon.active .pen-more { color: var(--text); border-color: var(--accent); }
 
 /* autosave toggle switch */
 .switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
@@ -376,9 +381,12 @@ input, textarea { font-size: 15px; }
 /* ---- outline sidebar ---- */
 .outline {
   position: absolute; left: 0; top: 0; bottom: 0; width: 264px; z-index: 22;
-  background: var(--panel); border-right: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 68%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4);
+  border-right: 1px solid var(--line);
   display: flex; flex-direction: column; box-shadow: var(--shadow-lg);
 }
+.outline-tree { padding-bottom: 72px; }          /* room for the breadcrumbs over its foot */
 .outline[hidden] { display: none; }
 .outline-head {
   display: flex; align-items: center; justify-content: space-between;
@@ -417,8 +425,8 @@ input, textarea { font-size: 15px; }
 
 /* ---- selection toolbar ---- */
 .sel-bar {
-  position: absolute; z-index: 26; display: flex; align-items: center; gap: 3px;
-  padding: 5px 7px; border-radius: 12px; background: var(--panel);
+  position: absolute; z-index: 26; display: flex; align-items: center; gap: 4px;
+  padding: 6px 9px; border-radius: 14px; background: var(--panel);
   border: 1px solid var(--line); box-shadow: var(--shadow-lg);
   /* on a narrow screen the row wraps instead of running off the right edge,
      where the last tools were unreachable */
@@ -428,12 +436,12 @@ input, textarea { font-size: 15px; }
 .sel-bar button:disabled { opacity: .35; cursor: default; pointer-events: none; }
 .sel-bar[hidden] { display: none; }
 .sel-bar button {
-  width: 28px; height: 28px; display: grid; place-items: center; cursor: pointer;
-  border: none; background: transparent; color: var(--text-dim); border-radius: 7px;
+  width: 36px; height: 36px; display: grid; place-items: center; cursor: pointer;
+  border: none; background: transparent; color: var(--text-dim); border-radius: 9px;
 }
 .sel-bar button:hover { background: var(--panel-2); color: var(--accent); }
-.sel-bar .ic { width: 16px; height: 16px; }
-.sel-sep { width: 1px; height: 18px; background: var(--line); margin: 0 2px; }
+.sel-bar .ic { width: 19px; height: 19px; }
+.sel-sep { width: 1px; height: 22px; background: var(--line); margin: 0 3px; }
 /* locked block indicator */
 .block.locked::after {
   content: ""; position: absolute; top: 6px; left: 6px; width: 16px; height: 16px; z-index: 4; opacity: .7;
@@ -473,8 +481,15 @@ input, textarea { font-size: 15px; }
 #stage.penning #world .tnode-rotate, #stage.penning #world .tnode-resize,
 #stage.penning #world .tnode-edge, #stage.penning #world .col-resize,
 #stage.penning #world .row-resize { display: none; }
-.pen-tool { display: inline-flex; align-items: center; justify-content: center; padding: 6px !important; width: 30px; height: 30px;
+.pen-tool { display: inline-flex; align-items: center; justify-content: center; padding: 6px !important; width: 34px; height: 34px;
+  border-radius: 10px !important; flex: none;
   background: transparent !important; color: var(--text-mute) !important; border: 1px solid var(--line) !important; }
+.pen-tool .ic { width: 18px; height: 18px; }
+.pen-tool.pen-step { width: 28px; height: 28px; border-radius: 8px !important; }
+.pen-tool.pen-step .ic { width: 14px; height: 14px; }
+.pen-steps { display: inline-flex; gap: 4px; }
+/* the close button: the one filled button on the panel */
+.pen-tool.pen-close { background: var(--grad) !important; color: #fff !important; border-color: transparent !important; }
 .pen-tool span[data-icon] { display: inline-flex; }
 .pen-tool.active { background: var(--grad) !important; color: #fff !important; border-color: transparent !important; }
 
@@ -483,9 +498,9 @@ input, textarea { font-size: 15px; }
   background: color-mix(in srgb, var(--panel) 45%, transparent); border: 1px solid var(--line);
   border-radius: 10px; box-shadow: var(--shadow-lg); -webkit-backdrop-filter: blur(16px) saturate(1.4); backdrop-filter: blur(16px) saturate(1.4); cursor: pointer; }
 .pen-colors { display: inline-flex; gap: 5px; align-items: center; }
-.pen-colors .pen-dot { width: 16px; height: 16px; border-radius: 999px; cursor: pointer; border: 2px solid transparent; }
+.pen-colors .pen-dot { width: 18px; height: 18px; border-radius: 999px; cursor: pointer; border: 2px solid transparent; }
 .pen-colors .pen-dot.active { border-color: var(--text); }
-#pen-size { width: 96px; accent-color: var(--accent); }
+#pen-size { width: 104px; accent-color: var(--accent); }
 
 /* ---- draw panel: tools, thickness, drag + snap ---- */
 .btn.icon.dimmed { opacity: .45; }
@@ -497,7 +512,7 @@ input, textarea { font-size: 15px; }
   font-variant-numeric: tabular-nums; }
 /* a tool button with options: the small dots badge opens them */
 .pen-menu-btn { position: relative; overflow: visible; }
-.pen-more { position: absolute; right: -5px; bottom: -5px; width: 14px; height: 14px; border-radius: 999px;
+.pen-more { position: absolute; right: -5px; bottom: -5px; width: 15px; height: 15px; border-radius: 999px;
   background: var(--panel); border: 1px solid var(--line); display: grid; place-items: center;
   color: var(--text-mute); cursor: pointer; }
 .pen-more .ic { width: 9px; height: 9px; stroke-width: 2.6; }
@@ -515,26 +530,26 @@ input, textarea { font-size: 15px; }
    part of its body (the slider keeps its own drag) */
 #pen-bar { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
   z-index: 40; pointer-events: auto; max-width: calc(100vw - 12px); flex-wrap: wrap; justify-content: center;
-  padding: 8px 10px; gap: 9px; touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; }
+  padding: 9px 14px; gap: 9px; border-radius: 16px;                 /* soft corners, even ends */
+  touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; }
 #pen-bar.moved { top: 0; bottom: auto; transform: none; }
 #pen-bar[hidden] { display: none; }
 #pen-bar.dragging { cursor: grabbing; box-shadow: 0 18px 46px rgba(0,0,0,.45); }
 #pen-bar button, #pen-bar .pen-dot, #pen-bar input { cursor: pointer; }
 /* standing up along a side: one column, colours two abreast, slider upright */
-#pen-bar.vert { flex-direction: column; flex-wrap: nowrap; border-radius: 22px; padding: 10px 8px; gap: 9px;
+#pen-bar.vert { flex-direction: column; flex-wrap: nowrap; border-radius: 16px; padding: 14px 9px; gap: 9px;
   max-width: none; max-height: calc(100vh - 16px); overflow-y: auto; scrollbar-width: none; }
 #pen-bar.vert::-webkit-scrollbar { display: none; }
-#pen-bar.vert .pen-colors { flex-wrap: wrap; width: 40px; justify-content: center; gap: 5px 4px; }
+#pen-bar.vert .pen-colors { flex-wrap: wrap; width: 44px; justify-content: center; gap: 5px 4px; }
 #pen-bar.vert .pen-sep { width: 24px; height: 1px; }
 #pen-bar.vert .pen-size-wrap { flex-direction: column; gap: 5px; }
 #pen-bar.vert #pen-size { writing-mode: vertical-lr; direction: rtl; width: 22px; height: 96px; appearance: slider-vertical; }
 #pen-bar.vert .pen-size-val { min-width: 0; text-align: center; }
-#pen-bar.vert #pen-exit { padding: 6px 9px; font-size: 12px; }
-/* the edges it touches are squared off */
-#pen-bar.edge-l { border-top-left-radius: 10px; border-bottom-left-radius: 10px; }
-#pen-bar.edge-r { border-top-right-radius: 10px; border-bottom-right-radius: 10px; }
-#pen-bar.edge-t { border-top-left-radius: 10px; border-top-right-radius: 10px; }
-#pen-bar.edge-b { border-bottom-left-radius: 10px; border-bottom-right-radius: 10px; }
+/* the edges it touches are eased, not squared */
+#pen-bar.edge-l { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
+#pen-bar.edge-r { border-top-right-radius: 8px; border-bottom-right-radius: 8px; }
+#pen-bar.edge-t { border-top-left-radius: 8px; border-top-right-radius: 8px; }
+#pen-bar.edge-b { border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; }
 /* where the panel will land when let go */
 .pen-dock-hint { position: fixed; z-index: 39; width: 16px; height: 16px; border-radius: 999px; background: var(--accent);
   box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 22%, transparent); transform: translate(-50%, -50%); pointer-events: none; }
@@ -1162,11 +1177,12 @@ input, textarea { font-size: 15px; }
   .banner-stack { width: calc(100vw - 16px); left: 50%; }
   .link-banner { flex-wrap: wrap; justify-content: center; max-width: 100%; border-radius: 18px; row-gap: 8px; padding: 9px 12px; }
   /* draw panel: tighter on a phone so it stays a small floating bar */
-  #pen-bar { gap: 7px; padding: 8px 10px; }
+  #pen-bar { gap: 7px; padding: 8px 12px; }
   #pen-size { width: 92px; }
-  #pen-bar .pen-tool { width: 27px; height: 27px; }
+  #pen-bar .pen-tool { width: 32px; height: 32px; }
+  #pen-bar .pen-tool.pen-step { width: 26px; height: 26px; }
   #pen-bar .pen-colors { gap: 4px; }
-  #pen-bar .pen-colors .pen-dot { width: 15px; height: 15px; }
+  #pen-bar .pen-colors .pen-dot { width: 16px; height: 16px; }
   #pen-bar .pen-sep { display: none; }
   #pen-bar .pen-size-val { min-width: 30px; }
 }

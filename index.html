@@ -9,8 +9,8 @@
   <link rel="apple-touch-icon" href="icon.svg" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Notes Gallery" />
-  <link rel="stylesheet" href="css/styles.css?v=108" />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cdefs%3E%3ClinearGradient%20id='g'%20x1='0'%20y1='0'%20x2='1'%20y2='1'%3E%3Cstop%20offset='0'%20stop-color='%234353ff'/%3E%3Cstop%20offset='1'%20stop-color='%23146ef5'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20width='24'%20height='24'%20rx='6'%20fill='url(%23g)'/%3E%3Cg%20transform='translate(12%2012)%20scale(0.76)%20translate(-12%20-12)'%20fill='none'%20stroke='%23fff'%20stroke-width='1.5'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M12%203.6C14.7%203.6%2016.1%205.8%2015.9%208L12.5%2018.6C12.3%2019.4%2011.7%2019.4%2011.5%2018.6L8.1%208C7.9%205.8%209.3%203.6%2012%203.6Z'/%3E%3Cline%20x1='12'%20y1='10.6'%20x2='12'%20y2='18'/%3E%3Ccircle%20cx='12'%20cy='9'%20r='1.15'/%3E%3C/g%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="css/styles.css?v=109" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2024%2024%22%3E%3Cdefs%3E%3ClinearGradient%20id=%22g%22%20x1=%220%22%20y1=%220%22%20x2=%221%22%20y2=%221%22%3E%3Cstop%20offset=%220%22%20stop-color=%22%234353ff%22/%3E%3Cstop%20offset=%221%22%20stop-color=%22%23146ef5%22/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20width=%2224%22%20height=%2224%22%20rx=%225%22%20fill=%22url(%23g)%22/%3E%3Cg%20transform=%22translate(3.12%203.12)%20scale(0.74)%22%20fill=%22none%22%20stroke=%22%23ffffff%22%20stroke-width=%221.7%22%20stroke-linecap=%22round%22%20stroke-linejoin=%22round%22%3E%3Cpath%20d=%22M5.5%209.6V5.6A2.1%202.1%200%200%201%207.6%203.5H14.2L19.8%209.1V15.2L14.6%2020.5H10.4%22/%3E%3Cpath%20d=%22M3.2%2020.8L6.1%2013.5C6.8%2011.8%208.3%2010.7%2010.1%2010.7H12.5V13.1C12.5%2015.1%2011.5%2016.9%209.8%2018Z%22/%3E%3Cpath%20d=%22M3.2%2020.8L8.3%2015.7%22/%3E%3Ccircle%20cx=%228.8%22%20cy=%2215.2%22%20r=%221.05%22/%3E%3Cpath%20d=%22M9.9%2014.1L13.7%2010.3%22/%3E%3Cpath%20d=%22M15.9%208.1L12.3%208.7L15.3%2011.7Z%22%20fill=%22%23ffffff%22%20stroke=%22none%22/%3E%3Cpath%20d=%22M14.2%203.5V9.1H19.8Z%22%20fill=%22%23d9a441%22%20stroke=%22none%22/%3E%3Cpath%20d=%22M19.8%2015.2H14.6V20.5Z%22%20fill=%22%23d9a441%22%20stroke=%22none%22/%3E%3Cpath%20d=%22M11.2%206.1L13.2%208.1%22%20stroke=%22%23d9a441%22/%3E%3C/g%3E%3C/svg%3E" />
 </head>
 <body>
   <div id="app">
@@ -46,7 +46,7 @@
         <button id="btn-link" class="btn icon" title="Connect two blocks"><span data-icon="link"></span></button>
         <span class="bar-break" aria-hidden="true"></span>
         <button id="btn-pen" class="btn icon" title="Freehand pen (draw)"><span data-icon="pen"></span></button>
-        <button id="btn-eraser" class="btn icon" title="Eraser (E) — right-click or hold for the other erasers"><span data-icon="eraser"></span></button>
+        <button id="btn-eraser" class="btn icon has-more" title="Eraser (E) — the dots pick the eraser"><span data-icon="eraser"></span><span class="pen-more" title="Eraser options"><span data-icon="more"></span></span></button>
         <button id="btn-select" class="btn icon" title="Select — circle objects with the stylus to pick them up (Ctrl+A selects all)"><span data-icon="lasso"></span></button>
         <button id="btn-delete" class="btn icon" title="Delete the selected objects (Del)"><span data-icon="trash"></span></button>
         <span id="save-status" class="save-status-pill" title="Save state"></span>
@@ -101,22 +101,18 @@
         <span class="sel-grip" title="Drag to scale the selection"></span>
       </div>
       <div id="sel-bar" class="sel-bar" hidden>
-        <button data-align="left" title="Align left"><span data-icon="align-left"></span></button>
-        <button data-align="center" title="Align centres"><span data-icon="align-center"></span></button>
-        <button data-align="right" title="Align right"><span data-icon="align-right"></span></button>
-        <span class="sel-sep"></span>
-        <button data-align="top" title="Align top"><span data-icon="align-top"></span></button>
-        <button data-align="middle" title="Align middles"><span data-icon="align-middle"></span></button>
-        <button data-align="bottom" title="Align bottom"><span data-icon="align-bottom"></span></button>
-        <span class="sel-sep"></span>
-        <button data-align="dist-h" title="Space evenly across"><span data-icon="dist-h"></span></button>
-        <button data-align="dist-v" title="Space evenly down"><span data-icon="dist-v"></span></button>
-        <span class="sel-sep"></span>
         <button data-sel="group" title="Group (Ctrl+G)"><span data-icon="group"></span></button>
         <button data-sel="ungroup" title="Ungroup (Ctrl+Shift+G)"><span data-icon="ungroup"></span></button>
         <span class="sel-sep"></span>
-        <button data-sel="paint" title="Copy a look, then paste it onto others"><span data-icon="brush"></span></button>
-        <button data-sel="props" title="Colour, pen style and stroke width of the selected writing"><span data-icon="sliders"></span></button>
+        <button data-sel="props" title="Properties"><span data-icon="sliders"></span></button>
+        <button data-sel="copy" title="Copy (Ctrl+C)"><span data-icon="copy"></span></button>
+        <button data-sel="cut" title="Cut (Ctrl+X)"><span data-icon="scissors"></span></button>
+        <button data-sel="delete" title="Delete (Del)"><span data-icon="trash"></span></button>
+        <span class="sel-sep"></span>
+        <button data-sel="back" title="Send to back"><span data-icon="back"></span></button>
+        <button data-sel="backward" title="Send backward"><span data-icon="backward"></span></button>
+        <button data-sel="forward" title="Bring forward"><span data-icon="forward"></span></button>
+        <button data-sel="front" title="Bring to front"><span data-icon="front"></span></button>
         <span class="sel-sep"></span>
         <span id="sel-modes" class="sel-modes">
           <button data-lmode="replace" class="active" title="New selection"><span data-icon="select"></span></button>
@@ -145,12 +141,16 @@
           <span id="pen-colors" class="pen-colors"></span>
           <span class="pen-size-wrap">
             <input id="pen-size" type="range" min="1" max="100" step="1" title="Thickness" />
+            <span class="pen-steps">
+              <button id="pen-size-minus" class="pen-tool pen-step" title="Thinner (hold to keep going)"><span data-icon="minus"></span></button>
+              <button id="pen-size-plus" class="pen-tool pen-step" title="Thicker (hold to keep going)"><span data-icon="plus"></span></button>
+            </span>
             <span id="pen-size-val" class="pen-size-val">12%</span>
           </span>
           <span class="pen-sep"></span>
           <button id="pen-touch" class="pen-tool" title="Finger drawing"><span data-icon="hand"></span></button>
           <button id="pen-snap" class="pen-tool" title="Shape snapping"><span data-icon="shapes"></span></button>
-          <button id="pen-exit" title="Close the draw panel">Done</button>
+          <button id="pen-exit" class="pen-tool pen-close" title="Close the draw panel (Esc)"><span data-icon="close"></span></button>
         </div>
       </div>
 
@@ -686,7 +686,8 @@
               <li><b>Erase</b> — the eraser works with or without the draw panel. It has three modes, picked from the small dots on its button (or by holding the toolbar button): <b>Eraser</b> rubs out just the part you sweep over, <b>Stroke eraser</b> removes a whole stroke at a touch, and <b>Erase with selection</b> removes everything you circle.</li>
               <li><b>Pen styles</b> — the dots on the pen button switch between pencil, pen, brush and highlighter; the button shows the one in use.</li>
               <li><b>The panel</b> — drag it from anywhere on its body. It snaps to the middle of any edge or into a corner; along the top or bottom it lies flat, down a side it stands up, and in a corner it keeps whichever way it was.</li>
-              <li><b>Select</b> — circle anything with the Select tool to pick it up. A dashed frame appears round it; drag the corner grip to make the writing bigger or smaller.</li>
+              <li><b>Select</b> — circle anything with the Select tool to pick it up. A dashed frame appears round it; drag the corner grip to make the writing bigger or smaller. The bar above it groups, opens properties, copies, cuts, deletes and changes the layer order; alignment lives in <b>Ctrl+K</b>.</li>
+              <li><b>Menu on hold</b> — press and hold with a finger or the stylus (outside draw mode) to open the same menu a right-click gives.</li>
             </ul>
           </div>
 
@@ -786,9 +787,9 @@
     <input type="file" id="xlsx-input" hidden accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" />
   </div>
 
-  <script src="js/platform.js?v=108"></script>
-  <script src="js/pdf.js?v=108"></script>
-  <script src="js/db.js?v=108"></script>
-  <script src="js/app.js?v=108"></script>
+  <script src="js/platform.js?v=109"></script>
+  <script src="js/pdf.js?v=109"></script>
+  <script src="js/db.js?v=109"></script>
+  <script src="js/app.js?v=109"></script>
 </body>
 </html>

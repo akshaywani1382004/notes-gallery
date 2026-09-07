@@ -84,7 +84,7 @@
 
   /* ---- line-icon set (stroke SVGs, sized via CSS .ic) ------------------ */
   const ICON = {
-    diary: '<path d="M12 3.4C15 3.4 16.4 5.6 16.2 8L12.6 18.8C12.4 19.6 11.6 19.6 11.4 18.8L7.8 8C7.6 5.6 9 3.4 12 3.4Z"/><line x1="12" y1="10.6" x2="12" y2="18.2"/><circle cx="12" cy="9" r="1.2"/>',
+    diary: '<path d="M5.5 9.6V5.6A2.1 2.1 0 0 1 7.6 3.5H14.2L19.8 9.1V15.2L14.6 20.5H10.4"/><path d="M3.2 20.8L6.1 13.5C6.8 11.8 8.3 10.7 10.1 10.7H12.5V13.1C12.5 15.1 11.5 16.9 9.8 18Z"/><path d="M3.2 20.8L8.3 15.7"/><circle cx="8.8" cy="15.2" r="1.05"/><path d="M9.9 14.1L13.7 10.3"/><path d="M15.9 8.1L12.3 8.7L15.3 11.7Z" fill="currentColor" stroke="none"/><path d="M14.2 3.5V9.1H19.8Z" fill="#d9a441" stroke="none"/><path d="M19.8 15.2H14.6V20.5Z" fill="#d9a441" stroke="none"/><path d="M11.2 6.1L13.2 8.1" stroke="#d9a441"/>',
     plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
     minus: '<line x1="5" y1="12" x2="19" y2="12"/>',
     link: '<line x1="9.5" y1="14.5" x2="14.5" y2="9.5"/><path d="M11 6.5 12 5.5a3.4 3.4 0 0 1 4.8 4.8l-1 1"/><path d="M13 17.5 12 18.5a3.4 3.4 0 0 1-4.8-4.8l1-1"/>',
@@ -1631,10 +1631,7 @@
     // align/distribute need two; with one item only the style tools apply
     bar.querySelectorAll('[data-align]').forEach(b => { b.disabled = ids.length < 2; });
     bar.querySelector('[data-sel="group"]').disabled = ids.length < 2;
-    const propsBtn = bar.querySelector('[data-sel="props"]');
-    if (propsBtn) propsBtn.disabled = !ids.some(id => {
-      const b = state.blocks.find(x => x.id === id); return b && b.kind === 'ink';
-    });
+    bar.querySelector('[data-sel="ungroup"]').disabled = !ids.some(id => { const b = state.blocks.find(x => x.id === id); return b && b.group; });
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     const sr = stage.getBoundingClientRect();
     if (selFrameBox) {
@@ -2807,6 +2804,16 @@
     showInkPanel([b]);
   }
 
+  // The selection bar's Properties: handwriting opens the ink panel for every
+  // stroke picked; anything else opens its own editor.
+  function openSelProps() {
+    const ids = [...state.selectedIds];
+    if (!ids.length) { toast('Select something first.'); return; }
+    const hasInk = ids.some(id => { const b = state.blocks.find(x => x.id === id); return b && b.kind === 'ink'; });
+    if (hasInk) { openInkProps(); return; }
+    if (ids.length > 1) { toast('Properties open for one block at a time.'); }
+    openAnyEditor(ids[0]);
+  }
   // Every selected stroke at once - what the floating bar's properties
   // button opens, so a whole handwritten word can be recoloured in one go.
   function openInkProps() {
@@ -4032,9 +4039,10 @@
       stage.classList.add('panning');
     }
 
-    // touch long-press → context menu (mouse uses right-click);
-    // on a table cell/title it opens that cell's edit panel instead
-    if (e.pointerType === 'touch') {
+    // press-and-hold → context menu (mouse uses right-click); a stylus counts
+    // too, except while it is the pen or eraser. On a table cell/title it
+    // opens that cell's edit panel instead.
+    if (e.pointerType === 'touch' || (e.pointerType === 'pen' && !state.penMode && !state.penEraser)) {
       lpFired = false; lpX = e.clientX; lpY = e.clientY;
       const cx = e.clientX, cy = e.clientY, tid = blockEl ? blockEl.dataset.id : null;
       const lpCell = e.target.closest('.block-table .data-table [data-r]');
@@ -6071,9 +6079,27 @@
         renderOutline();
       });
       tree.appendChild(row);
-      kids.forEach(k => { if (kidsOf(k.id).length) add(k.id, blockLabel(k), k.color, depth + 1); });
+      // every block that can hold things - not the loose text, shapes, images,
+      // strokes and tables, which would swamp the tree
+      kids.forEach(k => { if (!['text', 'shape', 'image', 'ink', 'table'].includes(k.kind)) add(k.id, blockLabel(k), k.color, depth + 1); });
     };
     add(DB.ROOT, state.wsName || 'Workspace', PALETTE[0], 0);
+  }
+  // Redraw soon after any change while the outline is open.
+  let outlineTimer = null;
+  function scheduleOutline() {
+    if (!outlineOpen) return;
+    clearTimeout(outlineTimer);
+    outlineTimer = setTimeout(() => { if (outlineOpen) renderOutline(); }, 250);
+  }
+  // A tap anywhere else puts the outline away; the breadcrumbs sit over its
+  // foot and can still be used without closing it.
+  function bindOutlineDismiss() {
+    document.addEventListener('pointerdown', (e) => {
+      if (!outlineOpen) return;
+      if (e.target.closest('#outline, #btn-outline, #bottombar, #menu, #cmdk, .modal, .drawer')) return;
+      toggleOutline(false);
+    }, true);
   }
 
   /* ------------------------------ auto tidy ----------------------------- *
@@ -6352,6 +6378,7 @@
   // called after any edit; schedules a save (autosave) or flags dirty (manual)
   function markChanged() {
     if (state.ws == null) return;
+    scheduleOutline();
     if (state.autosave) {
       clearTimeout(autoSaveTimer);
       autoSaveTimer = setTimeout(() => saveCurrentWorkspace(false), 900);
@@ -7180,6 +7207,27 @@
     $('#tag-filter-clear').addEventListener('click', () => setTagFilter(state.tagFilter));
     $('#btn-pen').addEventListener('click', penButton);
     $('#pen-exit').addEventListener('click', () => setPenMode(false));
+    // - / + beside the slider: one step per tap, and it keeps going while held
+    const stepPenSize = (d) => {
+      const forEraser = state.penEraser && eraserMode === 'normal';
+      const v = clamp((forEraser ? eraserSize : penSize) + d, 1, 100);
+      if (forEraser) { eraserSize = v; try { localStorage.setItem('ng-eraser-size', v); } catch (_) {} }
+      else { penSize = v; try { localStorage.setItem('ng-pen-size', v); } catch (_) {} }
+      syncPenSize();
+    };
+    [['#pen-size-minus', -1], ['#pen-size-plus', 1]].forEach(([id, d]) => {
+      const b = $(id); if (!b) return;
+      let hold = null, rep = null;
+      const stop = () => { clearTimeout(hold); clearInterval(rep); hold = rep = null; };
+      b.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault(); e.stopPropagation();
+        stepPenSize(d);
+        hold = setTimeout(() => { rep = setInterval(() => stepPenSize(d), 70); }, 380);
+      });
+      ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => b.addEventListener(ev, stop));
+      b.addEventListener('click', (e) => e.preventDefault());       // the press already stepped
+    });
     $('#pen-size').addEventListener('input', (e) => {
       const v = clamp(parseInt(e.target.value, 10) || 12, 1, 100);
       if (state.penEraser && eraserMode === 'normal') { eraserSize = v; try { localStorage.setItem('ng-eraser-size', v); } catch (_) {} }
@@ -7188,7 +7236,14 @@
     });
     // the toolbar eraser: on its own or alongside the draw panel, never
     // opening the panel and never leaving it on when switched off
-    $('#btn-eraser').addEventListener('click', () => setEraser(!state.penEraser));
+    $('#btn-eraser').addEventListener('click', (e) => {
+      if (e.target.closest('.pen-more')) {
+        const m = $('#pen-menu');
+        if (m && !m.hidden && m.dataset.kind === 'eraser') closePenMenu(); else openPenMenu('eraser', $('#btn-eraser'), true);
+        return;
+      }
+      setEraser(!state.penEraser);
+    });
     // finger drawing: auto (default) -> always on -> off (stylus only)
     $('#pen-touch').addEventListener('click', () => {
       fingerDraw = fingerDraw === 'on' ? 'off' : 'on';
@@ -7226,8 +7281,14 @@
       if (b.dataset.align) alignSelection(b.dataset.align);
       else if (b.dataset.sel === 'group') groupSelection();
       else if (b.dataset.sel === 'ungroup') ungroupSelection();
-      else if (b.dataset.sel === 'paint') { if (styleClip) pasteStyle(); else copyStyle(); }
-      else if (b.dataset.sel === 'props') openInkProps();
+      else if (b.dataset.sel === 'props') openSelProps();
+      else if (b.dataset.sel === 'copy') copySelection();
+      else if (b.dataset.sel === 'cut') cutSelection();
+      else if (b.dataset.sel === 'delete') deleteSelected();
+      else if (b.dataset.sel === 'back') reorderZ([...state.selectedIds], false);
+      else if (b.dataset.sel === 'backward') stepZ([...state.selectedIds], false);
+      else if (b.dataset.sel === 'forward') stepZ([...state.selectedIds], true);
+      else if (b.dataset.sel === 'front') reorderZ([...state.selectedIds], true);
     });
     $('#props-papers').addEventListener('click', (e) => {
       const b = e.target.closest('button[data-paper]'); if (!b) return;
@@ -7240,7 +7301,7 @@
     $('#pres-next').addEventListener('click', () => gotoStop(presenting ? presenting.at + 1 : 0));
     $('#pres-exit').addEventListener('click', stopPresenting);
     bindEdgeEditor();
-    bindPenBarDrag(); bindPenMenus();
+    bindPenBarDrag(); bindPenMenus(); bindOutlineDismiss();
     // pointerrawupdate fires as soon as the digitiser reports, ahead of the
     // throttled pointermove — the lowest-latency input the web offers.
     if ('onpointerrawupdate' in window) {
