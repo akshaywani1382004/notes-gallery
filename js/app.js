@@ -368,6 +368,7 @@
   }
 
   function applyView() {
+    if (inking) inking.rect = stage.getBoundingClientRect();
     const { scale, tx, ty } = state.view;
     world.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
     const paper = stage.dataset.paper || 'dots';
@@ -3333,6 +3334,25 @@
     return b;
   }
 
+  // One paint per animation frame: extend the path with the points added
+  // since the last frame instead of rebuilding the whole string.
+  function paintInkFrame() {
+    if (!inking) return;
+    inking.raf = 0;
+    const pts = inking.pts;
+    if (pts.length < 2) return;
+    let d = inking.d;
+    // midpoint quadratics, same shape as inkPathD, appended piece by piece
+    for (let i = Math.max(1, inking.drawn); i < pts.length - 1; i++) {
+      const mx = (pts[i][0] + pts[i + 1][0]) / 2, my = (pts[i][1] + pts[i + 1][1]) / 2;
+      d += ` Q${pts[i][0]} ${pts[i][1]} ${mx} ${my}`;
+    }
+    inking.d = d;
+    inking.drawn = Math.max(1, pts.length - 1);
+    const l = pts[pts.length - 1];
+    inking.path.setAttribute('d', d + ` L${l[0]} ${l[1]}`);   // live tail
+  }
+
   // Smooth ink path (midpoint quadratic curves) — pen strokes render as fluid
   // curves instead of jagged segment chains, live and once saved.
   function inkPathD(pts) {
@@ -3426,6 +3446,8 @@
         && inkAccepts(e)) {
       if (inking) {
         // a second finger landed mid-stroke → discard the stroke, navigate instead
+        if (inking.raf) cancelAnimationFrame(inking.raf);
+        try { stage.releasePointerCapture(inking.pointerId); } catch (_) {}
         inking.path.remove();
         pointers.set(inking.pointerId, { x: inking.lastX, y: inking.lastY });
         inking = null;
@@ -3437,6 +3459,7 @@
       const r = stage.getBoundingClientRect();
       const p = screenToWorld(e.clientX - r.left, e.clientY - r.top);
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('shape-rendering', 'optimizeSpeed');   // no AA cost mid-stroke
       // The nib keeps the thickness you picked on screen, whatever the zoom:
       // strokes live in world units, so divide by the current scale — write
       // zoomed out and the mark is the same weight under your hand.
@@ -3449,8 +3472,22 @@
       const pen = e.pointerType === 'pen';
       inking = { pts: [[p.x, p.y, pen ? (e.pressure || 0.5) : 0]], path, pointerId: e.pointerId,
                  lastX: e.clientX, lastY: e.clientY,
-                 style: penStyle, color: penColor, width, pressure: pen };
-      path.setAttribute('d', inkStrokeD(inking.pts, penStyle, width));
+                 style: penStyle, color: penColor, width, pressure: pen,
+                 rect: r, d: 'M' + p.x + ' ' + p.y, drawn: 1, raf: 0 };
+      // While drawing, every style previews as a plain centreline; the
+      // tapering ones build their real outline on lift. Keeps the per-frame
+      // cost flat no matter how long the stroke gets.
+      const st = PEN_STYLES[penStyle] || PEN_STYLES.pen;
+      if (st.taper > 0) {
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', penColor);
+        path.setAttribute('stroke-width', width);
+        path.setAttribute('stroke-linecap', 'round');
+        path.setAttribute('stroke-linejoin', 'round');
+        path.setAttribute('opacity', st.opacity);
+      }
+      path.setAttribute('d', inking.d);
+      try { stage.setPointerCapture(e.pointerId); } catch (_) {}   // never lose the stroke
       return;
     }
 
@@ -3590,14 +3627,21 @@
     if (inking) {
       if (e.pointerId !== inking.pointerId) return;   // ignore stray pointers mid-stroke
       inking.lastX = e.clientX; inking.lastY = e.clientY;
-      const r = stage.getBoundingClientRect();
-      const p = screenToWorld(e.clientX - r.left, e.clientY - r.top);
-      const last = inking.pts[inking.pts.length - 1];
-      if (!last || Math.hypot(p.x - last[0], p.y - last[1]) * state.view.scale > 1) {
+      const r = inking.rect;                          // cached: no layout per event
+      // A stylus reports far faster than the screen refreshes; take every
+      // sample the browser buffered so nothing is lost.
+      const samples = (e.getCoalescedEvents && e.getCoalescedEvents().length)
+        ? e.getCoalescedEvents() : [e];
+      const minStep = 0.7 / (state.view.scale || 1);   // sub-pixel points add nothing
+      for (const ev of samples) {
+        const p = screenToWorld(ev.clientX - r.left, ev.clientY - r.top);
+        const last = inking.pts[inking.pts.length - 1];
+        if (last && Math.hypot(p.x - last[0], p.y - last[1]) < minStep) continue;
         inking.pts.push([Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10,
-                         inking.pressure ? (e.pressure || 0.5) : 0]);
-        inking.path.setAttribute('d', inkStrokeD(inking.pts, inking.style, inking.width));
+                         inking.pressure ? (ev.pressure || e.pressure || 0.5) : 0]);
       }
+      // Paint once per frame, appending only what is new.
+      if (!inking.raf) inking.raf = requestAnimationFrame(paintInkFrame);
       return;
     }
     if (lpTimer && (Math.abs(e.clientX - lpX) + Math.abs(e.clientY - lpY) > 8)) { clearTimeout(lpTimer); lpTimer = null; }
@@ -3751,15 +3795,19 @@
     if (inking) {
       if (e.pointerId !== inking.pointerId) { pointers.delete(e.pointerId); return; }
       const stroke = inking; inking = null;
+      if (stroke.raf) cancelAnimationFrame(stroke.raf);
+      try { stage.releasePointerCapture(e.pointerId); } catch (_) {}
       stroke.path.remove();
       const pts = stroke.pts;
       if (pts.length >= 2) {
         const hit = shapeSnap ? recognizeShape(pts) : null;
         if (hit) {
-          await createRecognizedShape(hit, stroke.color || penColor, stroke.width || 3);
+          createRecognizedShape(hit, stroke.color || penColor, stroke.width || 3);
           toast('Snapped to ' + shapeSnapName(hit));
         } else {
-          await finalizeInk(pts, stroke);
+          // not awaited: the block appears at once and the save lands after,
+          // so the next stroke can start immediately
+          finalizeInk(pts, stroke);
         }
       }
       return;
@@ -4444,10 +4492,12 @@
     b.group = sameWord ? lastInk.group : uid();
     lastInk = { group: b.group, at: now, x: b.x, y: b.y, w: b.w || 0, h: b.h || 0 };
 
-    await DB.saveBlock(b);
+    // Draw it first, save second: the ink is on the page before the write
+    // finishes, so the next stroke never waits on storage.
     state.blocks.push(b);
     state.childCounts[b.id] = { blocks: 0, files: 0 };
     world.appendChild(makeBlockEl(b));
+    await DB.saveBlock(b);
     recordChange(emptySet(), { blocks: [b], edges: [], files: [] });
   }
 
@@ -6467,7 +6517,11 @@
       if (panning) { stage.classList.remove('panning'); panning = null; }
       clearTimeout(lpTimer); lpTimer = null; lpFired = false;
       colResize = null; rowResize = null; erasing = false;
-      if (inking) { inking.path.remove(); inking = null; }   // drop a half-drawn stroke
+      if (inking) {
+        if (inking.raf) cancelAnimationFrame(inking.raf);
+        try { stage.releasePointerCapture(inking.pointerId); } catch (_) {}
+        inking.path.remove(); inking = null;                 // drop a half-drawn stroke
+      }
       if (lasso) { lasso.path.remove(); lasso = null; }
     };
     window.addEventListener('blur', resetGestures);
