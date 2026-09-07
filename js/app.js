@@ -1608,6 +1608,10 @@
     $('#btn-delete')?.classList.toggle('dimmed', state.selectedIds.size === 0);
   }
   // Floating toolbar over a multi-selection.
+  // While dragging, the frame and the floating bar are moved by the drag
+  // delta instead of re-measuring every selected element on each move.
+  let selFrameBox = null;
+
   function positionSelBar() {
     const bar = $('#sel-bar'); if (!bar) return;
     const ids = [...state.selectedIds];
@@ -1618,15 +1622,28 @@
     // align/distribute need two; with one item only the style tools apply
     bar.querySelectorAll('[data-align]').forEach(b => { b.disabled = ids.length < 2; });
     bar.querySelector('[data-sel="group"]').disabled = ids.length < 2;
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    ids.forEach(id => {
-      const el = state.els[id]; if (!el) return;
-      const r = el.getBoundingClientRect();
-      minX = Math.min(minX, r.left); maxX = Math.max(maxX, r.right);
-      minY = Math.min(minY, r.top); maxY = Math.max(maxY, r.bottom);
+    const propsBtn = bar.querySelector('[data-sel="props"]');
+    if (propsBtn) propsBtn.disabled = !ids.some(id => {
+      const b = state.blocks.find(x => x.id === id); return b && b.kind === 'ink';
     });
-    if (!isFinite(minX)) { bar.hidden = true; return; }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     const sr = stage.getBoundingClientRect();
+    if (selFrameBox) {
+      // mid-drag: use the box we are already carrying rather than measuring
+      // every element again on each pointer move
+      const sc = state.view.scale || 1;
+      minX = selFrameBox.x * sc + state.view.tx + sr.left;
+      minY = selFrameBox.y * sc + state.view.ty + sr.top;
+      maxX = minX + selFrameBox.w * sc; maxY = minY + selFrameBox.h * sc;
+    } else {
+      ids.forEach(id => {
+        const el = state.els[id]; if (!el) return;
+        const r = el.getBoundingClientRect();
+        minX = Math.min(minX, r.left); maxX = Math.max(maxX, r.right);
+        minY = Math.min(minY, r.top); maxY = Math.max(maxY, r.bottom);
+      });
+    }
+    if (!isFinite(minX)) { bar.hidden = true; return; }
     bar.hidden = false;
     const bw = bar.offsetWidth || 320;
     let left = (minX + maxX) / 2 - sr.left - bw / 2;
@@ -1676,7 +1693,7 @@
     if (!selecting || state.readOnly || !state.selectedIds.size || state.levelLayout !== 'canvas') {
       f.hidden = true; return;
     }
-    const box = selScale ? selScale.box : selectionWorldBox();
+    const box = selScale ? selScale.box : (selFrameBox || selectionWorldBox());
     if (!box) { f.hidden = true; return; }
     const sc = state.view.scale || 1;
     const pad = 6;                                  // breathing room, in screen px
@@ -2720,25 +2737,53 @@
     });
   }
 
-  /* ---------------------------- ink editor ----------------------------- */
+  /* ---------------------------- ink editor ----------------------------- *
+   * The panel edits every stroke it was opened for. Opened from a stroke's
+   * own pencil that is one stroke; opened from the floating bar it is the
+   * whole selection, so a word's worth of strokes restyle together.        */
   let inkBlock = null, inkSaveTimer = null;
+  let inkSel = [];                  // the strokes the panel is acting on
+  let inkBaselines = [];            // their state when it opened (reset + undo)
+
+  // Apply an edit to every stroke the panel owns, then repaint and save.
+  function applyInk(fn) {
+    if (!inkSel.length) return;
+    inkSel.forEach(b => { fn(b); refreshItem(b.id); });
+    queueInkSave();
+  }
+  // One undo entry for everything the panel changed while it was open.
+  function flushInkEdits() {
+    if (!inkBaselines.length) return;
+    const bases = inkBaselines; inkBaselines = [];
+    editBaseline = null;            // this panel records its own change
+    const before = [], after = [];
+    bases.forEach(base => {
+      const cur = state.blocks.find(x => x.id === base.id); if (!cur) return;
+      if (!EDIT_FIELDS.some(f => (cur[f] ?? '') !== (base[f] ?? ''))) return;
+      const b0 = { ...cur };
+      EDIT_FIELDS.forEach(f => { b0[f] = base[f]; });
+      before.push(b0); after.push({ ...cur });
+    });
+    if (before.length) recordChange({ blocks: before, edges: [], files: [] },
+                                    { blocks: after, edges: [], files: [] });
+  }
   function renderKSwatches(active) {
     const wrap = $('#k-swatches'); wrap.innerHTML = '';
     PALETTE.concat(['#ffffff', '#0a0b0d']).forEach(col => {
       const s = document.createElement('div');
       s.className = 'swatch' + ((active || PALETTE[0]) === col ? ' active' : '');
       s.style.background = col;
-      s.addEventListener('click', () => { if (!inkBlock) return; inkBlock.color = col; renderKSwatches(col); refreshItem(inkBlock.id); queueInkSave(); });
+      s.addEventListener('click', () => { if (!inkSel.length) return; renderKSwatches(col); applyInk(b => { b.color = col; }); });
       wrap.appendChild(s);
     });
   }
   function queueInkSave() {
-    if (!inkBlock) return;
+    if (!inkSel.length) return;
     $('#ink-save').textContent = 'Saving…';
     clearTimeout(inkSaveTimer);
     inkSaveTimer = setTimeout(async () => {
-      if (!inkBlock) return;
-      await persistBlock(inkBlock); refreshItem(inkBlock.id);
+      if (!inkSel.length) return;
+      for (const b of inkSel) { await persistBlock(b); refreshItem(b.id); }
       $('#ink-save').textContent = 'Saved';
       setTimeout(() => { if ($('#ink-save').textContent === 'Saved') $('#ink-save').textContent = ''; }, 1500);
       markChanged();
@@ -2750,8 +2795,30 @@
     const b = state.blocks.find(x => x.id === id);
     if (!b) return;
     selectBlock(id);
+    showInkPanel([b]);
+  }
+
+  // Every selected stroke at once - what the floating bar's properties
+  // button opens, so a whole handwritten word can be recoloured in one go.
+  function openInkProps() {
+    const strokes = [...state.selectedIds]
+      .map(id => state.blocks.find(x => x.id === id))
+      .filter(b => b && b.kind === 'ink' && !b.locked);
+    if (!strokes.length) { toast('Select some handwriting first.'); return; }
+    flushEdit();
+    closeOtherEditors();
+    showInkPanel(strokes);
+  }
+
+  function showInkPanel(strokes) {
+    const b = strokes[0];
     inkBlock = b;
-    editBaseline = snapshotFields(b);
+    inkSel = strokes;
+    inkBaselines = strokes.map(snapshotFields);
+    editBaseline = snapshotFields(b);   // lets the per-field reset button work
+    const head = $('#ink-title');
+    if (head) head.textContent = strokes.length > 1
+      ? 'Handwriting \u2014 ' + strokes.length + ' strokes' : 'Ink drawing';
     renderKSwatches(b.color);
     renderInkStylePicker(b);
     const toText = $('#k-to-text');
@@ -2771,26 +2838,45 @@
       btn.title = PEN_STYLES[key].label;
       btn.innerHTML = ic(PEN_STYLES[key].icon);
       btn.addEventListener('click', () => {
-        if (!inkBlock) return;
-        inkBlock.style = key;
-        refreshItem(inkBlock.id); queueInkSave(); renderInkStylePicker(inkBlock);
+        if (!inkSel.length) return;
+        applyInk(x => { x.style = key; });
+        renderInkStylePicker(inkBlock);
       });
       wrap.appendChild(btn);
     });
   }
   function closeInkEditor() {
     if ($('#ink-drawer').hidden && !inkBlock) return;
-    flushEdit();
+    flushInkEdits();
     $('#ink-drawer').hidden = true;
-    inkBlock = null;
+    inkBlock = null; inkSel = [];
+  }
+  // Put every stroke back to how it was when the panel opened.
+  function resetInkPanel() {
+    if (!inkBaselines.length) { resetActiveEditor(); return; }
+    inkBaselines.forEach(base => {
+      const cur = state.blocks.find(x => x.id === base.id); if (!cur) return;
+      EDIT_FIELDS.forEach(f => { cur[f] = base[f]; });
+      refreshItem(cur.id); persistBlock(cur);
+    });
+    markChanged();
+    if (inkBlock) { renderKSwatches(inkBlock.color); renderInkStylePicker(inkBlock);
+      $('#k-width').value = inkBlock.width || 3; $('#k-width-val').value = (inkBlock.width || 3); }
+    toast('Reset');
   }
   function bindInkEditor() {
-    wireParam('k-width-val', 'k-width', (v) => { if (!inkBlock) return; inkBlock.width = Math.max(1, Math.round(v)); refreshItem(inkBlock.id); queueInkSave(); });
-    $('#k-to-text').addEventListener('click', () => { if (inkBlock) convertInkToText([inkBlock.id]); });
+    wireParam('k-width-val', 'k-width', (v) => {
+      const w = Math.max(1, Math.round(v));
+      applyInk(b => { b.width = w; });
+    });
+    $('#k-to-text').addEventListener('click', () => { if (inkSel.length) convertInkToText(inkSel.map(b => b.id)); });
     $('#ink-close').addEventListener('click', closeInkEditor);
     $('#k-done').addEventListener('click', closeInkEditor);
-    $('#k-reset').addEventListener('click', resetActiveEditor);
-    $('#k-delete').addEventListener('click', () => { if (inkBlock) deleteBlock(inkBlock.id); });
+    $('#k-reset').addEventListener('click', resetInkPanel);
+    $('#k-delete').addEventListener('click', () => {
+      if (inkSel.length > 1) { const ids = inkSel.map(b => b.id); closeInkEditor(); state.selectedIds = new Set(ids); deleteSelected(); }
+      else if (inkBlock) deleteBlock(inkBlock.id);
+    });
   }
 
   /* ---------------------------- table editor --------------------------- */
@@ -3842,7 +3928,16 @@
       return;
     }
 
-    const blockEl = e.target.closest('.block');
+    let blockEl = e.target.closest('.block');
+    // Handwriting behaves like ink on paper: it only moves once you have
+    // deliberately picked it up with a Select tool. Otherwise a drag that
+    // starts on a stroke pans the page, so writing never shifts by accident
+    // while you are moving around. (A tap still selects it - see onPointerUp.)
+    let inkPassThrough = null;
+    if (blockEl && !state.selectTool && !state.penSelect) {
+      const hb = state.blocks.find(x => x.id === blockEl.dataset.id);
+      if (hb && hb.kind === 'ink') { inkPassThrough = hb.id; blockEl = null; }
+    }
     // clicked a different block (or empty canvas) while a table's cells were active → leave cell mode
     if (editTableId && (!blockEl || blockEl.dataset.id !== editTableId)) closeTableEditor();
     if (blockEl) {
@@ -3912,11 +4007,12 @@
         const starts = {};
         ids.forEach(bid => { const bb = state.blocks.find(x => x.id === bid); if (bb && !bb.locked) starts[bid] = { x: bb.x, y: bb.y }; });
         dragging = { primary: id, ids: Object.keys(starts), starts, startX: e.clientX, startY: e.clientY, moved: false, shift: e.shiftKey };
+        dragging.frame0 = selectionWorldBox();
         blockEl.classList.add('dragging');
       }
     } else {
       const r = stage.getBoundingClientRect();
-      panning = { startX: e.clientX, startY: e.clientY, tx: state.view.tx, ty: state.view.ty, r };
+      panning = { startX: e.clientX, startY: e.clientY, tx: state.view.tx, ty: state.view.ty, r, inkTap: inkPassThrough };
       stage.classList.add('panning');
     }
 
@@ -4077,6 +4173,13 @@
         bb.x = nx; bb.y = ny;
         const el = state.els[bid]; if (el) { el.style.left = nx + 'px'; el.style.top = ny + 'px'; }
       }
+      // the dashed frame and the floating bar travel with what they are round
+      if (dragging.frame0) {
+        selFrameBox = { x: dragging.frame0.x + dx / s + adj.dx, y: dragging.frame0.y + dy / s + adj.dy,
+                        w: dragging.frame0.w, h: dragging.frame0.h };
+        positionSelFrame();
+      }
+      positionSelBar();
       drawEdges();
       return;
     }
@@ -4182,13 +4285,21 @@
         selectBlock(dragging.primary);           // plain click = single select
       }
       dragging = null;
+      selFrameBox = null;
+      positionSelFrame(); positionSelBar();
       return;
     }
     if (panning) {
       stage.classList.remove('panning');
       const moved = Math.abs(e.clientX - panning.startX) + Math.abs(e.clientY - panning.startY);
+      const inkTap = panning.inkTap;
       panning = null;
-      if (moved < 4 && !state.linkMode) { closeDrawerIfOpen(); clearSelection(); }
+      if (moved < 4 && !state.linkMode) {
+        // a drag that started on a stroke panned the page; a tap on one still
+        // picks it up, so a single stroke can be deleted or restyled
+        if (inkTap) { closeDrawerIfOpen(); selectBlock(inkTap); }
+        else { closeDrawerIfOpen(); clearSelection(); }
+      }
     }
   }
 
@@ -6872,6 +6983,7 @@
       else if (b.dataset.sel === 'group') groupSelection();
       else if (b.dataset.sel === 'ungroup') ungroupSelection();
       else if (b.dataset.sel === 'paint') { if (styleClip) pasteStyle(); else copyStyle(); }
+      else if (b.dataset.sel === 'props') openInkProps();
     });
     $('#props-papers').addEventListener('click', (e) => {
       const b = e.target.closest('button[data-paper]'); if (!b) return;
