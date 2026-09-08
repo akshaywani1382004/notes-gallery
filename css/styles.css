@@ -1087,6 +1087,9 @@ input, textarea { font-size: 15px; }
 #app.home-mode #btn-zoom-reset,
 #app.home-mode #btn-menu,
 #app.home-mode .toolbar .divider { display: none; }
+/* landing-only buttons (full screen, help) sit with the theme toggle in the
+   top-right; the workspace toolbar never shows them */
+#app:not(.home-mode) .home-only { display: none; }
 
 #prompt .text-field { margin-top: 6px; }
 .seg-wrap { flex-wrap: wrap; }
