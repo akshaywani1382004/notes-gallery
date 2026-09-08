@@ -57,3 +57,15 @@ If something feels wrong, press "Record 10 s" during it and export the trace.
 - The About header shows "2.0.2 · v116".
 
 Stage 2 of the Ink Plane (stroke model, spatial index, handles on demand, IndexedDB v4, autosave off the input thread) moves to 2.0.3 / v117.
+
+## 2.0.3 (site v117) — the studio theme
+
+- New look: near-black surfaces (never pure black), hairline borders instead of shadows, one muted emerald accent, light bleeding in from the top, halftone dot texture, Instrument Sans for the interface and JetBrains Mono for key chips. Tokens live in `css/theme.css`; `css/styles.css` keeps the layout and maps its older variable names onto the tokens. The light theme is a light variant of the same palette.
+- Landing screen: two-tone headline ("Notes Gallery" / "A canvas for your thinking"), a tilted miniature of each workspace's top page on its card, the wordmark in halftone at the foot of the page, one staggered reveal (240 ms, 60 ms steps), nothing looping. Respects prefers-reduced-motion.
+- Canvas: blocks are a surface step with a light top edge; the selected block gets a soft emerald glow (dropped while it is being dragged, so a drag repaints nothing soft); connectors are 1 px dashed emerald with a point of light at the middle (no SVG filters); handles and lasso in accent ink.
+- Performance decisions (kept from the lag rounds): no backdrop blur on any panel over the canvas (floating panels are near-opaque charcoal), no full-screen grain overlay (a static grain tile appears only on the landing screen and modal cards), no filter effects on connectors, fonts self-hosted (about 84 KB, precached) instead of fetched from Google Fonts.
+- Toolbar: spacing is fluid. From 1440 px down to 1200 px the air between buttons shrinks (12 → 6 px, groups 28 → 12 px); from 1200 px to 1024 px the buttons shrink (42 → 36 px) and the wordmark hides at 1100 px; below 960 px the right group wraps to a second row (34–36 px buttons, still finger-sized) and at 560 px the phone layout takes over. Nothing overflows or overlaps at any width.
+- Mark: the same glyph in accent ink on a raised charcoal tile; favicon, icon.svg and the Tauri icons regenerated to match. New workspaces and blocks default to the emerald accent (existing colours are untouched).
+- Image properties: Crop (rectangle) and Crop by selection (freehand loop, transparent outside). Apply replaces the image at full resolution and is one undo step.
+
+Ink Plane stage 2 moves to 2.0.4 / v118.

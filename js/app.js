@@ -184,7 +184,7 @@
 
   // Grouped by hue so the swatch grid reads as a spectrum rather than a jumble.
   const PALETTE = [
-    '#2b7fff', // blue        (the app's own accent — keep first)
+    '#3F8A66', // emerald     (the app's own accent — keep first)
     '#0ea5e9', // sky
     '#22d3ee', // cyan
     '#14b8a6', // teal
@@ -979,6 +979,7 @@
       g.innerHTML =
         `<path class="hit" d="${d}"></path>` +
         `<path class="edge" d="${d}"${startArrow} marker-end="url(#arrow)"></path>` +
+        (e.label ? '' : `<circle class="edge-dot" cx="${mx}" cy="${my}" r="2.4"></circle>`) +   // a point of light at the middle (decorative)
         (e.label
           ? `<text class="edge-label" x="${mx}" y="${my}" text-anchor="middle" dominant-baseline="middle">${esc(e.label)}</text>`
           : '');
@@ -7469,14 +7470,19 @@
     const grid = $('#ws-grid');
     const wss = await DB.listWorkspaces();
     wss.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-    const counts = {};
-    await Promise.all(wss.map(async w => { counts[w.id] = (await DB.allByWs('blocks', w.id)).length; }));
+    const counts = {}, tops = {};
+    await Promise.all(wss.map(async w => {
+      const all = await DB.allByWs('blocks', w.id);
+      counts[w.id] = all.length; tops[w.id] = all.filter(b => b.parentId === '__root__');
+    }));
     grid.innerHTML = '';
+    let idx = 0;
     for (const w of wss) {
       const card = document.createElement('div');
       card.className = 'ws-card';
       card.dataset.ws = w.id;
       card.style.setProperty('--b-accent', w.color || PALETTE[0]);
+      card.style.setProperty('--i', idx++);                    // reveal order
       const n = counts[w.id] || 0;
       card.innerHTML = `
         <div class="ws-card-top">
@@ -7487,14 +7493,52 @@
             <button data-wact="delete" title="Delete">${ic('trash')}</button>
           </div>
         </div>
+        <div class="ws-thumb-wrap"><canvas class="ws-thumb" width="480" height="264"></canvas></div>
         <div class="ws-name">${esc(w.name || 'Untitled')}</div>
         <div class="ws-meta">${n} block${n === 1 ? '' : 's'}</div>`;
       grid.appendChild(card);
+      drawWsThumb(card.querySelector('.ws-thumb'), tops[w.id] || [], w.color || PALETTE[0]);
     }
     const add = document.createElement('button');
-    add.className = 'ws-add'; add.id = 'ws-add';
+    add.className = 'ws-add'; add.id = 'ws-add'; add.style.setProperty('--i', idx);
     add.innerHTML = `${ic('plus')}<span>New workspace</span>`;
     grid.appendChild(add);
+  }
+
+  // A miniature of the workspace's top page for its card: block footprints
+  // only, drawn once when the landing screen renders (decorative).
+  function drawWsThumb(cv, blocks, color) {
+    if (!cv) return;
+    const ctx = cv.getContext('2d'); if (!ctx) return;
+    const W = cv.width, H = cv.height;
+    ctx.clearRect(0, 0, W, H);
+    if (!blocks.length) return;
+    const cs = getComputedStyle(document.documentElement);
+    const line = cs.getPropertyValue('--line-3').trim() || 'rgba(255,255,255,.18)';
+    const fill = cs.getPropertyValue('--bg-3').trim() || '#16181A';
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    const rects = blocks.slice(0, 400).map(b => {
+      const text = b.kind === 'text', check = b.kind === 'check';
+      const w = b.w || (text ? 120 : check ? 24 : 220), h = b.h || (text ? 28 : check ? 24 : 110);
+      const x = b.x || 0, y = b.y || 0;
+      x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x + w); y1 = Math.max(y1, y + h);
+      return { x, y, w, h, ink: b.kind === 'ink', plain: text || check || b.kind === 'shape' || b.kind === 'image' };
+    });
+    const pad = 36, s = Math.min((W - 2 * pad) / Math.max(1, x1 - x0), (H - 2 * pad) / Math.max(1, y1 - y0), 0.6);
+    const ox = (W - (x1 - x0) * s) / 2 - x0 * s, oy = (H - (y1 - y0) * s) / 2 - y0 * s;
+    ctx.lineWidth = 1;
+    for (const r of rects) {
+      const x = ox + r.x * s, y = oy + r.y * s, w = Math.max(3, r.w * s), h = Math.max(3, r.h * s);
+      if (r.ink) {
+        ctx.globalAlpha = .6; ctx.strokeStyle = color; ctx.beginPath();
+        ctx.moveTo(x, y + h); ctx.quadraticCurveTo(x + w / 2, y, x + w, y + h * .6); ctx.stroke(); continue;
+      }
+      ctx.globalAlpha = 1; ctx.fillStyle = fill; ctx.strokeStyle = line; ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(x, y, w, h, Math.min(4, h / 3)); else ctx.rect(x, y, w, h);
+      ctx.fill(); ctx.stroke();
+      if (!r.plain) { ctx.fillStyle = color; ctx.globalAlpha = .9; ctx.fillRect(x, y, Math.min(2, w), h); }
+    }
+    ctx.globalAlpha = 1;
   }
 
   async function newWorkspaceFlow() {
@@ -7806,6 +7850,7 @@
     document.documentElement.setAttribute('data-theme', theme);
     $('#btn-theme').innerHTML = ic(theme === 'dark' ? 'moon' : 'sun');
     try { localStorage.setItem('bn-theme', theme); } catch (_) {}
+    mmDirty = true; scheduleMinimap();                  // the mini-map bitmap holds the old theme's colours
   }
   function initTheme() {
     let t;
