@@ -75,3 +75,8 @@ Ink Plane stage 2 moves to 2.0.4 / v118.
 - Floating panels (draw panel, selection bar, menus, context menu, command palette, search, mini-map, toasts, outline, editor drawer) are frosted glass again: 16 px backdrop blur at 72% surface, by the user's choice after the cost was explained (a blur re-renders whenever the canvas under it changes, so pan and zoom with panels open cost a few ms per frame on a tablet).
 - Read mode: a pointer landing on any object pans the page, exactly like one on empty paper. Nothing is picked up or moved; a double-tap on a card still steps inside.
 - The mark is silver again with one emerald point at the nib, on the dark tile: toolbar, About, home hero, favicon, icon.svg and all Windows and Android icons.
+
+## 2.0.5 (site v119) — landing screen
+
+- Workspace cards show a real preview of the workspace's top page: cards, shapes, text, checkboxes, images, tables, handwriting and connectors, drawn small in the current theme. The preview is rendered once when you leave the workspace (or switch to another) and stored with the workspace, so nothing renders while you work. A workspace edited since its last snapshot, or viewed in the other theme, is redrawn the next time the landing screen shows it; never-opened workspaces get their first preview lazily on the landing screen.
+- Two buttons join the theme toggle at the top right of the landing screen: Full screen (the same behaviour as F11 and the menu entry; the icon turns into inward-pointing arrows while full screen is on, and hides the system bars in the apps) and About, help and shortcuts (opens the help dialog).
