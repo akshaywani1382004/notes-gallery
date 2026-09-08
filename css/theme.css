@@ -146,7 +146,7 @@ small, .muted, .ws-meta, .block-meta, .lr-meta, .file-sub, .r-sub, .cmdk-sub { f
 /* ---- top bar ---------------------------------------------------------------- */
 #topbar { background: linear-gradient(180deg, rgba(255,255,255,0.03), transparent 70%), var(--bg-0); border-bottom: 1px solid var(--line-1); }
 #app.home-mode #topbar { background: transparent; border-bottom-color: transparent; }
-#app.home-mode #topbar > .divider { display: none; }   /* the landing screen shows only the theme button */
+#app.home-mode #topbar > .divider { display: none; }   /* the landing screen shows only theme, full screen and help */
 /* the mark: a raised dark tile, the glyph in silver, one emerald point at the nib */
 #topbar .brand { gap: 10px; border-radius: var(--r-sm); height: var(--tb-btn); padding: 0 6px; margin: 0 -6px; }   /* same height as the buttons beside it */
 .brand:hover { background: var(--bg-3); }

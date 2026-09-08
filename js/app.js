@@ -7917,7 +7917,7 @@
       const ox = (W - (x1 - x0) * s) / 2 - x0 * s, oy = (H - (y1 - y0) * s) / 2 - y0 * s;
       // pictures first: decoding them is the only wait in here
       const imgs = new Map();
-      const withSrc = blocks.filter(b => b.kind === 'image' && b.src).slice(0, PREVIEW_MAX_IMAGES);
+      const withSrc = blocks.filter(b => b.kind === 'image' && b.src && /^data:/i.test(b.src)).slice(0, PREVIEW_MAX_IMAGES);   // remote pictures would taint the canvas
       if (withSrc.length) await Promise.all(withSrc.map(b => loadPreviewImage(b.src).then(im => { if (im) imgs.set(b.id, im); })));
       // connectors under the blocks, centre to centre
       ctx.strokeStyle = T.line3; ctx.lineWidth = 1; ctx.beginPath();
@@ -8077,6 +8077,7 @@
     const url = await renderWorkspacePreview(w, blocks.filter(b => b.parentId === DB.ROOT), edges);
     if (NG.Diag) NG.Diag.metrics.preview = { ws: wsId, renderMs: performance.now() - t0, blocks: blocks.length, bytes: url.length, at: performance.now() };
     if (state.ws === wsId) return null;                          // re-entered while it rendered
+    if (currentTheme() !== theme) { queuePreview(wsId, true); return null; }   // theme flipped mid-render: draw it again in the current one
     const rec = await storeWorkspacePreview(wsId, url, theme);
     if (rec) { const img = wsCardThumb(wsId); if (img) img.src = url; }
     return rec;

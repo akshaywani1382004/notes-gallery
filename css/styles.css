@@ -1068,7 +1068,7 @@ input, textarea { font-size: 15px; }
 /* on the intro, drop the top-bar background/border so only the floating
    Help + theme buttons show in the top-right; glow fills behind them */
 #app.home-mode #topbar { background: transparent; border-bottom: none; padding: 10px 22px; display: flex; }
-#app.home-mode .bar-right { margin-left: auto; }   /* push Help + theme to the top-right corner */
+#app.home-mode .bar-right { margin-left: auto; }   /* theme, full screen and help sit in the top-right corner */
 #app.home-mode .toolbar { gap: 10px; }
 #app.home-mode .home::before, #app.home-mode .home::after { inset: 0; }
 #app.home-mode #bottombar,
