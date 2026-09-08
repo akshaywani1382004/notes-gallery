@@ -1244,25 +1244,28 @@
   }
 
   // Paste an image from the clipboard (Ctrl+V of a copied picture / screenshot).
+  // Ctrl+V arrives as a paste event carrying the clipboard: images become image
+  // blocks, a Notes Gallery clip (copied in any workspace, on any platform)
+  // becomes blocks, plain text becomes a text block; otherwise the in-session
+  // copy is pasted. Text fields keep their normal paste.
+  let pasteKeyAt = 0;
   function bindImagePaste() {
     window.addEventListener('paste', async (e) => {
+      pasteKeyAt = 0;
       if (state.ws == null || state.levelLayout !== 'canvas') return;
       const t = document.activeElement;
       if (t && /^(INPUT|TEXTAREA)$/.test(t.tagName)) return;   // let text fields paste normally
-      const items = e.clipboardData && e.clipboardData.items;
-      if (!items) return;
-      const imgs = [];
-      for (const it of items) { if (it.kind === 'file' && /^image\//.test(it.type)) { const f = it.getAsFile(); if (f) imgs.push(f); } }
-      if (!imgs.length) return;               // no image on the clipboard → let block-paste handle it
+      let got = null;
+      if (NG.Clip) { try { got = await NG.Clip.fromPasteEvent(e); } catch (_) { got = null; } }
+      else {
+        const items = e.clipboardData && e.clipboardData.items; const imgs = [];
+        if (items) for (const it of items) { if (it.kind === 'file' && /^image\//.test(it.type)) { const f = it.getAsFile(); if (f) imgs.push(f); } }
+        if (imgs.length) got = { kind: 'image', blob: imgs[0], blobs: imgs };
+      }
       e.preventDefault();
-      // drop at the cursor if it's over the canvas, else at the view centre
-      const r = stage.getBoundingClientRect();
-      const p = lastPointer;
-      const overStage = p && p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom;
-      const c = overStage ? screenToWorld(p.x - r.left, p.y - r.top) : centerOfView();
-      let i = 0;
-      for (const f of imgs) { await createImageBlock(f, { at: { x: c.x + i * 24, y: c.y + i * 24 }, openAfter: false }); i++; }
-      toast(imgs.length > 1 ? `${imgs.length} images pasted` : 'Image pasted');
+      if (got && got.kind === 'image' && got.blobs && got.blobs.length > 1) { await pasteImageBlobs(got.blobs); return; }
+      if (await pasteResult(got)) return;
+      if (clipboard) await pasteSnapshot(clipboard, 'Pasted');
     });
   }
 
@@ -2401,6 +2404,9 @@
     const sibEdges = (await DB.levelEdges(state.level)).filter(e => sel.has(e.from) && sel.has(e.to));
     edges.push(...sibEdges);
     clipboard = { roots: ids.slice(), blocks, edges, files };
+    // the device clipboard too, so the copy can be pasted into another
+    // workspace or into the app on another device (one-off, off the hot path)
+    if (NG.Clip) { try { await NG.Clip.write(clipboard); } catch (_) {} }
     if (!silent) toast(`Copied ${ids.length} block${ids.length > 1 ? 's' : ''}`);
     return true;
   }
@@ -2437,9 +2443,39 @@
     return { roots: ids.slice(), blocks, edges, files };
   }
 
+  // Paste: the device clipboard first (blocks copied elsewhere, an image, some
+  // text), then what was copied in this session.
   async function pasteClipboard() {
-    if (!clipboard) return;
+    let got = null;
+    try { got = NG.Clip ? await NG.Clip.read() : null; } catch (_) { got = null; }
+    if (await pasteResult(got)) return;
+    if (!clipboard) { toast('Nothing to paste'); return; }
     await pasteSnapshot(clipboard, 'Pasted');
+  }
+  // One clipboard result -> blocks on the page. Returns false when nothing usable.
+  async function pasteResult(got) {
+    if (!got) return false;
+    if (state.ws == null || state.levelLayout !== 'canvas') return false;
+    if (got.kind === 'ng' && got.snapshot) { await pasteSnapshot(got.snapshot, 'Pasted'); return true; }
+    if (got.kind === 'image' && got.blob) { await pasteImageBlobs([got.blob]); return true; }
+    if (got.kind === 'text' && got.text && got.text.trim() && !clipboard) {
+      await createTextFromFile(new File([got.text], 'clipboard.txt', { type: 'text/plain' }), { at: pasteAt(), silent: true });
+      toast('Text pasted'); return true;
+    }
+    return false;
+  }
+  // where a paste lands: under the cursor when it is over the canvas, else the view centre
+  function pasteAt() {
+    const r = stage.getBoundingClientRect();
+    const p = lastPointer;
+    const overStage = p && p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom;
+    return overStage ? screenToWorld(p.x - r.left, p.y - r.top) : centerOfView();
+  }
+  async function pasteImageBlobs(files) {
+    const c = pasteAt();
+    let i = 0;
+    for (const f of files) { await createImageBlock(f, { at: { x: c.x + i * 24, y: c.y + i * 24 }, openAfter: false }); i++; }
+    toast(files.length > 1 ? `${files.length} images pasted` : 'Image pasted');
   }
 
   // Duplicate the current selection in place (offset), without touching clipboard.
@@ -4322,7 +4358,7 @@
     // a freehand loop: the Select tool picks up what is circled, the eraser's
     // "erase with selection" removes it. Stylus (or mouse) only, like the pen;
     // a finger pans the page instead.
-    if (lassoActive() && !lasso && inkAccepts(e) && offTools) {
+    if (lassoActive() && !lasso && inkAccepts(e) && e.pointerType !== 'touch' && offTools) {
       const erase = eraseLasso();
       const hitBlock = e.target.closest('.block');
       // With the Select tool a block still behaves normally (tap to pick,
@@ -4426,8 +4462,15 @@
       // once picked up (tapped, or circled) a stroke drags like anything else
       if (hb && hb.kind === 'ink' && !state.selectedIds.has(hb.id)) { inkPassThrough = hb.id; blockEl = null; }
     }
+    // A finger pans the page. It moves, resizes or opens a block only after a
+    // tap has picked that block up (a stylus or mouse drags straight away);
+    // the tap itself, a long-press and a double-tap still work on anything.
+    let blockTap = null;
+    if (blockEl && e.pointerType === 'touch' && !state.linkMode && !state.selectedIds.has(blockEl.dataset.id)) {
+      blockTap = blockEl.dataset.id; blockEl = null; inkPassThrough = null;
+    }
     // with the eraser up, a finger (the stylus never gets here) only pans
-    if (blockEl && state.penEraser) { blockEl = null; inkPassThrough = null; }
+    if (blockEl && state.penEraser) { blockEl = null; inkPassThrough = null; blockTap = null; }
     // clicked a different block (or empty canvas) while a table's cells were active → leave cell mode
     if (editTableId && (!blockEl || blockEl.dataset.id !== editTableId)) closeTableEditor();
     if (blockEl) {
@@ -4507,7 +4550,7 @@
       }
     } else {
       const r = stage.getBoundingClientRect();
-      panning = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, tx: state.view.tx, ty: state.view.ty, r, inkTap: inkPassThrough };
+      panning = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, tx: state.view.tx, ty: state.view.ty, r, inkTap: inkPassThrough, blockTap };
       stage.classList.add('panning');
       // carry the selection frame through the pan instead of re-measuring
       // every selected element on each move
@@ -4519,7 +4562,7 @@
     // opens that cell's edit panel instead.
     if (e.pointerType === 'touch' || (e.pointerType === 'pen' && !state.penMode && !state.penEraser)) {
       lpFired = false; lpX = e.clientX; lpY = e.clientY; lpPid = e.pointerId;
-      const cx = e.clientX, cy = e.clientY, tid = blockEl ? blockEl.dataset.id : null;
+      const cx = e.clientX, cy = e.clientY, tid = (blockEl ? blockEl.dataset.id : blockTap) || null;
       const lpCell = e.target.closest('.block-table .data-table [data-r]');
       const lpTitle = e.target.closest('.block-table .table-title');
       clearTimeout(lpTimer);
@@ -4918,12 +4961,14 @@
       stage.classList.remove('panning');
       selFrameBox = null;
       const moved = Math.abs(e.clientX - panning.startX) + Math.abs(e.clientY - panning.startY);
-      const inkTap = panning.inkTap;
+      const inkTap = panning.inkTap, blockTap = panning.blockTap;
       panning = null;
       if (moved < 4 && !state.linkMode) {
-        // a drag that started on a stroke panned the page; a tap on one still
-        // picks it up, so a single stroke can be deleted or restyled
+        // a drag that started on a stroke (or, for a finger, on any block)
+        // panned the page; a tap still picks it up, so it can be moved,
+        // opened, restyled or deleted next
         if (inkTap) { closeDrawerIfOpen(); setSelection(withGroups([inkTap])); }
+        else if (blockTap) { closeDrawerIfOpen(); selectBlock(blockTap); }
         else { closeDrawerIfOpen(); clearSelection(); }
       }
     }
@@ -5008,7 +5053,7 @@
     } else {
       clearSelection();
       items = [
-        { icon: 'download', label: 'Paste', fn: () => pasteClipboard(), disabled: !clipboard },
+        { icon: 'download', label: 'Paste', fn: () => pasteClipboard() },
         { icon: 'frame', label: 'Fit to view', fn: () => fitToView() },
         { sep: true },
         { icon: 'map', label: 'Mini-map: ' + (minimapOn ? 'on' : 'off'), fn: () => toggleMinimap() },
@@ -7856,7 +7901,10 @@
         if (state.selectedIds.size) { e.preventDefault(); cutSelection(); } return;
       }
       if ((e.key === 'v' || e.key === 'V') && (e.ctrlKey || e.metaKey) && !e.altKey) {
-        if (clipboard) { e.preventDefault(); pasteClipboard(); } return;
+        if (state.ws == null || state.levelLayout !== 'canvas') return;
+        pasteKeyAt = performance.now();
+        setTimeout(() => { if (pasteKeyAt) { pasteKeyAt = 0; pasteClipboard(); } }, 250);
+        return;
       }
       if ((e.key === 'd' || e.key === 'D') && (e.ctrlKey || e.metaKey)) {
         if (state.selectedIds.size && state.levelLayout === 'canvas') { e.preventDefault(); duplicateSelection(); } return;

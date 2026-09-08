@@ -98,20 +98,23 @@ input, textarea { font-size: 15px; }
 /* ---------------------------- Top bar ---------------------------------- */
 #topbar {
   height: var(--bar-h); flex: none;
-  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 14px;
+  /* four groups spread evenly across the row, a hairline between each */
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 0 16px;
   background: color-mix(in srgb, var(--panel) 82%, transparent);
   backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--line);
   position: relative; z-index: 40;
 }
-.bar-group { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.bar-left { justify-self: stretch; justify-content: space-between; gap: 10px; }
-.tools-left { gap: 6px; }
-.bar-tools { justify-self: center; gap: 10px; }
-.navgroup { display: flex; align-items: center; gap: 6px; flex: none; }
+.bar-group { display: flex; align-items: center; gap: 8px; min-width: 0; flex: none; }
+.bar-left { gap: 22px; justify-content: space-between; }   /* clear air between the name and the first tools */
+.tools-left { gap: 8px; }
+.bar-tools { gap: 8px; }
+.navgroup { display: flex; align-items: center; gap: 8px; flex: none; }
 .btn:disabled { opacity: .38; cursor: default; pointer-events: none; }
-.bar-right { justify-self: stretch; justify-content: space-between; gap: 8px; }
+.bar-right { gap: 8px; justify-content: space-between; }
+.bar-end { gap: 8px; }
+#topbar > .divider { margin: 0; }
 /* autosave dot: a little air on each side of it */
 #topbar #save-status { margin: 0 4px 0 6px; }
 
@@ -203,7 +206,6 @@ input, textarea { font-size: 15px; }
 .zoom-label { min-width: 56px; justify-content: center; font-variant-numeric: tabular-nums; font-size: 13px; color: var(--text-dim); }
 .divider { width: 1px; height: 24px; background: var(--line); margin: 0 5px; flex: none; }
 .toolbar { gap: 6px; }
-.navgroup { gap: 6px; }
 /* every toolbar button the same height, whatever it holds */
 #topbar .btn { height: 40px; box-sizing: border-box; }
 #topbar .btn > span[data-icon], #topbar .btn > .pen-ic { display: inline-flex; }
@@ -312,7 +314,7 @@ input, textarea { font-size: 15px; }
 #app.list-mode #btn-zoom-in,
 #app.list-mode #btn-zoom-out,
 #app.list-mode #btn-zoom-reset,
-#app.list-mode .bar-right .divider { display: none; }
+/* (the zoom buttons hide in list mode; undo/redo keep their group) */
 
 /* ---------------------------- Canvas ----------------------------------- */
 #stage {
@@ -885,9 +887,12 @@ input, textarea { font-size: 15px; }
   -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4);
   border-left: 1px solid var(--line);
   box-shadow: var(--shadow-lg); z-index: 70; display: flex; flex-direction: column;
-  transform: translateX(0); transition: transform .26s cubic-bezier(.32,.72,0,1);
+  transform: translateX(0); transition: transform .26s cubic-bezier(.32,.72,0,1), visibility 0s;
 }
-.drawer[hidden] { display: flex !important; transform: translateX(104%); pointer-events: none; }
+/* off-screen it is invisible and shadowless (the shadow used to bleed back in
+   at the right edge) and no longer a composited layer */
+.drawer[hidden] { display: flex !important; transform: translateX(104%); pointer-events: none;
+  visibility: hidden; box-shadow: none; transition: transform .26s cubic-bezier(.32,.72,0,1), visibility 0s linear .26s; }
 .sheet-grip { display: none; }   /* phone bottom-sheet resize handle — shown in the phone media tier */
 .drawer-head { display: flex; align-items: center; gap: 8px; padding: 15px 12px 15px 18px; border-bottom: 1px solid var(--line); }
 .title-field { flex: 1; min-width: 0; font-family: var(--serif); font-size: 19px; font-weight: 700; letter-spacing: -0.02em; border: none; background: transparent; outline: none; padding: 6px 2px; }
@@ -1164,8 +1169,10 @@ input, textarea { font-size: 15px; }
 /* Tablets (≤1024px): one compact row — tighter gaps, smaller buttons, no wordmark */
 @media (max-width: 1024px) {
   .brand-name { display: none; }
-  #topbar { gap: 10px; padding: 0 12px; }
-  .bar-group { gap: 8px; }
+  /* tighter air so all four groups still fit one row on a tablet */
+  #topbar { gap: 8px; padding: 0 10px; }
+  .bar-group, .navgroup, .tools-left, .bar-tools, .bar-right, .bar-end { gap: 5px; }
+  .bar-left { gap: 12px; }
   .btn { padding: 8px 11px; font-size: 13.5px; }
   .btn.icon { min-width: 38px; padding: 8px; }
   .search { width: min(400px, 100%); }
@@ -1197,9 +1204,9 @@ input, textarea { font-size: 15px; }
   .search { min-width: 0; }
   /* the tool row wraps rather than running off the right edge — on a narrow
      phone the last buttons (theme, More) used to sit past the screen */
-  .bar-right { order: 3; flex-basis: 100%; margin-left: 0; flex-wrap: wrap;
-    justify-content: center; gap: 4px; row-gap: 6px; }
-  #app.home-mode .bar-right { justify-content: flex-end; flex-basis: auto; order: 2; margin-left: auto; }
+  .bar-right { order: 3; flex: 1 1 auto; margin-left: 0; justify-content: flex-start; gap: 4px; }
+  .bar-end { order: 4; flex: none; gap: 4px; }
+  #app.home-mode .bar-right, #app.home-mode .bar-end { justify-content: flex-end; flex-basis: auto; order: 2; margin-left: auto; }
   /* #topbar prefix outweighs the (later) touch min-width bump so the row fits */
   #topbar .btn.icon { min-width: 34px; padding: 7px; }
   #topbar .btn { padding: 7px 10px; }
@@ -1261,7 +1268,7 @@ input, textarea { font-size: 15px; }
     box-shadow: 0 -12px 40px rgba(0,0,0,.35);
     transform: translateY(0);
   }
-  .drawer[hidden] { display: flex !important; transform: translateY(106%); pointer-events: none; }
+  .drawer[hidden] { display: flex !important; transform: translateY(106%); pointer-events: none; visibility: hidden; box-shadow: none; }
   .sheet-grip {                     /* draggable resize handle */
     display: block; flex: none; height: 18px; touch-action: none; cursor: ns-resize; position: relative;
   }
