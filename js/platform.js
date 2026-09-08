@@ -11,6 +11,43 @@
     ? [{ name: 'PDF document', extensions: ['pdf'] }]
     : FILTERS);
 
+  // ---- clipboard image helpers (used only inside a paste / copy) ----
+  // Whatever shape the IPC hands back for a byte vector -> Uint8Array.
+  const toBytes = (r) => r instanceof Uint8Array ? r
+    : r instanceof ArrayBuffer ? new Uint8Array(r)
+    : (r && r.buffer instanceof ArrayBuffer) ? new Uint8Array(r.buffer, r.byteOffset || 0, r.byteLength)
+    : Uint8Array.from(r || []);
+  // Straight RGBA bytes + size -> PNG Blob through a canvas.
+  function rgbaToPng(bytes, width, height) {
+    return new Promise((res, rej) => {
+      const w = width | 0, h = height | 0;
+      if (!w || !h || bytes.length < w * h * 4) { res(null); return; }
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(bytes.buffer, bytes.byteOffset, w * h * 4), w, h), 0, 0);
+      c.toBlob(b => b ? res(b) : rej(new Error('png encode failed')), 'image/png');
+    });
+  }
+  // Any raster Blob -> { rgba: number[], width, height } (what JsImage::Rgba takes).
+  function blobToRgba(blob) {
+    return new Promise((res, rej) => {
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const w = img.naturalWidth, h = img.naturalHeight;
+        if (!w || !h) { res(null); return; }
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        res({ rgba: Array.from(ctx.getImageData(0, 0, w, h).data), width: w, height: h });
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('image decode failed')); };
+      img.src = url;
+    });
+  }
+
   window.NGShell = {
     isApp: true,
 
@@ -66,6 +103,67 @@
     async recognizeInk(strokes) {
       try { return await inv('recognize_ink', { strokes }); }
       catch (e) { console.warn('ink recognition unavailable:', e); return null; }
+    },
+
+    // ---- OS clipboard (tauri-plugin-clipboard-manager). Text both ways on
+    // every platform. Images: Windows only - the plugin's mobile side answers
+    // "Unsupported on this platform" for read_image / write_image, so on
+    // Android clipReadImage resolves null and clipWriteImage false and the app
+    // stays on the text path. Each call runs once per copy or paste; nothing
+    // here is polled or touched per frame.
+    // How much clip text the platform's clipboard takes comfortably. Android
+    // hands ClipData over Binder (1 MB transaction cap, UTF-16), so keep well
+    // under it there; the desktop has no such limit worth naming.
+    clipTextBudget: window.NGHost ? 400 * 1024 : 20 * 1024 * 1024,
+
+    async clipWriteText(text) {
+      const s = String(text == null ? '' : text);
+      if (T.clipboardManager && T.clipboardManager.writeText) await T.clipboardManager.writeText(s);
+      else await inv('plugin:clipboard-manager|write_text', { text: s });
+      return true;
+    },
+
+    // Text on the clipboard, or null (empty, non-text content, or a platform
+    // without a reader for what is there).
+    async clipReadText() {
+      try {
+        const r = (T.clipboardManager && T.clipboardManager.readText) ? await T.clipboardManager.readText()
+                                                                      : await inv('plugin:clipboard-manager|read_text');
+        return typeof r === 'string' ? r : null;
+      } catch (_) { return null; }
+    },
+
+    // Image on the clipboard as a PNG Blob, or null. The plugin hands back an
+    // Image resource (RGBA bytes + size) that must be closed afterwards.
+    async clipReadImage() {
+      let img = null, rid = null;
+      try {
+        if (T.clipboardManager && T.clipboardManager.readImage) { img = await T.clipboardManager.readImage(); rid = img && img.rid; }
+        else rid = await inv('plugin:clipboard-manager|read_image');
+      } catch (_) { return null; }                       // no image there, or unsupported (Android)
+      if (!img && rid == null) return null;
+      try {
+        const [raw, size] = await Promise.all([
+          (img && img.rgba) ? img.rgba() : inv('plugin:image|rgba', { rid }),
+          (img && img.size) ? img.size() : inv('plugin:image|size', { rid }),
+        ]);
+        return await rgbaToPng(toBytes(raw), size && size.width, size && size.height);
+      } catch (e) { console.warn('clipboard image decode failed:', e); return null; }
+      finally {
+        try { if (img && img.close) await img.close(); else if (rid != null) await inv('plugin:resources|close', { rid }); } catch (_) {}
+      }
+    },
+
+    // Optional: put a raster Blob on the clipboard as an image. Resolves
+    // false where that is not possible (Android, undecodable blob).
+    async clipWriteImage(blob) {
+      try {
+        const px = await blobToRgba(blob);
+        if (!px) return false;
+        if (T.clipboardManager && T.clipboardManager.writeImage) await T.clipboardManager.writeImage(px);   // passes the {rgba,width,height} object through
+        else await inv('plugin:clipboard-manager|write_image', { image: px });
+        return true;
+      } catch (e) { console.warn('clipboard image write failed:', e); return false; }
     },
 
     basename(path) { return String(path).split(/[\\/]/).pop(); },

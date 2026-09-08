@@ -73,8 +73,18 @@
 
   const strip = (rec) => { const o = Object.assign({}, rec); delete o.ws; return o; };
 
+  const fmtSize = (b) => b >= 1048576 ? `${Math.round(b / 1048576)} MB` : `${Math.round(b / 1024)} KB`;
+  // The platform may ask for a smaller budget (NGShell.clipTextBudget: Android's
+  // clipboard goes over a 1 MB Binder transaction); otherwise TEXT_BUDGET.
+  const budgetFor = (arg) => {
+    if (typeof arg === 'number' && arg > 0) return arg;
+    const sh = shell();
+    return (sh && typeof sh.clipTextBudget === 'number' && sh.clipTextBudget > 0) ? sh.clipTextBudget : TEXT_BUDGET;
+  };
+
   // Snapshot {roots, blocks, edges, files(with Blob)} -> { text, bytes, dropped }.
-  async function serialize(snap) {
+  async function serialize(snap, budgetArg) {
+    const budget = budgetFor(budgetArg);
     const roots = Array.isArray(snap && snap.roots) ? snap.roots.slice() : [];
     const blocks = (snap && snap.blocks || []).map(strip);
     const edges = (snap && snap.edges || []).map(strip);
@@ -90,7 +100,7 @@
         if (f.blob && typeof f.blob.size === 'number') data = await blobToDataUrl(f.blob);
         else if (typeof f.data === 'string') data = f.data;
       } catch (_) { data = null; }
-      if (data && bytes + data.length + 64 <= TEXT_BUDGET) {
+      if (data && bytes + data.length + 64 <= budget) {
         meta.data = data;
         bytes += data.length + 64;
       } else {
@@ -100,9 +110,9 @@
       }
       out.files.push(meta);
     }
-    if (dropped) out.note = `${dropped} attachment${dropped > 1 ? 's' : ''} left out: over the ${Math.round(TEXT_BUDGET / 1048576)} MB clipboard budget`;
+    if (dropped) out.note = `${dropped} attachment${dropped > 1 ? 's' : ''} left out: over the ${fmtSize(budget)} clipboard budget`;
     const text = JSON.stringify(out);
-    return { text, bytes: text.length, dropped };
+    return { text, bytes: text.length, dropped, budget, exportedAt: out.exportedAt };
   }
 
   // Text -> validated snapshot (files' data URLs back to Blobs), or null when
@@ -145,15 +155,19 @@
 
   /* ------------------------------- write ------------------------------ */
   // Serialise the snapshot and put it on the OS clipboard. Resolves to
-  // { ok, via:'shell'|'navigator'|null, bytes, dropped }. Never throws: a
-  // denied permission just means the copy stays in-app (app.js keeps its
-  // in-memory snapshot regardless).
-  async function write(snapshot) {
+  // { ok, via:'shell'|'navigator'|null, bytes, dropped, exportedAt, reason? }.
+  // exportedAt is the clip's stamp: a paste that reads it back can recognise
+  // its own copy and use the in-memory snapshot instead of decoding. Never
+  // throws: a denied permission (reason 'denied') or a clip whose blocks
+  // alone exceed the budget (reason 'too-large', nothing written) just means
+  // the copy stays in-app - app.js keeps its in-memory snapshot regardless.
+  async function write(snapshot, budget) {
     let ser;
-    try { ser = await serialize(snapshot); }
-    catch (e) { console.warn('NG.Clip: serialise failed', e); return { ok: false, via: null, bytes: 0, dropped: 0 }; }
+    try { ser = await serialize(snapshot, budget); }
+    catch (e) { console.warn('NG.Clip: serialise failed', e); return { ok: false, via: null, bytes: 0, dropped: 0, exportedAt: null, reason: 'serialize' }; }
+    if (ser.bytes > ser.budget) return { ok: false, via: null, bytes: ser.bytes, dropped: ser.dropped, exportedAt: ser.exportedAt, reason: 'too-large' };
     const via = await writeText(ser.text);
-    return { ok: !!via, via, bytes: ser.bytes, dropped: ser.dropped };
+    return { ok: !!via, via, bytes: ser.bytes, dropped: ser.dropped, exportedAt: ser.exportedAt, reason: via ? undefined : 'denied' };
   }
 
   async function writeText(text) {
@@ -291,7 +305,7 @@
     APP, KIND, VERSION, TEXT_BUDGET,
     write, writeText, writeImage,
     read, fromPasteEvent,
-    isNgText, parse, serialize, summary,
+    isNgText, parse, serialize, summary, budgetFor,
     blobToDataUrl, dataUrlToBlob,
   };
 })();

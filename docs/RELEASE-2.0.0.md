@@ -44,3 +44,16 @@ If something feels wrong, press "Record 10 s" during it and export the trace.
 - Connectors keep their label, line style and both-ends arrow through Export, Import and copy-paste (they were dropped since 1.x; found by the workspace verification pass).
 - The About header shows the build: app version and site cache number (e.g. "2.0.1 · v115").
 - Workspace verification (three end-to-end runs): lifecycle, persistence of every block kind with export/import round-trip, save paths and service-worker update - no workspace-breaking problem; the database schema is unchanged, so 1.x data needs no migration.
+
+## 2.0.2 (site v116) — GUI round
+
+- Toolbar regrouped: brand + outline / search / read on the left; home, back, forward, Add, link, pen, eraser, Select and delete in the middle; undo, redo and zoom on the right; save status, theme and menu at the end. Groups wrap to three rows on a phone.
+- The dark band along the right edge (the hidden drawer's shadow) is gone.
+- New mark: a dark tile with the page-and-nib glyph in silver and one accent point at the nib. Same glyph in the toolbar, About, the home hero, the favicon, icon.svg and every Tauri icon (Windows and Android adaptive icons regenerated with a dark background).
+- Fingers move the page. A finger drag on an unselected block pans; a finger tap selects it, and a selected block can then be moved, resized, long-pressed and opened by finger. The Select tool answers to the stylus (or mouse) only; a finger with it up pans.
+- Two erasers. The toolbar eraser takes anything it touches: strokes, blocks, shapes, text, images and connectors (all three modes: sweep, whole object, circle). The eraser inside the draw panel erases handwriting only. Pressing the toolbar button while the panel's eraser is up widens it; the panel button narrows it again. Everything an eraser gesture removes is one undo step.
+- Copy and paste travel across workspaces, platforms and devices: Copy also writes the selection to the device clipboard as a Notes Gallery clip (blocks, connectors, attachments as data URLs, 20 MB budget; 400 KB on Android), and Paste (Ctrl+V, the context menu) reads it back in any workspace, in the website or the apps. An image on the device clipboard pastes as an image block. Android: text clips only; the WebView plugin has no image clipboard.
+- The outline and search buttons put the pen, eraser and Select tool away when tapped.
+- The About header shows "2.0.2 · v116".
+
+Stage 2 of the Ink Plane (stroke model, spatial index, handles on demand, IndexedDB v4, autosave off the input thread) moves to 2.0.3 / v117.

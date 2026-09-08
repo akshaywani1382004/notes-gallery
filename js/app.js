@@ -84,7 +84,7 @@
 
   /* ---- line-icon set (stroke SVGs, sized via CSS .ic) ------------------ */
   const ICON = {
-    diary: '<path d="M5.5 9.6V5.6A2.1 2.1 0 0 1 7.6 3.5H14.2L19.8 9.1V15.2L14.6 20.5H10.4"/><path d="M3.2 20.8L6.1 13.5C6.8 11.8 8.3 10.7 10.1 10.7H12.5V13.1C12.5 15.1 11.5 16.9 9.8 18Z"/><path d="M3.2 20.8L8.3 15.7"/><circle cx="8.8" cy="15.2" r="1.05"/><path d="M9.9 14.1L13.7 10.3"/><path d="M15.9 8.1L12.3 8.7L15.3 11.7Z" fill="#fff" stroke="none"/><path d="M14.2 3.5V9.1H19.8Z" fill="#fff" fill-opacity=".85" stroke="none"/><path d="M19.8 15.2H14.6V20.5Z" fill="#fff" fill-opacity=".85" stroke="none"/><path d="M11.2 6.1L13.2 8.1" stroke="#fff"/>',
+    diary: '<path d="M5.5 9.6V5.6A2.1 2.1 0 0 1 7.6 3.5H14.2L19.8 9.1V15.2L14.6 20.5H10.4"/><path d="M14.2 3.5V9.1H19.8Z" fill="currentColor" fill-opacity=".8" stroke="none"/><path d="M19.8 15.2H14.6V20.5Z" fill="currentColor" fill-opacity=".8" stroke="none"/><path d="M3.2 20.8L6.1 13.5C6.8 11.8 8.3 10.7 10.1 10.7H12.5V13.1C12.5 15.1 11.5 16.9 9.8 18Z"/><path d="M3.2 20.8L8.3 15.7"/><path d="M9.9 14.1L13.7 10.3"/><path d="M15.9 8.1L12.3 8.7L15.3 11.7Z" fill="currentColor" stroke="none"/><circle cx="8.8" cy="15.2" r="1.35" fill="var(--accent)" stroke="none"/>',
     chev: '<path d="M6.5 9.5l5.5 5.5 5.5-5.5"/>',
     checkbox: '<rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8.2 12.2l2.6 2.6 5-5.4"/>',
     plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
@@ -974,7 +974,7 @@
       const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
       const d = edgePathD(e.style, p1, p2);
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-      g.setAttribute('class', 'edge-g');
+      g.setAttribute('class', 'edge-g'); g.dataset.id = e.id;
       const startArrow = e.both ? ' marker-start="url(#arrow)"' : '';
       g.innerHTML =
         `<path class="hit" d="${d}"></path>` +
@@ -2381,6 +2381,7 @@
   // Clipboard holds a DEEP snapshot: the selected blocks, every descendant,
   // all edges between them (at each level), and all attached files.
   let clipboard = null;   // { roots:[id], blocks:[], edges:[], files:[] }
+  let clipStamp = null;   // exportedAt of the copy we last put on the device clipboard
 
   async function copySelection(silent) {
     await flushPendingSaves();                          // flush any pending edit
@@ -2406,7 +2407,14 @@
     clipboard = { roots: ids.slice(), blocks, edges, files };
     // the device clipboard too, so the copy can be pasted into another
     // workspace or into the app on another device (one-off, off the hot path)
-    if (NG.Clip) { try { await NG.Clip.write(clipboard); } catch (_) {} }
+    clipStamp = null;
+    if (NG.Clip) {
+      try {
+        const r = await NG.Clip.write(clipboard);
+        if (r && r.ok) clipStamp = r.exportedAt;
+        if (r && r.dropped) toast(r.dropped + (r.dropped === 1 ? ' attachment is' : ' attachments are') + ' too large to travel to other devices');
+      } catch (_) {}
+    }
     if (!silent) toast(`Copied ${ids.length} block${ids.length > 1 ? 's' : ''}`);
     return true;
   }
@@ -2456,9 +2464,15 @@
   async function pasteResult(got) {
     if (!got) return false;
     if (state.ws == null || state.levelLayout !== 'canvas') return false;
-    if (got.kind === 'ng' && got.snapshot) { await pasteSnapshot(got.snapshot, 'Pasted'); return true; }
-    if (got.kind === 'image' && got.blob) { await pasteImageBlobs([got.blob]); return true; }
-    if (got.kind === 'text' && got.text && got.text.trim() && !clipboard) {
+    if (got.kind === 'ng' && got.snapshot) {
+      // our own copy, still in memory: paste that (nothing dropped for size)
+      const own = clipboard && clipStamp && got.snapshot.exportedAt === clipStamp;
+      await pasteSnapshot(own ? clipboard : got.snapshot, 'Pasted'); return true;
+    }
+    if (got.kind === 'image' && got.blob) { await pasteImageBlobs((got.blobs && got.blobs.length) ? got.blobs : [got.blob]); return true; }
+    // plain text on the device clipboard: it is newer than our copy when that
+    // copy did reach the clipboard (clipStamp), or there is no copy at all
+    if (got.kind === 'text' && got.text && got.text.trim() && (!clipboard || clipStamp)) {
       await createTextFromFile(new File([got.text], 'clipboard.txt', { type: 'text/plain' }), { at: pasteAt(), silent: true });
       toast('Text pasted'); return true;
     }
@@ -4358,7 +4372,7 @@
     // a freehand loop: the Select tool picks up what is circled, the eraser's
     // "erase with selection" removes it. Stylus (or mouse) only, like the pen;
     // a finger pans the page instead.
-    if (lassoActive() && !lasso && inkAccepts(e) && e.pointerType !== 'touch' && offTools) {
+    if (lassoActive() && !lasso && inkAccepts(e) && offTools) {      // inkAccepts: fingers only when the hand button says so
       const erase = eraseLasso();
       const hitBlock = e.target.closest('.block');
       // With the Select tool a block still behaves normally (tap to pick,
@@ -5403,26 +5417,37 @@
     lasso:  { label: 'Erase with selection', hint: 'circle what to remove',        icon: 'eraser-lasso' },
   };
   let eraserMode = 'normal', eraserSize = 24;
+  // Which eraser is up. The toolbar eraser takes anything it touches: strokes,
+  // blocks, shapes, text, images and connectors. The eraser inside the draw
+  // panel erases handwriting only. Both share the three modes above.
+  let eraserScope = 'ink';
+  const eraserHint = () => (eraserScope === 'all'
+    ? { normal: 'rubs out anything you sweep over', stroke: 'removes a whole stroke or object', lasso: 'circle what to remove' }
+    : { normal: 'rubs out the ink you sweep over', stroke: 'removes a whole stroke', lasso: 'circle the strokes to remove' })[eraserMode];
   try {
     const m = localStorage.getItem('ng-eraser-mode'); if (m && ERASER_MODES[m]) eraserMode = m;
     const z = +(localStorage.getItem('ng-eraser-size')); if (z >= 1 && z <= 100) eraserSize = z;
   } catch (_) {}
   const eraserRadiusPx = () => 3 + eraserSize * 0.35;          // on screen, so zoom does not change the feel
 
-  function setEraser(on, quiet) {
+  // scope: 'all' (the toolbar eraser) or 'ink' (the draw panel's); when not
+  // given, the eraser is ink-only while the draw panel is open
+  function setEraser(on, quiet, scope) {
     on = !!on;
     if (on && state.readOnly) { toast('Read mode is on.'); return; }
     if (on && (state.ws == null || state.levelLayout !== 'canvas')) return;
-    const was = state.penEraser;
+    const was = state.penEraser, wasScope = eraserScope;
+    if (on) eraserScope = scope || (state.penMode ? 'ink' : 'all');
     state.penEraser = on;
     if (on) { if (state.selectTool) setSelectMode(false); setLinkMode(false); }
     stage.classList.toggle('erasing', on);
+    stage.classList.toggle('erase-all', on && eraserScope === 'all');
     notifyInking();
     stage.classList.toggle('erase-normal', on && eraserMode === 'normal');
     if (!on) { hideEraserCursor(); if (lasso && lasso.erase) { lasso.path.remove(); lasso = null; } }
     renderPenTools(); syncPenSize(); syncToolButtons();
-    if (!quiet && was !== on) {
-      toast(on ? ERASER_MODES[eraserMode].label + ' \u2014 ' + ERASER_MODES[eraserMode].hint
+    if (!quiet && (was !== on || (on && wasScope !== eraserScope))) {
+      toast(on ? ERASER_MODES[eraserMode].label + ' \u2014 ' + eraserHint()
                : (state.penMode ? 'Back to the pen' : 'Eraser off'));
     }
   }
@@ -5434,28 +5459,31 @@
     if (!state.penEraser) { setEraser(true); return; }
     stage.classList.toggle('erase-normal', m === 'normal');
     renderPenTools(); syncPenSize();
-    toast(ERASER_MODES[m].label + ' \u2014 ' + ERASER_MODES[m].hint);
+    toast(ERASER_MODES[m].label + ' \u2014 ' + eraserHint());
   }
   function showEraserCursor(x, y) {
     const c = $('#eraser-cursor'); if (!c) return;
     const d = Math.round(eraserRadiusPx() * 2);
     c.hidden = false; c.style.width = c.style.height = d + 'px';
+    c.classList.toggle('all', eraserScope === 'all');
     c.style.left = x + 'px'; c.style.top = y + 'px';
   }
   function hideEraserCursor() { const c = $('#eraser-cursor'); if (c) c.hidden = true; }
 
   // Everything one eraser gesture removes or creates is one undo entry.
   let eraseBatch = null;
-  function beginEraseBatch() { if (!eraseBatch) eraseBatch = { removed: [], added: new Map() }; }
+  function beginEraseBatch() { if (!eraseBatch) eraseBatch = { removed: [], added: new Map(), edges: [], boxes: new Map() }; }
   function commitEraseBatch() {
     if (!eraseBatch) return;
-    const { removed, added } = eraseBatch; eraseBatch = null;
+    const { removed, added, edges: cut } = eraseBatch; eraseBatch = null;
     const after = [...added.values()];
-    if (!removed.length && !after.length) return;
+    if (!removed.length && !after.length && !cut.length) return;
     const level = state.level;
-    // connectors touching an erased stroke go with it (a picked-up stroke can be linked)
+    // connectors the eraser took directly, plus those touching an erased
+    // block or stroke (a picked-up stroke can be linked)
     const gone = new Set(removed.map(b => b.id));
-    const edges = state.edges.filter(ed => gone.has(ed.from) || gone.has(ed.to));
+    const edges = cut.slice();
+    for (const ed of state.edges) if ((gone.has(ed.from) || gone.has(ed.to)) && !edges.some(k => k.id === ed.id)) edges.push(ed);
     if (edges.length) {
       const eids = new Set(edges.map(ed => ed.id));
       state.edges = state.edges.filter(ed => !eids.has(ed.id));
@@ -5465,7 +5493,9 @@
     const plain = removed.filter(b => !b.__deps), deep = removed.filter(b => b.__deps);
     removed.forEach(b => { delete b.__deps; });
     const gen = history.gen;
+    const heavy = removed.some(b => b.kind !== 'ink');
     return afterInkWrites(async () => {
+      if (heavy) await flushPendingSaves();          // no late panel write brings an erased block back
       await Promise.all([
         ...plain.map(b => DB.del('blocks', b.id)),
         ...after.map(b => DB.saveBlock(b)),
@@ -5484,15 +5514,79 @@
                    { blocks: after, edges: [], files: [] }, level);
     });
   }
-  // Take a stroke off the page (DOM + state), remembering it for undo.
+  // Take a stroke (or, for the toolbar eraser, any block) off the page
+  // (DOM + state), remembering it for undo.
   function removeInkBlock(b) {
     beginEraseBatch();
     if (eraseBatch.added.has(b.id)) eraseBatch.added.delete(b.id);   // born and gone in one gesture
     else { const c = state.childCounts[b.id]; eraseBatch.removed.push({ ...b, __deps: !c || !!(c.blocks || c.files) }); }
+    if (b.kind !== 'ink') closeEditorsFor(b.id);
     state.blocks = state.blocks.filter(x => x.id !== b.id);
-    state.selectedIds.delete(b.id);
+    const wasSel = state.selectedIds.delete(b.id);
     const el = state.els[b.id]; if (el) el.remove();
-    delete state.els[b.id]; delete state.childCounts[b.id];
+    delete state.els[b.id]; delete state.childCounts[b.id]; if (state.childPeek) delete state.childPeek[b.id];
+    if (wasSel) applySelectionClasses();
+  }
+  // A connector the eraser took on its own.
+  function removeEdgeByEraser(ed) {
+    beginEraseBatch();
+    if (eraseBatch.edges.some(x => x.id === ed.id)) return;
+    eraseBatch.edges.push({ ...ed });
+    state.edges = state.edges.filter(x => x.id !== ed.id);
+    drawEdges();
+  }
+  // An erased block that was open in a side panel: shut the panel first.
+  function closeEditorsFor(id) {
+    const open = [textBlock, shapeBlock, imageBlock, checkBlock, inkBlock, drawerBlock].some(x => x && x.id === id)
+      || (typeof editTableId !== 'undefined' && editTableId === id);
+    if (open) closeOtherEditors();
+  }
+  // A block's box in world units, measured once per eraser gesture.
+  function eraseBoxOf(b) {
+    let r = eraseBatch.boxes.get(b.id);
+    if (!r) { const bb = blockBox(b); r = { x: bb.x, y: bb.y, w: bb.w, h: bb.h, cx: bb.x + bb.w / 2, cy: bb.y + bb.h / 2 }; eraseBatch.boxes.set(b.id, r); }
+    return r;
+  }
+  // Does the sweep from (x0,y0) to (x1,y1), R wide, touch the rectangle?
+  function sweepHitsRect(x0, y0, x1, y1, r, R) {
+    const n = Math.min(32, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / Math.max(1, R)) + 1);
+    for (let i = 0; i <= n; i++) {
+      const t = i / n, px = x0 + (x1 - x0) * t, py = y0 + (y1 - y0) * t;
+      if (px >= r.x - R && px <= r.x + r.w + R && py >= r.y - R && py <= r.y + r.h + R) return true;
+    }
+    return false;
+  }
+  // The connector's line as world points, the geometry drawEdges draws
+  // (the "curve" style is a quadratic through the midpoint: a straight line).
+  function edgePolyline(ra, rb, style) {
+    const p1 = borderPoint(ra, rb), p2 = borderPoint(rb, ra);
+    if (style === 'elbow') { const mx = (p1.x + p2.x) / 2; return [[p1.x, p1.y], [mx, p1.y], [mx, p2.y], [p2.x, p2.y]]; }
+    return [[p1.x, p1.y], [p2.x, p2.y]];
+  }
+  const segSegDist = (ax, ay, bx, by, cx, cy, dx, dy) => {
+    const cr = (ox, oy, px, py, qx, qy) => (px - ox) * (qy - oy) - (py - oy) * (qx - ox);
+    const d1 = cr(cx, cy, dx, dy, ax, ay), d2 = cr(cx, cy, dx, dy, bx, by), d3 = cr(ax, ay, bx, by, cx, cy), d4 = cr(ax, ay, bx, by, dx, dy);
+    if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return 0;
+    return Math.min(distToSeg(ax, ay, cx, cy, dx, dy), distToSeg(bx, by, cx, cy, dx, dy),
+                    distToSeg(cx, cy, ax, ay, bx, by), distToSeg(dx, dy, ax, ay, bx, by));
+  };
+  // The toolbar eraser's extra reach: blocks and connectors under the sweep.
+  function eraseObjectsAlong(x0, y0, x1, y1, R, sx, sy, ex, ey) {
+    beginEraseBatch();
+    for (const b of state.blocks.slice()) {
+      if (b.kind === 'ink' || b.parentId !== state.level || b.locked) continue;
+      const r = eraseBoxOf(b);
+      if (r.x - R > ex || r.y - R > ey || r.x + r.w + R < sx || r.y + r.h + R < sy) continue;   // nowhere near
+      if (sweepHitsRect(x0, y0, x1, y1, r, R)) removeInkBlock(b);
+    }
+    for (const ed of state.edges.slice()) {
+      const a = state.blocks.find(x => x.id === ed.from), b = state.blocks.find(x => x.id === ed.to);
+      if (!a || !b) continue;
+      const pts = edgePolyline(eraseBoxOf(a), eraseBoxOf(b), ed.style);
+      for (let i = 1; i < pts.length; i++) {
+        if (segSegDist(x0, y0, x1, y1, pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]) <= R + 3) { removeEdgeByEraser(ed); break; }
+      }
+    }
   }
   function addInkBlock(nb) {
     beginEraseBatch();
@@ -5504,7 +5598,16 @@
   // whole-stroke eraser: whatever stroke is under the point goes
   function eraseStrokeAt(clientX, clientY) {
     const el = document.elementFromPoint(clientX, clientY);
-    const node = el && el.closest ? el.closest('.block-ink') : null;
+    if (!el || !el.closest) return;
+    if (eraserScope === 'all') {                       // the toolbar eraser: whatever object is under the point
+      const g = el.closest('g.edge-g');
+      if (g) { const ed = state.edges.find(x => x.id === g.dataset.id); if (ed) removeEdgeByEraser(ed); return; }
+      const any = el.closest('.block');
+      const b = any && state.blocks.find(x => x.id === any.dataset.id);
+      if (b && !b.locked) removeInkBlock(b);
+      return;
+    }
+    const node = el.closest('.block-ink');
     if (!node) return;
     const b = state.blocks.find(x => x.id === node.dataset.id);
     if (!b || b.kind !== 'ink' || b.locked) return;
@@ -5571,6 +5674,7 @@
       removeInkBlock(b);
       for (const r of runs) addInkBlock(inkFromWorldPts(b, r));
     }
+    if (eraserScope === 'all') eraseObjectsAlong(x0, y0, x1, y1, R, sx, sy, ex, ey);
   }
   function eraseSweepAt(cx0, cy0, cx1, cy1) {
     const r = stageRect();
@@ -5589,8 +5693,28 @@
       for (let i = 0; i < pts.length; i += step) { total++; if (pointInPoly(pts[i][0], pts[i][1], poly)) inside++; }
       if (inside * 2 >= total) { removeInkBlock(b); n++; }
     }
+    if (eraserScope === 'all') {
+      // a block goes when most of its corners (and centre) lie inside
+      for (const b of state.blocks.slice()) {
+        if (b.kind === 'ink' || b.parentId !== state.level || b.locked) continue;
+        const r = blockBox(b); let inside = 0;
+        for (const [px, py] of [[r.x, r.y], [r.x + r.w, r.y], [r.x, r.y + r.h], [r.x + r.w, r.y + r.h], [r.x + r.w / 2, r.y + r.h / 2]]) {
+          if (pointInPoly(px, py, poly)) inside++;
+        }
+        if (inside >= 3) { removeInkBlock(b); n++; }
+      }
+      // a connector goes when its middle is circled (one between two erased blocks is gone with them)
+      for (const ed of state.edges.slice()) {
+        const a = state.blocks.find(x => x.id === ed.from), b = state.blocks.find(x => x.id === ed.to);
+        if (!a || !b) continue;
+        const pts = edgePolyline(blockRectOf(a), blockRectOf(b), ed.style);
+        const q = pts.length === 2 ? [(pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2] : [(pts[1][0] + pts[2][0]) / 2, (pts[1][1] + pts[2][1]) / 2];
+        if (pointInPoly(q[0], q[1], poly)) { removeEdgeByEraser(ed); n++; }
+      }
+    }
     commitEraseBatch();
-    toast(n ? n + (n === 1 ? ' stroke erased' : ' strokes erased') : 'Nothing inside the loop');
+    const noun = eraserScope === 'all' ? ' item' : ' stroke';
+    toast(n ? n + noun + (n === 1 ? '' : 's') + ' erased' : 'Nothing inside the loop');
   }
 
   /* --------------------------- draw panel ------------------------------- *
@@ -5604,10 +5728,10 @@
     if (sb) { sb.classList.toggle('active', !state.penEraser); sb.title = st.label + ' \u2014 tap the dots for other styles'; }
     if (sic) sic.innerHTML = ic(st.icon);
     const eb = $('#pen-eraser'), eic = $('#pen-eraser-ic');
-    if (eb) { eb.classList.toggle('active', state.penEraser); eb.title = em.label + ' (E) \u2014 tap the dots for other erasers'; }
+    if (eb) { eb.classList.toggle('active', state.penEraser); eb.title = em.label + ' (E) \u2014 ink only; tap the dots for other erasers'; }
     if (eic) eic.innerHTML = ic(em.icon);
     const tic = $('#btn-eraser-ic'); if (tic) tic.innerHTML = ic(em.icon);       // the toolbar button too
-    const tb = $('#btn-eraser'); if (tb) tb.title = em.label + ' (E) \u2014 the dots pick the eraser';
+    const tb = $('#btn-eraser'); if (tb) tb.title = em.label + ' (E) \u2014 erases anything it touches; the dots pick the eraser';
     const sw = $('#pen-bar .pen-size-wrap');
     if (sw) sw.classList.toggle('dimmed', state.penEraser && eraserMode !== 'normal');
   }
@@ -5673,7 +5797,7 @@
       btn.addEventListener('contextmenu', (e) => { e.preventDefault(); openPenMenu(kind, btn); });
     };
     wire('#pen-style', 'style', () => { if (state.penEraser) { setEraser(false); return false; } return true; });
-    wire('#pen-eraser', 'eraser', () => { if (!state.penEraser) { setEraser(true); return false; } return true; });
+    wire('#pen-eraser', 'eraser', () => { if (!state.penEraser || eraserScope !== 'ink') { setEraser(true, false, 'ink'); return false; } return true; });
     // the toolbar eraser has no badge: right-click / long-press opens the modes
     $('#btn-eraser')?.addEventListener('contextmenu', (e) => { e.preventDefault(); openPenMenu('eraser', $('#btn-eraser'), true); });
     document.addEventListener('click', (e) => {
@@ -8092,7 +8216,9 @@
         if (m && !m.hidden && m.dataset.kind === 'eraser') closePenMenu(); else openPenMenu('eraser', $('#btn-eraser'), true);
         return;
       }
-      setEraser(!state.penEraser);
+      // up already as the draw panel's ink eraser: this button widens it to everything
+      if (state.penEraser && eraserScope !== 'all') setEraser(true, false, 'all');
+      else setEraser(!state.penEraser, false, 'all');
     });
     // finger drawing: auto (default) -> always on -> off (stylus only)
     $('#pen-touch').addEventListener('click', () => {
@@ -8116,8 +8242,9 @@
       }
       setSelectMode(!state.selectTool);
     });
-    $('#btn-outline').addEventListener('click', () => toggleOutline());
-    $('#btn-search').addEventListener('click', (e) => { e.stopPropagation(); if ($('#search-pop').hidden) openSearch(); else closeSearch(); });
+    // the outline and search put the pen, eraser and Select tool away first
+    $('#btn-outline').addEventListener('click', () => { dropActiveTools(); toggleOutline(); });
+    $('#btn-search').addEventListener('click', (e) => { e.stopPropagation(); dropActiveTools(); if ($('#search-pop').hidden) openSearch(); else closeSearch(); });
     $('#btn-delete').addEventListener('click', () => {
       if (!state.selectedIds.size) { toast('Select something first.'); return; }
       deleteSelected();
