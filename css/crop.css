@@ -1,0 +1,44 @@
+/* ===========================================================================
+ * crop.css - the image crop dialog (#crop-modal) and the image editor's crop
+ * row. Kept apart from styles.css on purpose; uses the same tokens and the
+ * same visual language as the other modals. Loaded right after styles.css.
+ * ========================================================================= */
+
+/* the two entry buttons in the image editor */
+.crop-row { display: flex; gap: 8px; }
+.crop-row .btn { flex: 1; justify-content: center; min-width: 0; }
+.crop-row .btn span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* the dialog */
+.crop-card { width: min(780px, 100%); padding: 20px 22px 20px; }
+.crop-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
+.crop-head h3 { margin: 0; }
+.crop-modes { flex: none; width: 260px; }
+.crop-modes button { padding: 7px 10px; }
+
+/* the preview box: the canvas is exactly the fitted picture, centred */
+.crop-stage {
+  display: grid; place-items: center; height: min(58vh, 540px); padding: 1px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--bg-2); overflow: hidden;
+}
+.crop-canvas {
+  display: block; max-width: 100%; max-height: 100%; border-radius: 2px; cursor: crosshair;
+  touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  /* a checker under the picture, so transparency reads as transparency */
+  background-color: #8b8f99;
+  background-image:
+    linear-gradient(45deg, rgba(255,255,255,.35) 25%, transparent 25%, transparent 75%, rgba(255,255,255,.35) 75%),
+    linear-gradient(45deg, rgba(255,255,255,.35) 25%, transparent 25%, transparent 75%, rgba(255,255,255,.35) 75%);
+  background-size: 16px 16px; background-position: 0 0, 8px 8px;
+}
+.crop-hint { margin-top: 10px; min-height: 18px; font-size: 12.5px; line-height: 1.45; color: var(--text-dim); }
+.crop-modal .modal-actions { margin-top: 14px; }
+
+@media (max-width: 640px) {
+  .crop-card { padding: 14px; border-radius: 16px; }
+  .crop-head { flex-direction: column; align-items: stretch; gap: 10px; }
+  .crop-modes { width: auto; }
+  .crop-stage { height: min(50vh, 420px); }
+  .crop-modal .modal-actions { flex-wrap: wrap; }
+  .crop-modal .modal-actions .btn { flex: 1; justify-content: center; }
+}

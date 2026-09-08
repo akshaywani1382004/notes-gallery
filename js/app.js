@@ -3077,6 +3077,306 @@
     });
   }
 
+  /* ================================ crop ================================ *
+   * Crop for image blocks: a rectangle (8 handles, movable box, free aspect)
+   * or a freehand selection (draw a loop; the picture is clipped to it,
+   * transparent outside, trimmed to the loop's box). Lives entirely in
+   * #crop-modal, opened from the image editor's "Crop" / "Crop by selection"
+   * buttons; nothing here is reached from the stage pointer handlers, the
+   * live ink path, drawEdges or the mini-map. Apply renders the crop at the
+   * picture's own resolution and writes it as a new data URL on the block
+   * (image blocks keep their picture in `src`, see paintImageNode), keeps the
+   * block's width, re-derives its height, and records ONE undo entry.
+   * Self-contained: adds its own icon and registers its own binder.         */
+  ICON.crop = '<path d="M7 3.5v11.5a2 2 0 0 0 2 2h11.5"/><path d="M17 20.5V9a2 2 0 0 0-2-2H3.5"/>';
+  const CROP_MIN = 8;                 // smallest crop side, in source pixels
+  const CROP_HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+  const CROP_CURSOR = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', move: 'move', new: 'crosshair' };
+  let crop = null;                    // the open session (see openCrop); null while the dialog is closed
+
+  const cropModal = () => $('#crop-modal');
+  const cropCanvas = () => $('#crop-canvas');
+  const cropLoadImage = (src) => new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error('image')); im.src = src; });
+
+  async function openCrop(mode) {
+    if (state.readOnly) { toast('Read mode is on.'); return; }
+    const b = imageBlock;
+    if (!b || !b.src) return;
+    let img;
+    try { img = await cropLoadImage(b.src); } catch (_) { toast('This image could not be read.'); return; }
+    if (imageBlock !== b) return;                       // the panel moved on while decoding
+    const natW = img.naturalWidth || 0, natH = img.naturalHeight || 0;
+    if (natW < CROP_MIN || natH < CROP_MIN) { toast('This image is too small to crop.'); return; }
+    const m = /^data:(image\/[\w.+-]+)/i.exec(b.src);
+    crop = {
+      id: b.id, img, natW, natH, type: m ? m[1].toLowerCase() : '',
+      mode: 'rect', rect: { x: 0, y: 0, w: natW, h: natH }, poly: [], drawing: false,
+      view: { w: natW, h: natH, dpr: 1 }, drag: null, busy: false,
+    };
+    cropModal().hidden = false;
+    setCropMode(mode === 'free' ? 'free' : 'rect');
+    window.addEventListener('resize', cropFit);
+    setTimeout(() => { const a = $('#crop-apply'); if (a && crop) a.focus(); }, 30);
+  }
+  function closeCrop() {
+    crop = null;
+    cropModal().hidden = true;
+    window.removeEventListener('resize', cropFit);
+  }
+  function setCropMode(mode) {
+    if (!crop) return;
+    crop.mode = mode; crop.drag = null; crop.drawing = false;
+    $$('#crop-modes button').forEach(x => x.classList.toggle('active', x.dataset.cmode === mode));
+    $('#crop-hint').textContent = mode === 'free'
+      ? 'Draw a loop around the part to keep; lifting closes it. Everything outside becomes transparent.'
+      : 'Drag the handles or move the box. Drag outside the box to start a new one.';
+    cropFit();
+  }
+  // Fit the picture into the preview box; the canvas is exactly the fitted picture.
+  function cropFit() {
+    if (!crop) return;
+    const cv = cropCanvas(), box = cv.parentElement;
+    const bw = Math.max(40, box.clientWidth - 2), bh = Math.max(40, box.clientHeight - 2);
+    const k = Math.min(bw / crop.natW, bh / crop.natH);
+    const w = Math.max(1, Math.floor(crop.natW * k)), h = Math.max(1, Math.floor(crop.natH * k));
+    const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+    crop.view = { w, h, dpr };
+    cv.style.width = w + 'px'; cv.style.height = h + 'px';
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    cropDraw();
+  }
+  // client point -> source pixels, clamped to the picture
+  function cropPoint(e) {
+    const r = cropCanvas().getBoundingClientRect();
+    const x = (e.clientX - r.left) * crop.natW / (r.width || 1), y = (e.clientY - r.top) * crop.natH / (r.height || 1);
+    return { x: clamp(x, 0, crop.natW), y: clamp(y, 0, crop.natH) };
+  }
+  function cropHandlePos(k, x, y, w, h) {
+    const cx = x + w / 2, cy = y + h / 2, R = x + w, B = y + h;
+    return { nw: [x, y], n: [cx, y], ne: [R, y], e: [R, cy], se: [R, B], s: [cx, B], sw: [x, B], w: [x, cy] }[k];
+  }
+  // Which handle, the box itself, or the space outside it sits under a client point (rect mode).
+  function cropHit(e) {
+    const r = cropCanvas().getBoundingClientRect();
+    const px = e.clientX - r.left, py = e.clientY - r.top;
+    const sx = r.width / crop.natW, sy = r.height / crop.natH;
+    const rc = crop.rect, x = rc.x * sx, y = rc.y * sy, w = rc.w * sx, h = rc.h * sy;
+    const tol = e.pointerType === 'touch' ? 22 : 12;       // a finger gets a bigger grab
+    let best = null, bd = Infinity;
+    for (const k of CROP_HANDLES) {
+      const [hx, hy] = cropHandlePos(k, x, y, w, h);
+      const d = Math.hypot(px - hx, py - hy);
+      if (d <= tol && d < bd) { best = k; bd = d; }
+    }
+    if (best) return best;
+    return (px >= x && px <= x + w && py >= y && py <= y + h) ? 'move' : 'new';
+  }
+  function cropPolyBox(pts) {
+    if (!pts || !pts.length) return null;
+    let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+    for (const [x, y] of pts) { if (x < x1) x1 = x; if (y < y1) y1 = y; if (x > x2) x2 = x; if (y > y2) y2 = y; }
+    x1 = Math.floor(x1); y1 = Math.floor(y1); x2 = Math.ceil(x2); y2 = Math.ceil(y2);
+    return { x: x1, y: y1, w: Math.max(1, x2 - x1), h: Math.max(1, y2 - y1) };
+  }
+  function cropDraw() {
+    if (!crop) return;
+    const cv = cropCanvas(), ctx = cv.getContext('2d');
+    const { w, h, dpr } = crop.view;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(crop.img, 0, 0, w, h);
+    const sx = w / crop.natW, sy = h / crop.natH;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    const tracePoly = (pts) => { pts.forEach((p, i) => { if (i) ctx.lineTo(p[0] * sx, p[1] * sy); else ctx.moveTo(p[0] * sx, p[1] * sy); }); };
+    if (crop.mode === 'rect') {
+      const r = crop.rect, x = r.x * sx, y = r.y * sy, rw = r.w * sx, rh = r.h * sy;
+      ctx.fillStyle = 'rgba(0,0,0,.52)';                    // dim what goes
+      ctx.beginPath(); ctx.rect(0, 0, w, h); ctx.rect(x, y, rw, rh); ctx.fill('evenodd');
+      ctx.strokeStyle = 'rgba(255,255,255,.28)'; ctx.lineWidth = 1;   // thirds
+      ctx.beginPath();
+      for (let i = 1; i < 3; i++) { ctx.moveTo(x + rw * i / 3, y); ctx.lineTo(x + rw * i / 3, y + rh); ctx.moveTo(x, y + rh * i / 3); ctx.lineTo(x + rw, y + rh * i / 3); }
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 3; ctx.strokeRect(x, y, rw, rh);
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.strokeRect(x, y, rw, rh);
+      const hs = 5.5;
+      ctx.fillStyle = '#fff'; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 1.5;
+      for (const k of CROP_HANDLES) {
+        const [hx, hy] = cropHandlePos(k, x, y, rw, rh);
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(hx - hs, hy - hs, hs * 2, hs * 2, 2.5); else ctx.rect(hx - hs, hy - hs, hs * 2, hs * 2);
+        ctx.fill(); ctx.stroke();
+      }
+    } else {
+      const pts = crop.poly;
+      if (pts.length >= 3) {
+        ctx.fillStyle = 'rgba(0,0,0,.52)';
+        ctx.beginPath(); ctx.rect(0, 0, w, h); tracePoly(pts); ctx.closePath(); ctx.fill('evenodd');
+      }
+      if (pts.length >= 2) {
+        ctx.beginPath(); tracePoly(pts); if (!crop.drawing) ctx.closePath();
+        ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 3.5; ctx.stroke();
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.75; ctx.stroke();
+        if (crop.drawing) {                                 // the closing edge, as lifting will draw it
+          const a = pts[pts.length - 1], z = pts[0];
+          ctx.beginPath(); ctx.moveTo(a[0] * sx, a[1] * sy); ctx.lineTo(z[0] * sx, z[1] * sy);
+          ctx.setLineDash([4, 4]); ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 1.25; ctx.stroke(); ctx.setLineDash([]);
+        }
+      }
+    }
+    const apply = $('#crop-apply');
+    if (apply) apply.disabled = crop.busy || (crop.mode === 'free' && crop.poly.length < 3);
+  }
+  // The box after a drag: a handle moves its edge(s), the box moves whole, or a new box is pulled out.
+  function cropDragRect(d, p) {
+    const { natW, natH } = crop, r0 = d.rect0, k = d.kind, R_ = Math.round;
+    if (k === 'move') {
+      return { x: clamp(R_(r0.x + p.x - d.start.x), 0, natW - r0.w), y: clamp(R_(r0.y + p.y - d.start.y), 0, natH - r0.h), w: r0.w, h: r0.h };
+    }
+    if (k === 'new') {
+      const x1 = R_(Math.min(d.start.x, p.x)), x2 = R_(Math.max(d.start.x, p.x));
+      const y1 = R_(Math.min(d.start.y, p.y)), y2 = R_(Math.max(d.start.y, p.y));
+      return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+    }
+    let L = r0.x, T = r0.y, R = r0.x + r0.w, B = r0.y + r0.h;
+    if (k.includes('w')) L = clamp(R_(p.x), 0, R - CROP_MIN);
+    if (k.includes('e')) R = clamp(R_(p.x), L + CROP_MIN, natW);
+    if (k.includes('n')) T = clamp(R_(p.y), 0, B - CROP_MIN);
+    if (k.includes('s')) B = clamp(R_(p.y), T + CROP_MIN, natH);
+    return { x: L, y: T, w: R - L, h: B - T };
+  }
+  function onCropDown(e) {
+    if (!crop || crop.busy || crop.drag) return;            // one pointer at a time
+    if (e.button > 0) return;
+    e.preventDefault(); e.stopPropagation();
+    try { cropCanvas().setPointerCapture(e.pointerId); } catch (_) {}
+    const p = cropPoint(e);
+    if (crop.mode === 'free') { crop.poly = [[p.x, p.y]]; crop.drawing = true; crop.drag = { pid: e.pointerId, kind: 'draw' }; }
+    else crop.drag = { pid: e.pointerId, kind: cropHit(e), start: p, rect0: { ...crop.rect } };
+    cropDraw();
+  }
+  function onCropMove(e) {
+    if (!crop) return;
+    const d = crop.drag;
+    if (!d) { cropCanvas().style.cursor = crop.mode === 'rect' ? (CROP_CURSOR[cropHit(e)] || 'crosshair') : 'crosshair'; return; }
+    if (d.pid !== e.pointerId) return;
+    e.preventDefault(); e.stopPropagation();
+    const p = cropPoint(e);
+    if (d.kind === 'draw') {
+      const last = crop.poly[crop.poly.length - 1];
+      const step = 1.5 * crop.natW / (crop.view.w || 1);   // about 1.5 css px apart
+      if (Math.hypot(p.x - last[0], p.y - last[1]) >= step) crop.poly.push([p.x, p.y]);
+    } else {
+      crop.rect = cropDragRect(d, p);
+    }
+    cropDraw();
+  }
+  function onCropUp(e) {
+    if (!crop || !crop.drag || crop.drag.pid !== e.pointerId) return;
+    e.stopPropagation();
+    const d = crop.drag; crop.drag = null;
+    try { cropCanvas().releasePointerCapture(e.pointerId); } catch (_) {}
+    if (d.kind === 'draw') {
+      crop.drawing = false;                                 // the loop closes back to its first point
+      const bb = cropPolyBox(crop.poly);
+      if (crop.poly.length < 3 || bb.w < CROP_MIN || bb.h < CROP_MIN) {
+        if (crop.poly.length > 5 && e.type !== 'pointercancel') toast('Draw a larger loop.');
+        crop.poly = [];
+      }
+    } else if (d.kind === 'new' && (crop.rect.w < CROP_MIN || crop.rect.h < CROP_MIN)) {
+      crop.rect = d.rect0;                                  // a tap outside the box changes nothing
+    }
+    cropDraw();
+  }
+  function cropReset() {
+    if (!crop) return;
+    if (crop.mode === 'free') crop.poly = []; else crop.rect = { x: 0, y: 0, w: crop.natW, h: crop.natH };
+    crop.drag = null; crop.drawing = false;
+    cropDraw();
+  }
+  // Render the crop at the picture's own resolution. A rectangle keeps the
+  // source's type when it is jpeg/webp/png (anything else becomes png); a
+  // selection is always png, for the transparency.
+  function cropRender() {
+    const cv = document.createElement('canvas'), ctx = cv.getContext('2d');
+    let type = 'image/png';
+    if (crop.mode === 'rect') {
+      const r = crop.rect;
+      cv.width = r.w; cv.height = r.h;
+      ctx.drawImage(crop.img, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+      if (/^image\/(jpeg|webp|png)$/.test(crop.type)) type = crop.type;
+    } else {
+      const pts = crop.poly, bb = cropPolyBox(pts);
+      cv.width = bb.w; cv.height = bb.h;
+      ctx.beginPath();
+      pts.forEach((p, i) => { if (i) ctx.lineTo(p[0] - bb.x, p[1] - bb.y); else ctx.moveTo(p[0] - bb.x, p[1] - bb.y); });
+      ctx.closePath(); ctx.clip();
+      ctx.drawImage(crop.img, -bb.x, -bb.y);
+    }
+    return new Promise((res, rej) => cv.toBlob(bl => bl ? res({ blob: bl, w: cv.width, h: cv.height }) : rej(new Error('encode')), type, 0.92));
+  }
+  async function cropApply() {
+    if (!crop || crop.busy) return;
+    if (state.readOnly) { toast('Read mode is on.'); return; }
+    const b = state.blocks.find(x => x.id === crop.id);
+    if (!b) { closeCrop(); return; }
+    if (crop.mode === 'free' && crop.poly.length < 3) { toast('Draw a loop around the part to keep.'); return; }
+    const r = crop.rect;
+    if (crop.mode === 'rect' && r.x === 0 && r.y === 0 && r.w === crop.natW && r.h === crop.natH) { toast('The whole picture is selected.'); return; }
+    crop.busy = true; cropDraw();
+    try {
+      const out = await cropRender();
+      const src = await readAsDataUrl(out.blob);
+      if (!crop || !state.blocks.includes(b)) return;      // closed, or the block went, while encoding
+      if (imageSaveTimer) { clearTimeout(imageSaveTimer); imageSaveTimer = null; }
+      flushEdit();                                          // a pending panel edit is its own undo step
+      const before = { ...b };
+      b.src = src;
+      b.h = Math.max(1, Math.round((b.w || 200) * out.h / out.w));   // same width, new aspect
+      await persistBlock(b);
+      refreshItem(b.id);
+      if (imageBlock && imageBlock.id === b.id) {
+        const pv = $('#i-preview img'); if (pv) pv.src = src;
+        editBaseline = snapshotFields(b);                   // the crop is not part of the panel's edit session
+      }
+      recordChange({ blocks: [before], edges: [], files: [] }, { blocks: [{ ...b }], edges: [], files: [] });
+      drawEdges();                                          // connectors follow the new height
+      closeCrop();
+      toast('Image cropped');
+    } catch (err) {
+      console.error(err);
+      toast('Could not crop this image.');
+    } finally {
+      if (crop) { crop.busy = false; cropDraw(); }
+    }
+  }
+  // Escape cancels; Enter (off a button) applies; the canvas shortcuts stay
+  // out while the dialog is up. Capture phase, so the stage never sees them.
+  function onCropKey(e) {
+    if (!crop || cropModal().hidden) return;
+    if (e.key === 'Tab') return;
+    if (e.key === 'Escape') { e.preventDefault(); closeCrop(); }
+    else if (e.key === 'Enter' && !(e.target && e.target.tagName === 'BUTTON')) { e.preventDefault(); cropApply(); }
+    e.stopImmediatePropagation();
+  }
+  function bindCrop() {
+    const modal = cropModal(); if (!modal) return;
+    $('#i-crop')?.addEventListener('click', () => openCrop('rect'));
+    $('#i-crop-free')?.addEventListener('click', () => openCrop('free'));
+    $('#crop-modes').addEventListener('click', (e) => { const b = e.target.closest('button[data-cmode]'); if (b && crop) setCropMode(b.dataset.cmode); });
+    $('#crop-reset').addEventListener('click', cropReset);
+    $('#crop-cancel').addEventListener('click', closeCrop);
+    $('#crop-apply').addEventListener('click', cropApply);
+    const cv = cropCanvas();
+    cv.addEventListener('pointerdown', onCropDown);
+    cv.addEventListener('pointermove', onCropMove);
+    cv.addEventListener('pointerup', onCropUp);
+    cv.addEventListener('pointercancel', onCropUp);
+    cv.addEventListener('contextmenu', (e) => e.preventDefault());
+    document.addEventListener('keydown', onCropKey, true);
+  }
+  document.addEventListener('DOMContentLoaded', bindCrop);
+  /* ============================== end crop ============================== */
+
   /* ------------------------- checkbox editor ---------------------------- */
   let checkBlock = null, checkSaveTimer = null;
   function renderCkSwatches(active) {
