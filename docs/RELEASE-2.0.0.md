@@ -38,3 +38,9 @@ Open ⋯ → Diagnostics and record while writing a page:
 6. Power-saving mode: refresh shows 60 Hz (expected); normal: 120 Hz while the pen tool is up.
 7. Long frames (LoAF) during a 10 s scribble ≤ 1.
 If something feels wrong, press "Record 10 s" during it and export the trace.
+
+## 2.0.1 (site v115) — same day
+
+- Connectors keep their label, line style and both-ends arrow through Export, Import and copy-paste (they were dropped since 1.x; found by the workspace verification pass).
+- The About header shows the build: app version and site cache number (e.g. "2.0.1 · v115").
+- Workspace verification (three end-to-end runs): lifecycle, persistence of every block kind with export/import round-trip, save paths and service-worker update - no workspace-breaking problem; the database schema is unchanged, so 1.x data needs no migration.
