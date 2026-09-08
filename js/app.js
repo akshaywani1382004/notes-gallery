@@ -1785,6 +1785,25 @@
   const liveFrameBox = () => (selFrameBox && (dragging || panning || pinch || selScale || wheelFrameTimer)) ? selFrameBox : null;
   const selectionHasInk = () => [...state.selectedIds].some(id => { const b = state.blocks.find(x => x.id === id); return b && b.kind === 'ink'; });
 
+  // The stage rectangle, measured at most once per animation frame. Reading
+  // it after a style write forces layout; gesture code reads it every move.
+  let stageRectCache = null;
+  function stageRect() {
+    if (!stageRectCache) {
+      stageRectCache = stage.getBoundingClientRect();
+      requestAnimationFrame(() => { stageRectCache = null; });
+    }
+    return stageRectCache;
+  }
+  // The floating bar's own size changes only with its content; measuring it
+  // on every move forced a layout. Re-measured when it is (re)shown.
+  let selBarSize = null;
+  function measureSelBar() {
+    const bar = $('#sel-bar'); if (!bar) return;
+    const wasHidden = bar.hidden; bar.hidden = false;
+    selBarSize = { w: bar.offsetWidth || 320, h: bar.offsetHeight || 44 };
+    bar.hidden = wasHidden;
+  }
   function positionSelBar() {
     const bar = $('#sel-bar'); if (!bar) return;
     const ids = [...state.selectedIds];
@@ -1798,7 +1817,7 @@
     const byId = new Map(state.blocks.map(b => [b.id, b]));
     bar.querySelector('[data-sel="ungroup"]').disabled = !ids.some(id => { const b = byId.get(id); return b && b.group; });
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    const sr = stage.getBoundingClientRect();
+    const sr = stageRect();
     const fb = liveFrameBox();
     if (fb) {
       // mid-gesture: use the box we are already carrying rather than measuring
@@ -1824,15 +1843,16 @@
         minY = Math.min(minY, r.top); maxY = Math.max(maxY, r.bottom);
       });
     }
-    if (!isFinite(minX)) { bar.hidden = true; return; }
+    if (!isFinite(minX)) { bar.hidden = true; selBarSize = null; return; }
     bar.hidden = false;
-    const bw = bar.offsetWidth || 320;
+    if (!selBarSize) selBarSize = { w: bar.offsetWidth || 320, h: bar.offsetHeight || 44 };
+    const bw = selBarSize.w, bh = selBarSize.h;
     let left = (minX + maxX) / 2 - sr.left - bw / 2;
     left = clamp(left, 8, Math.max(8, sr.width - bw - 8));
-    let top = minY - sr.top - bar.offsetHeight - 12;
-    if (top < 8) top = Math.min(sr.height - bar.offsetHeight - 8, maxY - sr.top + 12);
-    bar.style.left = Math.round(left) + 'px';
-    bar.style.top = Math.round(top) + 'px';
+    let top = minY - sr.top - bh - 12;
+    if (top < 8) top = Math.min(sr.height - bh - 8, maxY - sr.top + 12);
+    // moved by transform: a composite-only change, no layout per frame
+    bar.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
   }
 
   /* ----------------------- selection frame + scaling -------------------- *
@@ -1846,7 +1866,7 @@
   // pixels wider than its point bounds (nib padding) and a rotated node is
   // wider still, so block coordinates would draw the frame inside the ink.
   function selectionWorldBox() {
-    const sr = stage.getBoundingClientRect();
+    const sr = stageRect();
     const sc = state.view.scale || 1;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     const byId = new Map(state.blocks.map(b => [b.id, b]));
@@ -1882,10 +1902,11 @@
     const sc = state.view.scale || 1;
     const pad = 6;                                  // breathing room, in screen px
     f.hidden = false;
-    f.style.left = Math.round(box.x * sc + state.view.tx - pad) + 'px';
-    f.style.top = Math.round(box.y * sc + state.view.ty - pad) + 'px';
-    f.style.width = Math.round(box.w * sc + pad * 2) + 'px';
-    f.style.height = Math.round(box.h * sc + pad * 2) + 'px';
+    // position by transform (composite-only); the size is written only when it changes
+    f.style.transform = `translate(${Math.round(box.x * sc + state.view.tx - pad)}px, ${Math.round(box.y * sc + state.view.ty - pad)}px)`;
+    const w = Math.round(box.w * sc + pad * 2) + 'px', h = Math.round(box.h * sc + pad * 2) + 'px';
+    if (f.style.width !== w) f.style.width = w;
+    if (f.style.height !== h) f.style.height = h;
   }
 
   // Snapshot every selected block so each move scales from the start state -
@@ -2032,14 +2053,16 @@
     const sel = state.selectedIds;
     // only what changed: the class comes off what left the selection and goes
     // on what is in it (a replaced element gets it back too)
+    // a whole paragraph picked up at once: the per-stroke glow gives way to a
+    // light outline (hundreds of blurred surfaces is what made lassos slow);
+    // decided before the classes go on so the restyle is the cheap one
+    world.classList.toggle('many-sel', sel.size > 12);
+    if (!selBarSize && sel.size) measureSelBar();       // while the tree is clean: one cheap layout
     for (const id of prevSel) if (!sel.has(id)) { const el = state.els[id]; if (el) el.classList.remove('selected'); }
     for (const id of sel) { const el = state.els[id]; if (el && !el.classList.contains('selected')) el.classList.add('selected'); }
     prevSel = new Set(sel);
     if (NG.Overlay) NG.Overlay.draw();
     if (state.levelLayout === 'list') $$('.list-row').forEach(n => n.classList.toggle('selected', sel.has(n.dataset.id)));
-    // a whole paragraph picked up at once: the per-stroke glow gives way to a
-    // light outline (hundreds of blurred surfaces is what made lassos slow)
-    world.classList.toggle('many-sel', sel.size > 12);
     syncSelectionButtons();
     positionSelBar();
     positionSelFrame();
@@ -4535,7 +4558,7 @@
       else hideEraserCursor();
     }
     if (lasso && lasso.pointerId === e.pointerId) {
-      const r = stage.getBoundingClientRect();
+      const r = stageRect();
       const p = screenToWorld(e.clientX - r.left, e.clientY - r.top);
       const last = lasso.pts[lasso.pts.length - 1];
       if (Math.hypot(p.x - last[0], p.y - last[1]) * state.view.scale > 2) {
@@ -4642,7 +4665,7 @@
       const [a, b] = [...pointers.values()];
       const dist = Math.hypot(a.x - b.x, a.y - b.y);
       const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-      const r = stage.getBoundingClientRect();
+      const r = stageRect();
       if (pinch.dist) zoomAt(mid.x - r.left, mid.y - r.top, dist / pinch.dist);
       pinch.dist = dist;
       return;
@@ -5505,7 +5528,7 @@
     }
   }
   function eraseSweepAt(cx0, cy0, cx1, cy1) {
-    const r = stage.getBoundingClientRect();
+    const r = stageRect();
     const a = screenToWorld(cx0 - r.left, cy0 - r.top), z = screenToWorld(cx1 - r.left, cy1 - r.top);
     eraseSweep(a.x, a.y, z.x, z.y, eraserRadiusPx() / (state.view.scale || 1));
   }
@@ -5893,7 +5916,9 @@
     if (wasHidden !== cv.hidden && state.penMode) placePenBar(penBarAnchor, penBarVert, false);   // the panel dodges it
     if (!show) return;
     const dpr = window.devicePixelRatio || 1;
-    const cssW = cv.clientWidth, cssH = cv.clientHeight;
+    // the map's CSS size only changes with the window: measured once per frame at most
+    if (!mmSize || mmSize.hidden !== cv.hidden) { mmSize = { w: cv.clientWidth, h: cv.clientHeight, hidden: cv.hidden }; requestAnimationFrame(() => { mmSize = null; }); }
+    const cssW = mmSize.w, cssH = mmSize.h;
     if (!cssW || !cssH) return;                        // hidden by CSS (presenting, short phones)
     if (cv.width !== cssW * dpr) { cv.width = cssW * dpr; cv.height = cssH * dpr; }
     const ctx = cv.getContext('2d');
@@ -5906,7 +5931,7 @@
     const now = performance.now();
     if (!mmContent || (mmDirty && now - mmContent.at > 250)) renderMinimapContent(cssW, cssH, dpr);
     const b = mmContent.bounds;
-    const vr = stage.getBoundingClientRect();
+    const vr = stageRect();
     const vw0 = screenToWorld(0, 0), vw1 = screenToWorld(vr.width, vr.height);
     // include viewport in bounds so the indicator is always visible
     const minX = Math.min(b.minX, vw0.x), minY = Math.min(b.minY, vw0.y);
@@ -5928,7 +5953,7 @@
     ctx.strokeStyle = c.accent; ctx.lineWidth = 1.5;
     ctx.strokeRect(wx(vw0.x), wy(vw0.y), (vw1.x - vw0.x) * scale, (vw1.y - vw0.y) * scale);
   }
-  let mmContent = null, mmDirty = true;
+  let mmContent = null, mmDirty = true, mmSize = null;
   // Everything on the level drawn once into an offscreen bitmap that covers
   // the content bounds (plus the same padding the map uses), at twice the
   // map's resolution so it stays crisp when re-projected.
@@ -8073,6 +8098,7 @@
       window.addEventListener('pointerrawupdate', (e) => { if (inking) addInkSamples(e, true); });
     }
     window.addEventListener('resize', () => {
+      selBarSize = null;                                 // the bar re-measures at its next show
       sizeInkSurface();
       if (inking) inking.sampler.rect = inking.rect = stage.getBoundingClientRect();
       redrawInkStroke();
@@ -8216,7 +8242,7 @@
   function makeBag() {
     return {
       version: NG.version, state, history, DB, PEN_STYLES, PEN_ORDER, inkStrokeD, inkPad, inkWorldPts, nibFactor, taperCentreline, inkBox,
-      stage, world,
+      stage, world, stageRect,
       liveCanvas: () => { inkSurface(); return inkCv; },
       liveCtx: () => inkSurface(),
       liveDpr: () => NG.wet.dpr,

@@ -86,6 +86,10 @@
   function measure() {
     // the canvas itself is display:none while hidden, so its own client box
     // reads 0: the stage it covers (inset:0) is the reliable size
+    // the app caches the stage rect per frame; a direct read would force
+    // layout right after a selection restyled hundreds of elements
+    const bag = NG.bag;
+    if (bag && bag.stageRect) { const r = bag.stageRect(); cssW = r.width; cssH = r.height; return; }
     const host = canvas.parentElement || canvas;
     cssW = host.clientWidth; cssH = host.clientHeight;
   }
