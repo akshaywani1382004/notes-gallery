@@ -443,7 +443,11 @@
     if (inking) { inking.rect = stage.getBoundingClientRect(); redrawInkStroke(); }
     const { scale, tx, ty } = state.view;
     world.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
-    world.style.setProperty('--inv', 1 / (scale || 1));
+    // The handles' counter-scale is a custom property on #world, and changing
+    // it restyles every block's handles - fine per zoom step, too much per
+    // pinch frame on a full page, so during a pinch it waits for the fingers.
+    if (pinch) invPending = true;
+    else { world.style.setProperty('--inv', 1 / (scale || 1)); invPending = false; }
     const paper = stage.dataset.paper || 'dots';
     stage.style.backgroundSize = paper === 'lines'
       ? `100% ${30 * scale}px`
@@ -454,6 +458,10 @@
     const pct = Math.round(scale * 100) + '%';
     $('#btn-zoom-reset').textContent = pct;
     scheduleMinimap();
+  }
+  let invPending = false;
+  function flushInv() {
+    if (invPending && !pinch) { invPending = false; world.style.setProperty('--inv', 1 / (state.view.scale || 1)); }
   }
   let mmRAF = null;
   function scheduleMinimap() { if (mmRAF) return; mmRAF = requestAnimationFrame(() => { mmRAF = null; drawMinimap(); }); }
@@ -477,6 +485,8 @@
 
   /* ---------------------------- data load ------------------------------ */
   async function loadLevel(levelId, opts = {}) {
+    if (levelId !== state.level) dropLiveGestures();   // a half stroke never lands on another page
+    lastInk = null;                                    // word grouping never spans a page change
     state.level = levelId;
     state.levelBlock = levelId === DB.ROOT ? null : await DB.getBlock(levelId);
     state.levelLayout = (state.levelBlock && state.levelBlock.layout === 'list') ? 'list' : 'canvas';
@@ -570,16 +580,20 @@
     const w = b.w || 200, h = b.h || 150;
     el.style.width = w + 'px'; el.style.height = h + 'px';
     el.style.transform = b.rot ? `rotate(${b.rot}deg)` : '';
-    el.innerHTML =
-      `<img class="img-content" alt="" draggable="false" />` +
-      `<div class="block-actions"><button class="blk-btn" data-blk="edit" title="Edit image">${ic('pencil')}</button></div>` +
-      `<div class="tnode-rotate" title="Rotate"></div>` +
-      `<div class="tnode-resize" title="Resize"></div>`;
+    if (!el.querySelector('.img-content')) {
+      el.innerHTML =
+        `<img class="img-content" alt="" draggable="false" />` +
+        `<div class="block-actions"><button class="blk-btn" data-blk="edit" title="Edit image">${ic('pencil')}</button></div>` +
+        `<div class="tnode-rotate" title="Rotate"></div>` +
+        `<div class="tnode-resize" title="Resize"></div>`;
+    }
     const im = el.querySelector('.img-content');
     im.style.borderRadius = (b.round ? 12 : 0) + 'px';
     // outline drawn as a box-shadow ring so it hugs rounded corners and doesn't shift layout
     im.style.boxShadow = b.outline ? `0 0 0 ${b.outlineW || 2}px ${b.outlineColor || PALETTE[0]}` : '';
-    im.src = b.src || '';
+    // a slider tick must not re-assign (and re-decode) a multi-MB data URL
+    const src = b.src || '';
+    if (im.getAttribute('src') !== src) im.src = src;
   }
 
   // free vector shape node (kind === 'shape'), drawn with inline SVG so fill
@@ -743,9 +757,17 @@
     const pts = (b.pts || []).map(p => [p[0] + pad, p[1] + pad, p[2] || 0, p[3] || 0]);
     const style = PEN_STYLES[b.style] ? b.style : 'pen';
     const width = b.width || 3;
-    el.innerHTML =
-      `<svg class="ink-svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">` +
-      `<path d="${inkStrokeD(pts, style, width)}"/></svg>`;
+    const d = inkStrokeD(pts, style, width);
+    const svg = el.firstElementChild;
+    if (svg && svg.classList.contains('ink-svg') && svg.firstElementChild) {
+      // repaint in place: no node churn while a slider or the scale grip moves
+      svg.setAttribute('width', w); svg.setAttribute('height', h); svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+      svg.firstElementChild.setAttribute('d', d);
+    } else {
+      el.innerHTML =
+        `<svg class="ink-svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">` +
+        `<path d="${d}"/></svg>`;
+    }
     applyInkStyle(el.querySelector('path'), style, b.color || penColor, width);
   }
 
@@ -917,13 +939,15 @@
   }
 
   /* ---------------------------- edges ---------------------------------- */
-  function blockRect(id) {
-    const b = state.blocks.find(x => x.id === id);
-    if (!b) return null;
-    const el = state.els[id];
+  function blockRectOf(b) {
+    const el = state.els[b.id];
     const w = el ? el.offsetWidth : BLOCK_W;
     const h = el ? el.offsetHeight : BLOCK_H_GUESS;
     return { x: b.x, y: b.y, w, h, cx: b.x + w / 2, cy: b.y + h / 2 };
+  }
+  function blockRect(id) {
+    const b = state.blocks.find(x => x.id === id);
+    return b ? blockRectOf(b) : null;
   }
   // where the line from `other` should touch the border of `rect`
   function borderPoint(rect, towards) {
@@ -1037,6 +1061,7 @@
         state.navIndex = state.navStack.length - 1;
       }
     }
+    await inkWrites;                        // a stroke still being written lands first
     await loadLevel(levelId, { fit: true });
     updateNavButtons();
   }
@@ -1128,6 +1153,28 @@
   let replaceImageId = null;     // when set, the picked file replaces this node's src
   const readAsDataUrl = (file) => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(file); });
   const loadImageSize = (src) => new Promise((res) => { const im = new Image(); im.onload = () => res({ w: im.naturalWidth || 200, h: im.naturalHeight || 150 }); im.onerror = () => res({ w: 200, h: 150 }); im.src = src; });
+  // Imported photos are stored at a bounded pixel size: a 12 MP camera shot
+  // becomes a few hundred KB inside the workspace instead of several MB, and
+  // every save, undo clone and export shrinks with it. SVG and GIF are kept
+  // as they are (vector crispness, animation); anything already small too.
+  async function fileToStoredSrc(file, maxPx = 2048) {
+    const orig = await readAsDataUrl(file);
+    try {
+      if (/svg|gif/i.test(file.type || '')) return orig;
+      const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = orig; });
+      const w = im.naturalWidth, h = im.naturalHeight;
+      if (!w || !h) return orig;
+      if (Math.max(w, h) <= maxPx && file.size <= 400 * 1024) return orig;
+      const k = Math.min(1, maxPx / Math.max(w, h));
+      const cv = document.createElement('canvas');
+      cv.width = Math.max(1, Math.round(w * k)); cv.height = Math.max(1, Math.round(h * k));
+      cv.getContext('2d').drawImage(im, 0, 0, cv.width, cv.height);
+      const jpeg = /jpe?g/i.test(file.type || '');
+      let out = cv.toDataURL(jpeg ? 'image/jpeg' : 'image/webp', 0.85);
+      if (!jpeg && !out.startsWith('data:image/webp')) out = cv.toDataURL('image/png');   // no webp encoder: keep alpha
+      return out.length < orig.length ? out : orig;
+    } catch (_) { return orig; }
+  }
 
   function pickImage(at) {
     if (state.levelLayout !== 'canvas') { toast('Open a canvas block to add an image here.'); return; }
@@ -1169,7 +1216,7 @@
   }
   async function createImageBlock(file, opts = {}) {
     if (!file || !/^image\//.test(file.type)) { toast('That file is not an image.'); return null; }
-    const src = await readAsDataUrl(file);
+    const src = await fileToStoredSrc(file);
     const nat = await loadImageSize(src);
     const maxW = 300;
     const scale = nat.w > maxW ? maxW / nat.w : 1;
@@ -1434,7 +1481,7 @@
   // Each history entry stores a `before` and `after` set of records
   // {blocks,edges,files}. Undo makes the DB match `before`, redo `after`.
   // History is per workspace session (cleared on open/home).
-  const history = { past: [], future: [], limit: 200 };
+  const history = { past: [], future: [], limit: 200, gen: 0 };   // gen: bumped by every clear
   const cloneRec = (r) => ({ ...r });      // shallow clone (keeps file Blob refs)
   const emptySet = () => ({ blocks: [], edges: [], files: [] });
   const cloneSet = (s) => ({
@@ -1442,51 +1489,132 @@
     edges: (s.edges || []).map(cloneRec),
     files: (s.files || []).map(cloneRec),
   });
-  function recordChange(before, after) {
-    history.past.push({ level: state.level, before: cloneSet(before), after: cloneSet(after) });
+  function recordChange(before, after, level = state.level) {
+    history.past.push({ level, before: cloneSet(before), after: cloneSet(after) });
     if (history.past.length > history.limit) history.past.shift();
     history.future.length = 0;
     markChanged();
   }
-  function clearHistory() { history.past.length = 0; history.future.length = 0; }
+  function clearHistory() { history.past.length = 0; history.future.length = 0; history.gen++; }
 
+  // Ink lands on the page first and in storage second. Everything that writes
+  // or rewinds ink queues on this one chain, so an Undo pressed right after a
+  // stroke (or an eraser sweep) waits for that stroke to be saved and
+  // recorded, and two quick presses run one whole step at a time.
+  let inkWrites = Promise.resolve();
+  const afterInkWrites = (fn) => {
+    const p = inkWrites.then(fn, fn);
+    inkWrites = p.catch(() => {});             // a failed step never blocks the next
+    return p;
+  };
+
+  // all requests are created in one task, so IndexedDB orders them as written
   async function putAll(recs) {
-    for (const b of recs.blocks) await DB.saveBlock(b);
-    for (const e of recs.edges) await DB.saveEdge(e);
-    for (const f of recs.files) await DB.saveFile(f);
+    await Promise.all([
+      ...recs.blocks.map(b => DB.saveBlock(b)),
+      ...recs.edges.map(e => DB.saveEdge(e)),
+      ...recs.files.map(f => DB.saveFile(f)),
+    ]);
   }
   async function applyDelta(target, other) {
     await putAll(target);
     const hb = new Set(target.blocks.map(x => x.id));
     const he = new Set(target.edges.map(x => x.id));
     const hf = new Set(target.files.map(x => x.id));
-    for (const b of other.blocks) if (!hb.has(b.id)) await DB.del('blocks', b.id);
-    for (const e of other.edges) if (!he.has(e.id)) await DB.delEdge(e.id);
-    for (const f of other.files) if (!hf.has(f.id)) await DB.delFile(f.id);
+    await Promise.all([
+      ...other.blocks.filter(b => !hb.has(b.id)).map(b => DB.del('blocks', b.id)),
+      ...other.edges.filter(e => !he.has(e.id)).map(e => DB.delEdge(e.id)),
+      ...other.files.filter(f => !hf.has(f.id)).map(f => DB.delFile(f.id)),
+    ]);
   }
-  async function undo() {
-    const entry = history.past.pop();
-    if (!entry) { toast('Nothing to undo'); return; }
-    await applyDelta(entry.before, entry.after);
-    history.future.push(entry);
-    await refreshAfterHistory(entry);
-    markChanged();
-    toast('Undone');
+  function undo() {
+    return afterInkWrites(async () => {
+      if (!history.past.length) { toast('Nothing to undo'); return; }
+      // an open panel's pending edit is written and recorded first, so it is what undoes
+      await flushPendingSaves();
+      closeOtherEditors();
+      const entry = history.past.pop();
+      if (!entry) { toast('Nothing to undo'); return; }
+      await applyDelta(entry.before, entry.after);
+      history.future.push(entry);
+      await refreshAfterHistory(entry, true);
+      markChanged();
+      toast('Undone');
+    });
   }
-  async function redo() {
-    const entry = history.future.pop();
-    if (!entry) { toast('Nothing to redo'); return; }
-    await applyDelta(entry.after, entry.before);
-    history.past.push(entry);
-    await refreshAfterHistory(entry);
-    markChanged();
-    toast('Redone');
+  function redo() {
+    return afterInkWrites(async () => {
+      if (!history.future.length) { toast('Nothing to redo'); return; }
+      await flushPendingSaves();
+      closeOtherEditors();
+      const entry = history.future.pop();
+      if (!entry) { toast('Nothing to redo'); return; }
+      await applyDelta(entry.after, entry.before);
+      history.past.push(entry);
+      await refreshAfterHistory(entry, false);
+      markChanged();
+      toast('Redone');
+    });
   }
-  async function refreshAfterHistory(entry) {
-    closeDrawer();
-    let level = entry.level;
-    if (level !== DB.ROOT) { const lb = await DB.getBlock(level); if (!lb) level = DB.ROOT; }
-    await loadLevel(level, {});
+  async function refreshAfterHistory(entry, isUndo) {
+    const level = entry.level;
+    if (level !== DB.ROOT && !(await DB.getBlock(level))) { await loadLevel(DB.ROOT, {}); return; }
+    await applyRecsToView(isUndo ? entry.before : entry.after, isUndo ? entry.after : entry.before, level);
+  }
+
+  // Apply a delta (a history step, a delete, a paste) to what is on screen
+  // without reloading the level: only the records touched are re-read and
+  // re-drawn. `target` is what should exist afterwards, `other` what existed
+  // before; anything in `other` and not in `target` goes.
+  async function applyRecsToView(target, other, level) {
+    if (level !== state.level || state.levelLayout === 'list') { await loadLevel(level, {}); return; }
+    const LEAF = ['text', 'shape', 'image', 'ink', 'table', 'check'];
+    const onLevel = (r) => r.parentId === state.level;
+    const keep = new Set(target.blocks.map(b => b.id));
+    const here = new Set(state.blocks.map(b => b.id));
+    const parents = new Set();
+    // a card on this level whose contents changed gets its chips refreshed
+    const noteParent = (pid) => { if (pid && pid !== state.level && here.has(pid)) parents.add(pid); };
+    // removals
+    const drop = new Set();
+    for (const b of other.blocks) {
+      noteParent(b.parentId);
+      if (!keep.has(b.id) && onLevel(b)) drop.add(b.id);
+    }
+    if (drop.size) {
+      state.blocks = state.blocks.filter(b => !drop.has(b.id));
+      for (const id of drop) {
+        state.selectedIds.delete(id);
+        const el = state.els[id]; if (el) el.remove();
+        delete state.els[id]; delete state.childCounts[id]; if (state.childPeek) delete state.childPeek[id];
+        here.delete(id);
+      }
+    }
+    // upserts: always re-read - history holds shallow copies and the editors
+    // mutate the live records in place, so a history object must never
+    // become the live one
+    const fresh = await Promise.all(target.blocks.filter(onLevel).map(rec => DB.getBlock(rec.id)));
+    for (const b of fresh) {
+      if (!b) continue;
+      const i = state.blocks.findIndex(x => x.id === b.id);
+      if (i >= 0) state.blocks[i] = b; else state.blocks.push(b);
+      // a block that was not on the page has unknown counts until recounted:
+      // cards are recounted below; a leaf stays unknown and the eraser takes
+      // the careful path for it (see removeInkBlock)
+      const prev = state.els[b.id];
+      const el = makeBlockEl(b);                          // sets left/top/z and state.els
+      if (prev && prev.parentNode) prev.replaceWith(el); else world.appendChild(el);
+      here.add(b.id);
+      if (!LEAF.includes(b.kind)) parents.add(b.id);
+    }
+    // the objects (and elements) under a live drag may just have been swapped:
+    // the next move re-keys its lookup and redraws edges for the rest of it
+    if (dragging) { dragging.byId = null; dragging.touchesEdge = true; }
+    for (const rec of target.blocks) noteParent(rec.parentId);
+    for (const f of [...target.files, ...other.files]) noteParent(f.blockId);
+    await Promise.all([...parents].filter(pid => here.has(pid)).map(pid => recount(pid)));
+    state.edges = await DB.levelEdges(state.level, state.ws);
+    applySelectionClasses(); applyTagFilter(); drawEdges(); scheduleOutline(); updateNavButtons();
   }
 
   // Everything deleteBlockDeep would remove for these ids (for undo capture).
@@ -1626,11 +1754,11 @@
       ? ` It contains ${c.blocks || 0} inner block(s) and ${c.files || 0} file(s) — all will be removed.`
       : '';
     confirmDialog(`Delete ${label}?`, 'Are you sure you want to delete this?' + extra, 'Delete', async () => {
+      await flushPendingSaves(); closeOtherEditors();    // no late panel write can bring it back
       const removal = await gatherRemoval([id]);
       await DB.deleteBlockDeep(id);
       recordChange(removal, emptySet());
-      closeDrawer(); closeTextEditor(); closeTableEditor();
-      await loadLevel(state.level);
+      await applyRecsToView(emptySet(), removal, state.level);
       toast(b.kind === 'text' ? 'Text deleted' : 'Block deleted');
     });
   }
@@ -1646,6 +1774,9 @@
   // While dragging, the frame and the floating bar are moved by the drag
   // delta instead of re-measuring every selected element on each move.
   let selFrameBox = null;
+  // Only trusted while the gesture that captured it is still live; at any
+  // other time the elements are measured afresh, so a box can never go stale.
+  const liveFrameBox = () => (selFrameBox && (dragging || panning || pinch || selScale || wheelFrameTimer)) ? selFrameBox : null;
   const selectionHasInk = () => [...state.selectedIds].some(id => { const b = state.blocks.find(x => x.id === id); return b && b.kind === 'ink'; });
 
   function positionSelBar() {
@@ -1661,13 +1792,14 @@
     bar.querySelector('[data-sel="ungroup"]').disabled = !ids.some(id => { const b = state.blocks.find(x => x.id === id); return b && b.group; });
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     const sr = stage.getBoundingClientRect();
-    if (selFrameBox) {
-      // mid-drag: use the box we are already carrying rather than measuring
+    const fb = liveFrameBox();
+    if (fb) {
+      // mid-gesture: use the box we are already carrying rather than measuring
       // every element again on each pointer move
       const sc = state.view.scale || 1;
-      minX = selFrameBox.x * sc + state.view.tx + sr.left;
-      minY = selFrameBox.y * sc + state.view.ty + sr.top;
-      maxX = minX + selFrameBox.w * sc; maxY = minY + selFrameBox.h * sc;
+      minX = fb.x * sc + state.view.tx + sr.left;
+      minY = fb.y * sc + state.view.ty + sr.top;
+      maxX = minX + fb.w * sc; maxY = minY + fb.h * sc;
     } else {
       ids.forEach(id => {
         const el = state.els[id]; if (!el) return;
@@ -1726,7 +1858,7 @@
     if (!selecting || state.readOnly || !state.selectedIds.size || state.levelLayout !== 'canvas') {
       f.hidden = true; return;
     }
-    const box = selScale ? selScale.box : (selFrameBox || selectionWorldBox());
+    const box = selScale ? selScale.box : (liveFrameBox() || selectionWorldBox());
     if (!box) { f.hidden = true; return; }
     const sc = state.view.scale || 1;
     const pad = 6;                                  // breathing room, in screen px
@@ -1748,6 +1880,7 @@
     selScale = {
       pointerId: e.pointerId, box, box0: box, startX: e.clientX, startY: e.clientY,
       before: { blocks: items.map(b => ({ ...b })), edges: [], files: [] },
+      touchesEdge: (() => { const ids = new Set(items.map(b => b.id)); return state.edges.some(ed => ids.has(ed.from) || ids.has(ed.to)); })(),
       items: items.map(b => ({
         b,
         x: b.x || 0, y: b.y || 0, w: b.w || 0, h: b.h || 0,
@@ -1759,8 +1892,17 @@
     try { e.target.setPointerCapture(e.pointerId); } catch (_) {}
   }
 
+  // The grip moves at digitiser rate; the selection is rebuilt once per frame.
   function moveSelScale(e) {
     if (!selScale) return;
+    selScale.pendingEvent = e;
+    if (!selScale.raf) selScale.raf = requestAnimationFrame(() => {
+      if (!selScale) return;
+      selScale.raf = 0; applySelScale(selScale.pendingEvent);
+    });
+  }
+  function applySelScale(e) {
+    if (!selScale || !e) return;
     const sc = state.view.scale || 1;
     const box = selScale.box0;
     // the grip sits at the box's bottom-right corner, so the drag along the
@@ -1800,18 +1942,35 @@
     }
     selScale.box = { x: box.x, y: box.y, w: box.w * ratio, h: box.h * ratio };
     positionSelFrame();
-    drawEdges();
+    if (selScale.touchesEdge) drawEdges(); else scheduleMinimap();
   }
 
   async function endSelScale() {
     if (!selScale) return;
+    if (selScale.raf) { cancelAnimationFrame(selScale.raf); selScale.raf = 0; }
+    if (selScale.pendingEvent) applySelScale(selScale.pendingEvent);   // the last move lands
     const { items, before, ratio } = selScale;
     selScale = null;
     if (!ratio || Math.abs(ratio - 1) < 0.001) { positionSelFrame(); return; }
-    for (const it of items) { it.b.updatedAt = Date.now(); await DB.saveBlock(it.b); }
+    items.forEach(it => { it.b.updatedAt = Date.now(); });
     recordChange(before, { blocks: items.map(it => ({ ...it.b })), edges: [], files: [] });
+    await Promise.all(items.map(it => DB.saveBlock(it.b)));
     positionSelFrame(); positionSelBar(); drawEdges();
     toast(ratio > 1 ? 'Scaled up' : 'Scaled down');
+  }
+
+  // A grip drag that lost its pointer (focus went away) puts everything back.
+  function cancelSelScale() {
+    if (!selScale) return;
+    if (selScale.raf) cancelAnimationFrame(selScale.raf);
+    const { items, before } = selScale; selScale = null;
+    for (const it of items) {
+      const snap = before.blocks.find(x => x.id === it.b.id);
+      if (snap) Object.assign(it.b, snap);
+      const el = state.els[it.b.id]; if (el) { el.style.left = it.b.x + 'px'; el.style.top = it.b.y + 'px'; }
+      refreshBlockCard(it.b.id);
+    }
+    positionSelFrame(); positionSelBar(); drawEdges();
   }
 
   function bindSelFrame() {
@@ -1833,7 +1992,14 @@
   }
 
   function applySelectionClasses() {
-    $$('.block, .list-row').forEach(n => n.classList.toggle('selected', state.selectedIds.has(n.dataset.id)));
+    // a carried frame box describes the previous selection
+    if (selFrameBox && !selScale) selFrameBox = (panning || pinch) ? selectionWorldBox() : null;
+    const sel = state.selectedIds;
+    for (const id in state.els) state.els[id].classList.toggle('selected', sel.has(id));
+    if (state.levelLayout === 'list') $$('.list-row').forEach(n => n.classList.toggle('selected', sel.has(n.dataset.id)));
+    // a whole paragraph picked up at once: the per-stroke glow gives way to a
+    // light outline (hundreds of blurred surfaces is what made lassos slow)
+    world.classList.toggle('many-sel', sel.size > 12);
     syncSelectionButtons();
     positionSelBar();
     positionSelFrame();
@@ -1848,8 +2014,8 @@
     const h = (b.h || (el && el.offsetHeight) || BLOCK_H_GUESS);
     return { x: b.x || 0, y: b.y || 0, w, h };
   }
-  function alignAdjust(drag, dxW, dyW) {
-    const moving = drag.ids.map(id => state.blocks.find(b => b.id === id)).filter(Boolean);
+  function alignAdjust(drag, dxW, dyW, byId) {
+    const moving = drag.ids.map(id => byId ? byId.get(id) : state.blocks.find(b => b.id === id)).filter(Boolean);
     if (!moving.length) return { dx: 0, dy: 0 };
     // Handwriting is placed by hand, not by rules — no guide snapping for it.
     if (moving.every(b => b.kind === 'ink')) { clearGuides(); return { dx: 0, dy: 0 }; }
@@ -2059,10 +2225,23 @@
     if (!b || !b.group) return [id];
     return state.blocks.filter(x => x.group === b.group).map(x => x.id);
   }
-  // Grow a set of ids to include every group-mate.
+  // Grow a set of ids to include every group-mate (one pass over the blocks,
+  // not one scan per id).
   function withGroups(ids) {
     const out = new Set();
-    ids.forEach(id => groupMembers(id).forEach(m => out.add(m)));
+    const list = Array.from(ids);
+    if (!list.length) return [];
+    const byId = new Map(state.blocks.map(b => [b.id, b]));
+    let byGroup = null;
+    for (const id of list) {
+      const b = byId.get(id);
+      if (!b || !b.group) { out.add(id); continue; }
+      if (!byGroup) {
+        byGroup = new Map();
+        for (const x of state.blocks) if (x.group) { let l = byGroup.get(x.group); if (!l) byGroup.set(x.group, l = []); l.push(x.id); }
+      }
+      for (const m of byGroup.get(b.group) || [id]) out.add(m);
+    }
     return [...out];
   }
   async function groupSelection() {
@@ -2123,11 +2302,11 @@
     if (ids.length === 1) { deleteBlock(ids[0]); return; }
     confirmDialog(`Delete ${ids.length} blocks?`,
       'Are you sure you want to delete these? Everything inside them is removed too.', 'Delete', async () => {
+        await flushPendingSaves(); closeOtherEditors();
         const removal = await gatherRemoval(ids);
         for (const id of ids) await DB.deleteBlockDeep(id);
         recordChange(removal, emptySet());
-        closeDrawer(); closeTextEditor(); closeTableEditor();
-        await loadLevel(state.level);
+        await applyRecsToView(emptySet(), removal, state.level);
         toast(`${ids.length} blocks deleted`);
       });
   }
@@ -2138,7 +2317,7 @@
   let clipboard = null;   // { roots:[id], blocks:[], edges:[], files:[] }
 
   async function copySelection(silent) {
-    if (drawerBlock) await persistBlock(drawerBlock);   // flush any pending edit
+    await flushPendingSaves();                          // flush any pending edit
     const ids = [...state.selectedIds];
     if (!ids.length) return false;
     const blocks = [], edges = [], files = [], seen = new Set();
@@ -2167,12 +2346,12 @@
   async function cutSelection() {
     const ids = [...state.selectedIds];
     if (!ids.length) return;
+    await flushPendingSaves(); closeOtherEditors();
     await copySelection(true);
     const removal = await gatherRemoval(ids);
     for (const id of ids) await DB.deleteBlockDeep(id);
     recordChange(removal, emptySet());
-    closeDrawer(); closeTextEditor(); closeTableEditor();
-    await loadLevel(state.level);
+    await applyRecsToView(emptySet(), removal, state.level);
     toast(`Cut ${ids.length} block${ids.length > 1 ? 's' : ''}`);
   }
 
@@ -2243,7 +2422,8 @@
     recordChange(emptySet(), { blocks: madeBlocks, edges: madeEdges, files: madeFiles });
 
     const newRoots = roots.map(r => idMap.get(r));
-    await loadLevel(state.level);
+    state.tagFilter = null;                            // as a fresh level load would
+    await applyRecsToView({ blocks: madeBlocks, edges: madeEdges, files: madeFiles }, emptySet(), state.level);
     setSelection(newRoots);
     toast(`${verb || 'Pasted'} ${roots.length} block${roots.length > 1 ? 's' : ''}`);
   }
@@ -2369,6 +2549,7 @@
   }
   function closeDrawer() {
     flushEdit();
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; if (drawerBlock) persistBlock(drawerBlock); }
     $('#drawer').hidden = true;
     drawerBlock = null;
     // keep the block selected (highlighted) after closing the editor
@@ -2404,8 +2585,10 @@
     saveState.textContent = 'Saving…';
     clearTimeout(saveTimer);
     saveTimer = setTimeout(async () => {
-      await persistBlock(drawerBlock);
-      refreshItem(drawerBlock.id);
+      saveTimer = null;
+      const b = drawerBlock; if (!b) return;
+      await persistBlock(b);
+      refreshItem(b.id);
       if (state.levelLayout === 'canvas') drawEdges();
       saveState.textContent = 'Saved';
       setTimeout(() => { if (saveState.textContent === 'Saved') saveState.textContent = ''; }, 1500);
@@ -2510,9 +2693,10 @@
     $('#text-save').textContent = 'Saving…';
     clearTimeout(textSaveTimer);
     textSaveTimer = setTimeout(async () => {
-      if (!textBlock) return;
-      await persistBlock(textBlock);
-      refreshItem(textBlock.id);
+      textSaveTimer = null;
+      const b = textBlock; if (!b) return;
+      await persistBlock(b);
+      refreshItem(b.id);
       $('#text-save').textContent = 'Saved';
       setTimeout(() => { if ($('#text-save').textContent === 'Saved') $('#text-save').textContent = ''; }, 1500);
       markChanged();
@@ -2545,6 +2729,7 @@
   function closeTextEditor() {
     if ($('#text-drawer').hidden && !textBlock) return;
     flushEdit();
+    if (textSaveTimer) { clearTimeout(textSaveTimer); textSaveTimer = null; if (textBlock) persistBlock(textBlock); }
     $('#text-drawer').hidden = true;
     textBlock = null;
   }
@@ -2611,9 +2796,10 @@
     $('#shape-save').textContent = 'Saving…';
     clearTimeout(shapeSaveTimer);
     shapeSaveTimer = setTimeout(async () => {
-      if (!shapeBlock) return;
-      await persistBlock(shapeBlock);
-      refreshItem(shapeBlock.id);
+      shapeSaveTimer = null;
+      const b = shapeBlock; if (!b) return;
+      await persistBlock(b);
+      refreshItem(b.id);
       $('#shape-save').textContent = 'Saved';
       setTimeout(() => { if ($('#shape-save').textContent === 'Saved') $('#shape-save').textContent = ''; }, 1500);
       markChanged();
@@ -2644,6 +2830,7 @@
   function closeShapeEditor() {
     if ($('#shape-drawer').hidden && !shapeBlock) return;
     flushEdit();
+    if (shapeSaveTimer) { clearTimeout(shapeSaveTimer); shapeSaveTimer = null; if (shapeBlock) persistBlock(shapeBlock); }
     $('#shape-drawer').hidden = true;
     shapeBlock = null;
   }
@@ -2702,9 +2889,10 @@
     $('#image-save').textContent = 'Saving…';
     clearTimeout(imageSaveTimer);
     imageSaveTimer = setTimeout(async () => {
-      if (!imageBlock) return;
-      await persistBlock(imageBlock);
-      refreshItem(imageBlock.id);
+      imageSaveTimer = null;
+      const b = imageBlock; if (!b) return;
+      await persistBlock(b);
+      refreshItem(b.id);
       $('#image-save').textContent = 'Saved';
       setTimeout(() => { if ($('#image-save').textContent === 'Saved') $('#image-save').textContent = ''; }, 1500);
       markChanged();
@@ -2732,6 +2920,7 @@
   function closeImageEditor() {
     if ($('#image-drawer').hidden && !imageBlock) return;
     flushEdit();
+    if (imageSaveTimer) { clearTimeout(imageSaveTimer); imageSaveTimer = null; if (imageBlock) persistBlock(imageBlock); }
     $('#image-drawer').hidden = true;
     imageBlock = null;
   }
@@ -2761,7 +2950,7 @@
         const b = state.blocks.find(x => x.id === replaceImageId); replaceImageId = null;
         if (!b) return;
         const before = { ...b };
-        b.src = await readAsDataUrl(file);
+        b.src = await fileToStoredSrc(file);
         const nat = await loadImageSize(b.src);
         b.h = Math.round((b.w || 200) * (nat.h / (nat.w || 1)));
         await persistBlock(b);
@@ -2792,8 +2981,9 @@
     $('#check-save').textContent = 'Saving\u2026';
     clearTimeout(checkSaveTimer);
     checkSaveTimer = setTimeout(async () => {
-      if (!checkBlock) return;
-      await persistBlock(checkBlock); refreshItem(checkBlock.id);
+      checkSaveTimer = null;
+      const b = checkBlock; if (!b) return;
+      await persistBlock(b); refreshItem(b.id);
       $('#check-save').textContent = 'Saved';
       setTimeout(() => { if ($('#check-save').textContent === 'Saved') $('#check-save').textContent = ''; }, 1500);
       markChanged();
@@ -2812,6 +3002,7 @@
   function closeCheckEditor() {
     if ($('#check-drawer').hidden && !checkBlock) return;
     flushEdit();
+    if (checkSaveTimer) { clearTimeout(checkSaveTimer); checkSaveTimer = null; if (checkBlock) persistBlock(checkBlock); }
     $('#check-drawer').hidden = true; checkBlock = null;
   }
   function bindCheckEditor() {
@@ -2828,13 +3019,34 @@
    * own pencil that is one stroke; opened from the floating bar it is the
    * whole selection, so a word's worth of strokes restyle together.        */
   let inkBlock = null, inkSaveTimer = null;
+  // Write every edit still sitting in an editor's 300 ms save timer, now.
+  // Called before anything that deletes or rewinds records, so a late write
+  // can never bring a deleted block back or overwrite an undo.
+  function flushPendingSaves() {
+    const w = [];
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; if (drawerBlock) w.push(persistBlock(drawerBlock)); }
+    if (textSaveTimer) { clearTimeout(textSaveTimer); textSaveTimer = null; if (textBlock) w.push(persistBlock(textBlock)); }
+    if (shapeSaveTimer) { clearTimeout(shapeSaveTimer); shapeSaveTimer = null; if (shapeBlock) w.push(persistBlock(shapeBlock)); }
+    if (imageSaveTimer) { clearTimeout(imageSaveTimer); imageSaveTimer = null; if (imageBlock) w.push(persistBlock(imageBlock)); }
+    if (checkSaveTimer) { clearTimeout(checkSaveTimer); checkSaveTimer = null; if (checkBlock) w.push(persistBlock(checkBlock)); }
+    if (inkSaveTimer) { clearTimeout(inkSaveTimer); inkSaveTimer = null; inkSel.filter(b => state.blocks.some(x => x.id === b.id)).forEach(b => w.push(persistBlock(b))); }
+    return Promise.all(w);
+  }
   let inkSel = [];                  // the strokes the panel is acting on
   let inkBaselines = [];            // their state when it opened (reset + undo)
 
-  // Apply an edit to every stroke the panel owns, then repaint and save.
+  // Apply an edit to every stroke the panel owns, then repaint and save. The
+  // repaint is gathered into one animation frame: a slider fires many times
+  // per frame and a word is dozens of strokes.
+  let inkRepaintIds = new Set(), inkRepaintRAF = 0;
   function applyInk(fn) {
     if (!inkSel.length) return;
-    inkSel.forEach(b => { fn(b); refreshItem(b.id); });
+    inkSel.forEach(b => { fn(b); inkRepaintIds.add(b.id); });
+    if (!inkRepaintRAF) inkRepaintRAF = requestAnimationFrame(() => {
+      inkRepaintRAF = 0;
+      const ids = inkRepaintIds; inkRepaintIds = new Set();
+      ids.forEach(id => refreshItem(id));
+    });
     queueInkSave();
   }
   // One undo entry for everything the panel changed while it was open.
@@ -2868,8 +3080,9 @@
     $('#ink-save').textContent = 'Saving…';
     clearTimeout(inkSaveTimer);
     inkSaveTimer = setTimeout(async () => {
+      inkSaveTimer = null;
       if (!inkSel.length) return;
-      for (const b of inkSel) { await persistBlock(b); refreshItem(b.id); }
+      for (const b of inkSel.slice()) { await persistBlock(b); refreshItem(b.id); }
       $('#ink-save').textContent = 'Saved';
       setTimeout(() => { if ($('#ink-save').textContent === 'Saved') $('#ink-save').textContent = ''; }, 1500);
       markChanged();
@@ -2944,6 +3157,7 @@
   function closeInkEditor() {
     if ($('#ink-drawer').hidden && !inkBlock) return;
     flushInkEdits();
+    if (inkSaveTimer) { clearTimeout(inkSaveTimer); inkSaveTimer = null; inkSel.filter(b => state.blocks.some(x => x.id === b.id)).forEach(b => persistBlock(b)); }
     $('#ink-drawer').hidden = true;
     inkBlock = null; inkSel = [];
   }
@@ -3042,7 +3256,7 @@
     const el = state.els[id]; const cell = el && el.querySelector(`[data-r="0"][data-c="${c}"]`);
     const s = state.view.scale || 1;
     const startW = cell ? Math.round(cell.getBoundingClientRect().width / s) : 80;
-    colResize = { id, c, startX: e.clientX, startW, before: { ...b, colW: (b.colW || []).slice() } };
+    colResize = { id, c, pointerId: e.pointerId, startX: e.clientX, startW, before: { ...b, colW: (b.colW || []).slice() } };
     selectBlock(id);
     e.preventDefault(); e.stopPropagation();
   }
@@ -3051,7 +3265,7 @@
     const el = state.els[id]; const cell = el && el.querySelector(`[data-r="${r}"][data-c="0"]`);
     const s = state.view.scale || 1;
     const startH = cell ? Math.round(cell.getBoundingClientRect().height / s) : 28;
-    rowResize = { id, r, startY: e.clientY, startH, before: { ...b, rowH: (b.rowH || []).slice() } };
+    rowResize = { id, r, pointerId: e.pointerId, startY: e.clientY, startH, before: { ...b, rowH: (b.rowH || []).slice() } };
     selectBlock(id);
     e.preventDefault(); e.stopPropagation();
   }
@@ -3433,7 +3647,7 @@
   let panning = null;                  // {startX, startY, tx, ty}
   let pinch = null;                    // {dist}
   let marquee = null;                  // rubber-band: {r, sx, sy, base}
-  let lpTimer = null, lpFired = false, lpX = 0, lpY = 0;   // long-press (touch → context menu)
+  let lpTimer = null, lpFired = false, lpX = 0, lpY = 0, lpPid = null;   // long-press (touch → context menu)
   let gizmo = null;                    // rotate/resize handle drag {id, mode, ...}
   let lastPointer = null;              // last pointer position (screen coords) for paste-at-cursor
   let inking = null;                   // active freehand stroke {pts, path, pointerId, lastX, lastY}
@@ -3546,11 +3760,13 @@
       x: Math.round(minX), y: Math.round(minY),
       z: 0, createdAt: Date.now(), updatedAt: Date.now(),
     };
+    await flushPendingSaves(); closeOtherEditors();    // the ink panel must not outlive its strokes
     const removal = await gatherRemoval(inks.map(b => b.id));
     for (const b of inks) { await DB.deleteBlockDeep(b.id); }
     await DB.saveBlock(tb);
     recordChange(removal, { blocks: [tb], edges: [], files: [] });
-    await loadLevel(state.level);
+    state.tagFilter = null;                            // as a fresh level load would
+    await applyRecsToView({ blocks: [tb], edges: [], files: [] }, removal, state.level);
     setSelection([tb.id]);
     toast('Converted to text');
   }
@@ -3892,11 +4108,15 @@
       b.rot = Math.round(Math.atan2(dy, dx) * 180 / Math.PI);
       b.outlineW = Math.max(2, Math.round(strokeW));
     }
-    await DB.saveBlock(b);
     state.blocks.push(b);
     state.childCounts[b.id] = { blocks: 0, files: 0 };
     world.appendChild(makeBlockEl(b));
-    recordChange(emptySet(), { blocks: [b], edges: [], files: [] });
+    const level = state.level, gen = history.gen;
+    await afterInkWrites(async () => {
+      await DB.saveBlock(b);
+      if (history.gen !== gen) return;
+      recordChange(emptySet(), { blocks: [b], edges: [], files: [] }, level);
+    });
     return b;
   }
 
@@ -3967,20 +4187,58 @@
   }
   const redrawInkStroke = paintLiveStroke;      // the view moved: same picture, new place
 
-  // Take every sample the digitiser reported and paint each one at once.
-  function addInkSamples(e) {
+  // At most two repaints per display frame: the first sample of a frame goes
+  // to the glass at once (the low-latency path); the rest of that frame's
+  // samples land in one trailing paint on the next animation frame. A pen
+  // reporting at 240-360 Hz otherwise repainted the whole stroke per sample.
+  function scheduleLivePaint() {
+    const s = inking; if (!s) return;
+    if (!s.paintRAF) {
+      paintLiveStroke();
+      s.paintRAF = requestAnimationFrame(() => {
+        s.paintRAF = 0;
+        if (s.dirty && inking === s) { s.dirty = false; paintLiveStroke(); }
+      });
+    } else s.dirty = true;
+  }
+  // Throw away the stroke in progress (a navigation, a second finger, lost
+  // focus): nothing is saved, the glass is wiped, the pointer let go.
+  function dropLiveStroke() {
+    if (!inking) return;
+    try { stage.releasePointerCapture(inking.pointerId); } catch (_) {}
+    if (inking.paintRAF) cancelAnimationFrame(inking.paintRAF);
+    clearInkSurface(); inking = null;
+  }
+
+  // A navigation or workspace change ends every stylus gesture: the stroke is
+  // dropped, what the eraser removed so far is committed to the page it was on.
+  function dropLiveGestures() {
+    dropLiveStroke();
+    if (erasing) { try { stage.releasePointerCapture(erasing.pointerId); } catch (_) {} erasing = null; commitEraseBatch(); }
+    if (lasso) { lasso.path.remove(); lasso = null; }
+  }
+
+  // Take every sample the digitiser reported. On Chromium each sample arrives
+  // twice: through pointerrawupdate and again inside the next pointermove's
+  // coalesced list. Once the raw channel has delivered for this stroke, the
+  // replay (nothing newer than the last stored sample) is skipped - it used
+  // to append every frame's batch a second time, a backward jog per frame.
+  function addInkSamples(e, fromRaw) {
     if (!inking || e.pointerId !== inking.pointerId) return;
+    if (fromRaw) inking.rawSeen = true;
     inking.lastX = e.clientX; inking.lastY = e.clientY;
     const r = inking.rect;
     const list = (e.getCoalescedEvents && e.getCoalescedEvents().length) ? e.getCoalescedEvents() : [e];
     const minStep = 0.7 / (state.view.scale || 1);
     const taper = inking.taper || 0;
+    let pushed = false;
     for (const ev of list) {
+      const t = ev.timeStamp || e.timeStamp || performance.now();
+      if (!fromRaw && inking.rawSeen && t <= inking.lastT) continue;   // already taken from the raw channel
       const p = screenToWorld(ev.clientX - r.left, ev.clientY - r.top);
       const last = inking.pts[inking.pts.length - 1];
       if (last && Math.hypot(p.x - last[0], p.y - last[1]) < minStep) continue;
       // pen velocity in screen px/ms, smoothed so the width does not flicker
-      const t = ev.timeStamp || e.timeStamp || performance.now();
       const dt = Math.max(1, t - (inking.lastT || t - 8));
       const dist = last ? Math.hypot(p.x - last[0], p.y - last[1]) * (state.view.scale || 1) : 0;
       const v = dist / dt;
@@ -3989,8 +4247,9 @@
       const press = inking.pressure ? (ev.pressure || e.pressure || 0.5) : 0;
       inking.pts.push([Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, press,
                        taper ? Math.round(nibFactor(inking.vel, press, taper) * 1000) / 1000 : 0]);
+      pushed = true;
     }
-    paintLiveStroke();                   // straight to the glass, once per event
+    if (pushed) scheduleLivePaint();
   }
 
   // Smooth ink path (midpoint quadratic curves) — pen strokes render as fluid
@@ -4008,6 +4267,7 @@
   }
 
   function onPointerDown(e) {
+    lpFired = false;                            // a long-press only ever applies to its own pointer
     if (state.levelLayout === 'list') return;   // list view handles its own clicks/scroll
     // Floating UI sits inside the stage; a tap there is for that panel, not the
     // canvas. Without this the canvas cleared the selection first and every
@@ -4044,6 +4304,12 @@
       startMarquee(e); return;
     }
     if (e.button !== 0) return;
+
+    // While a stylus gesture is live, a finger or knuckle landing on the glass
+    // does nothing at all - no pan, no drag, no long-press. The hand resting
+    // beside the pen must never move the page or open a menu mid-word.
+    if ((inking || erasing || lasso) && !inkAccepts(e)) return;
+    if (marquee) return;                        // a rubber band is live: no pan, drag or long-press from another pointer
 
     lastPointerType = e.pointerType || 'mouse';
 
@@ -4093,10 +4359,8 @@
         && inkAccepts(e)) {
       if (inking) {
         // a second finger landed mid-stroke → discard the stroke, navigate instead
-        try { stage.releasePointerCapture(inking.pointerId); } catch (_) {}
-        clearInkSurface();
         pointers.set(inking.pointerId, { x: inking.lastX, y: inking.lastY });
-        inking = null;
+        dropLiveStroke();
         pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
         const [a, b] = [...pointers.values()];
         pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y) };
@@ -4115,10 +4379,17 @@
       const pen = e.pointerType === 'pen';
       const st0 = PEN_STYLES[penStyle] || PEN_STYLES.pen;
       const press0 = pen ? (e.pressure || 0.5) : 0;
+      // the pen always draws: a finger pan, drag or handle already in flight
+      // yields to it (whatever it moved goes back) instead of resuming with a
+      // jump once the stroke ends
+      for (const pid of [...pointers.keys()]) abandonPointer(pid);
+      clearTimeout(lpTimer); lpTimer = null;
       inking = { pts: [[p.x, p.y, press0, st0.taper ? nibFactor(0, press0, st0.taper) : 0]],
                  pointerId: e.pointerId, lastX: e.clientX, lastY: e.clientY,
                  lastT: e.timeStamp || performance.now(), vel: 0,
-                 style: penStyle, color: penColor, width, pressure: pen, rect: r };
+                 style: penStyle, color: penColor, width, pressure: pen, rect: r,
+                 rawSeen: false, paintRAF: 0, dirty: false,
+                 ws: state.ws, level: state.level };          // the page it belongs to
       beginInkStroke(st0);
       try { stage.setPointerCapture(e.pointerId); } catch (_) {}   // never lose the stroke
       return;
@@ -4134,6 +4405,7 @@
       pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y) };
       if (dragging) state.els[dragging.primary]?.classList.remove('dragging');
       dragging = panning = null;
+      if (!selScale) selFrameBox = selectionWorldBox();
       clearTimeout(lpTimer); lpTimer = null; lpFired = false;   // cancel long-press during pinch
       return;
     }
@@ -4170,7 +4442,7 @@
         const rect = blockEl.getBoundingClientRect();
         const s = state.view.scale || 1;
         gizmo = {
-          id, mode: edge ? 'box' : (handle.classList.contains('tnode-rotate') ? 'rotate' : 'resize'),
+          id, pointerId: e.pointerId, mode: edge ? 'box' : (handle.classList.contains('tnode-rotate') ? 'rotate' : 'resize'),
           edge: edge ? edge.dataset.edge : null,
           startX: e.clientX, startY: e.clientY,
           startSize: b.size || 22, startRot: b.rot || 0,
@@ -4219,29 +4491,37 @@
         const ids = (!e.shiftKey && state.selectedIds.has(id)) ? [...state.selectedIds] : [id];
         const starts = {};
         ids.forEach(bid => { const bb = state.blocks.find(x => x.id === bid); if (bb && !bb.locked) starts[bid] = { x: bb.x, y: bb.y }; });
-        dragging = { primary: id, ids: Object.keys(starts), starts, startX: e.clientX, startY: e.clientY, moved: false, shift: e.shiftKey };
+        dragging = { primary: id, pointerId: e.pointerId, ids: Object.keys(starts), starts, startX: e.clientX, startY: e.clientY, moved: false, shift: e.shiftKey };
         dragging.frame0 = selectionWorldBox();
+        // connectors only need redrawing per move when one is attached to what moves
+        dragging.touchesEdge = state.edges.some(ed => starts[ed.from] || starts[ed.to]);
         blockEl.classList.add('dragging');
       }
     } else {
       const r = stage.getBoundingClientRect();
-      panning = { startX: e.clientX, startY: e.clientY, tx: state.view.tx, ty: state.view.ty, r, inkTap: inkPassThrough };
+      panning = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, tx: state.view.tx, ty: state.view.ty, r, inkTap: inkPassThrough };
       stage.classList.add('panning');
+      // carry the selection frame through the pan instead of re-measuring
+      // every selected element on each move
+      if (!dragging && !selScale) selFrameBox = selectionWorldBox();
     }
 
     // press-and-hold → context menu (mouse uses right-click); a stylus counts
     // too, except while it is the pen or eraser. On a table cell/title it
     // opens that cell's edit panel instead.
     if (e.pointerType === 'touch' || (e.pointerType === 'pen' && !state.penMode && !state.penEraser)) {
-      lpFired = false; lpX = e.clientX; lpY = e.clientY;
+      lpFired = false; lpX = e.clientX; lpY = e.clientY; lpPid = e.pointerId;
       const cx = e.clientX, cy = e.clientY, tid = blockEl ? blockEl.dataset.id : null;
       const lpCell = e.target.closest('.block-table .data-table [data-r]');
       const lpTitle = e.target.closest('.block-table .table-title');
       clearTimeout(lpTimer);
       lpTimer = setTimeout(() => {
-        lpTimer = null; lpFired = true;
+        lpTimer = null;
+        if (inking || erasing || lasso) return;      // the stylus is busy: no menu under the hand
+        lpFired = true;
         if (dragging) { state.els[dragging.primary]?.classList.remove('dragging'); dragging = null; }
         if (panning) { stage.classList.remove('panning'); panning = null; }
+        selFrameBox = null;
         if (tid && (lpCell || lpTitle)) {
           const bb = state.blocks.find(x => x.id === tid);
           if (bb && bb.kind === 'table') {
@@ -4258,8 +4538,7 @@
 
   function onPointerMove(e) {
     lastPointer = { x: e.clientX, y: e.clientY };   // for paste-at-cursor
-    if (erasing) {
-      if (e.pointerId !== erasing.pointerId) return;
+    if (erasing && erasing.pointerId === e.pointerId) {
       if (eraserMode === 'stroke') eraseStrokeAt(e.clientX, e.clientY);
       else { eraseSweepAt(erasing.lx, erasing.ly, e.clientX, e.clientY); showEraserCursor(e.clientX, e.clientY); }
       erasing.lx = e.clientX; erasing.ly = e.clientY;
@@ -4270,8 +4549,7 @@
       if (e.target === stage || (e.target.closest && e.target.closest('#stage'))) showEraserCursor(e.clientX, e.clientY);
       else hideEraserCursor();
     }
-    if (lasso) {
-      if (e.pointerId !== lasso.pointerId) return;
+    if (lasso && lasso.pointerId === e.pointerId) {
       const r = stage.getBoundingClientRect();
       const p = screenToWorld(e.clientX - r.left, e.clientY - r.top);
       const last = lasso.pts[lasso.pts.length - 1];
@@ -4282,20 +4560,20 @@
       return;
     }
 
-    if (inking) {
-      if (e.pointerId !== inking.pointerId) return;   // ignore stray pointers mid-stroke
-      addInkSamples(e);      // raw updates get there first; repeats filter out
+    if (inking && inking.pointerId === e.pointerId) {
+      addInkSamples(e, false);   // the raw channel normally has these already (see addInkSamples)
       return;
     }
-    if (lpTimer && (Math.abs(e.clientX - lpX) + Math.abs(e.clientY - lpY) > 8)) { clearTimeout(lpTimer); lpTimer = null; }
+    if (lpTimer && lpPid === e.pointerId && (Math.abs(e.clientX - lpX) + Math.abs(e.clientY - lpY) > 8)) { clearTimeout(lpTimer); lpTimer = null; }
     if (marquee) {
+      if (e.pointerId !== marquee.pointerId) return;
       if (!marquee.moved && (Math.abs(e.clientX - marquee.sx) + Math.abs(e.clientY - marquee.sy) > 4)) {
         marquee.moved = true; if (!marquee.shift) clearSelection();
       }
       if (marquee.moved) { positionMarquee(e.clientX, e.clientY); updateMarqueeSelection(e.clientX, e.clientY); }
       return;
     }
-    if (colResize) {
+    if (colResize && colResize.pointerId === e.pointerId) {
       const b = state.blocks.find(x => x.id === colResize.id); if (!b) return;
       const s = state.view.scale || 1;
       const nw = Math.max(24, Math.round(colResize.startW + (e.clientX - colResize.startX) / s));
@@ -4304,7 +4582,7 @@
       refreshBlockCard(b.id);
       return;
     }
-    if (rowResize) {
+    if (rowResize && rowResize.pointerId === e.pointerId) {
       const b = state.blocks.find(x => x.id === rowResize.id); if (!b) return;
       const s = state.view.scale || 1;
       const nh = Math.max(16, Math.round(rowResize.startH + (e.clientY - rowResize.startY) / s));
@@ -4313,7 +4591,7 @@
       refreshBlockCard(b.id);
       return;
     }
-    if (gizmo) {
+    if (gizmo && gizmo.pointerId === e.pointerId) {
       const b = state.blocks.find(x => x.id === gizmo.id); if (!b) return;
       const s = state.view.scale || 1;
       if (gizmo.mode === 'box') {
@@ -4385,16 +4663,18 @@
       return;
     }
 
-    if (dragging) {
+    if (dragging && dragging.pointerId === e.pointerId) {
       const dx = e.clientX - dragging.startX, dy = e.clientY - dragging.startY;
       if (Math.abs(dx) + Math.abs(dy) > 3) dragging.moved = true;
       if (dragging.shift) return;      // shift = toggle only, don't move
       const s = state.view.scale;
+      // one id lookup table for the whole drag: no scan of every block per item per move
+      const byId = dragging.byId || (dragging.byId = new Map(state.blocks.map(b => [b.id, b])));
       // smart guides: nudge the drag so edges/centres line up with neighbours
-      const adj = alignAdjust(dragging, dx / s, dy / s);
+      const adj = alignAdjust(dragging, dx / s, dy / s, byId);
       for (const bid of dragging.ids) {
         const st = dragging.starts[bid]; if (!st) continue;
-        const bb = state.blocks.find(x => x.id === bid); if (!bb) continue;
+        const bb = byId.get(bid); if (!bb) continue;
         // Handwriting must land exactly where you put it: snapping strokes to
         // the grid pulls the letters of a word apart.
         const fit = bb.kind === 'ink' ? (v) => Math.round(v) : snapVal;
@@ -4409,43 +4689,88 @@
         positionSelFrame();
       }
       positionSelBar();
-      drawEdges();
+      if (dragging.touchesEdge) drawEdges(); else scheduleMinimap();
       return;
     }
 
-    if (panning) {
+    if (panning && e.pointerId === panning.pointerId) {
       if (axisLock !== 'y') state.view.tx = panning.tx + (e.clientX - panning.startX);
       if (axisLock !== 'x') state.view.ty = panning.ty + (e.clientY - panning.startY);
       applyView();
     }
   }
 
-  async function onPointerUp(e) {
-    if (colResize) {
+  // Whatever gesture pointer `pid` was driving on its own ends here without
+  // being committed: a finger pan, drag or handle the pen took over from, or
+  // a pointer whose up was never seen. Anything it moved goes back.
+  function abandonPointer(pid) {
+    pointers.delete(pid);
+    if (pointers.size < 2) { pinch = null; flushInv(); }
+    if (panning && panning.pointerId === pid) { stage.classList.remove('panning'); panning = null; }
+    if (dragging && dragging.pointerId === pid) {
+      for (const bid of dragging.ids) {
+        const st = dragging.starts[bid], bb = state.blocks.find(x => x.id === bid);
+        if (!st || !bb) continue;
+        bb.x = st.x; bb.y = st.y;
+        const el = state.els[bid]; if (el) { el.style.left = st.x + 'px'; el.style.top = st.y + 'px'; }
+      }
+      state.els[dragging.primary]?.classList.remove('dragging');
+      clearGuides(); dragging = null; drawEdges();
+    }
+    if (gizmo && gizmo.pointerId === pid) {
+      const b = state.blocks.find(x => x.id === gizmo.id);
+      if (b) {
+        Object.assign(b, gizmo.before);
+        const el = state.els[b.id]; if (el) { el.style.left = b.x + 'px'; el.style.top = b.y + 'px'; }
+        refreshBlockCard(b.id); drawEdges();
+      }
+      gizmo = null;
+    }
+    if (colResize && colResize.pointerId === pid) {
       const b = state.blocks.find(x => x.id === colResize.id);
-      if (b) {
-        await persistBlock(b); markChanged();
-        recordChange({ blocks: [{ ...colResize.before }], edges: [], files: [] }, { blocks: [{ ...b, colW: (b.colW || []).slice() }], edges: [], files: [] });
-      }
-      colResize = null; pointers.delete(e.pointerId); return;
+      if (b) { b.colW = colResize.before.colW; refreshBlockCard(b.id); }
+      colResize = null;
     }
-    if (rowResize) {
+    if (rowResize && rowResize.pointerId === pid) {
       const b = state.blocks.find(x => x.id === rowResize.id);
-      if (b) {
-        await persistBlock(b); markChanged();
-        recordChange({ blocks: [{ ...rowResize.before }], edges: [], files: [] }, { blocks: [{ ...b, rowH: (b.rowH || []).slice() }], edges: [], files: [] });
-      }
-      rowResize = null; pointers.delete(e.pointerId); return;
+      if (b) { b.rowH = rowResize.before.rowH; refreshBlockCard(b.id); }
+      rowResize = null;
     }
-    if (erasing) {
-      if (e.pointerId !== erasing.pointerId) { pointers.delete(e.pointerId); return; }
+    if (marquee && marquee.pointerId === pid) endMarquee();
+    if (lpTimer && lpPid === pid) { clearTimeout(lpTimer); lpTimer = null; }
+    selFrameBox = null; positionSelFrame(); positionSelBar();
+  }
+  function endForeignPointer(e) { abandonPointer(e.pointerId); }
+
+  async function onPointerUp(e) {
+    // the pointer's own gesture is handled first, whatever else is live
+    if (colResize && colResize.pointerId === e.pointerId) {
+      const cr = colResize; colResize = null; pointers.delete(e.pointerId);
+      const b = state.blocks.find(x => x.id === cr.id);
+      if (b) {
+        b.updatedAt = Date.now();
+        recordChange({ blocks: [{ ...cr.before }], edges: [], files: [] }, { blocks: [{ ...b, colW: (b.colW || []).slice() }], edges: [], files: [] });
+        await DB.saveBlock(b);
+      }
+      return;
+    }
+    if (rowResize && rowResize.pointerId === e.pointerId) {
+      const rr = rowResize; rowResize = null; pointers.delete(e.pointerId);
+      const b = state.blocks.find(x => x.id === rr.id);
+      if (b) {
+        b.updatedAt = Date.now();
+        recordChange({ blocks: [{ ...rr.before }], edges: [], files: [] }, { blocks: [{ ...b, rowH: (b.rowH || []).slice() }], edges: [], files: [] });
+        await DB.saveBlock(b);
+      }
+      return;
+    }
+    if (erasing && erasing.pointerId === e.pointerId) {
       erasing = null;
       try { stage.releasePointerCapture(e.pointerId); } catch (_) {}
       commitEraseBatch();
       pointers.delete(e.pointerId); return;
     }
-    if (lasso) {
-      if (e.pointerId !== lasso.pointerId) { pointers.delete(e.pointerId); return; }
+    if (lasso && lasso.pointerId === e.pointerId) {
       const shape = lasso; lasso = null;
       shape.path.remove();
       if (shape.erase) { if (shape.pts.length >= 3) eraseInsideLasso(shape.pts); }
@@ -4454,11 +4779,14 @@
       return;
     }
 
-    if (inking) {
-      if (e.pointerId !== inking.pointerId) { pointers.delete(e.pointerId); return; }
+    if (inking && inking.pointerId === e.pointerId) {
       const stroke = inking; inking = null;
       try { stage.releasePointerCapture(e.pointerId); } catch (_) {}
+      if (stroke.paintRAF) cancelAnimationFrame(stroke.paintRAF);
       requestAnimationFrame(() => { if (!inking) clearInkSurface(); });
+      // the page changed under the pen (a tap on Home, Back or a crumb): the
+      // stroke belongs to the level it started on and is not carried over
+      if (stroke.ws !== state.ws || stroke.level !== state.level) return;
       const pts = stroke.pts;
       if (pts.length >= 2) {
         const hit = shapeSnap ? recognizeShape(pts) : null;
@@ -4473,8 +4801,10 @@
       }
       return;
     }
-    clearTimeout(lpTimer); lpTimer = null;
-    if (lpFired) {                       // long-press already opened the context menu
+    // a stylus gesture (or a table handle) is live and this is not its pointer
+    if (inking || erasing || lasso || colResize || rowResize) { endForeignPointer(e); return; }
+    if (lpTimer && lpPid === e.pointerId) { clearTimeout(lpTimer); lpTimer = null; }
+    if (lpFired && lpPid === e.pointerId) {   // long-press already opened the context menu
       lpFired = false;
       if (dragging) { state.els[dragging.primary]?.classList.remove('dragging'); dragging = null; }
       if (panning) { stage.classList.remove('panning'); panning = null; }
@@ -4482,53 +4812,65 @@
       return;
     }
     if (marquee) {
+      if (e.pointerId !== marquee.pointerId) { pointers.delete(e.pointerId); return; }
       const m = marquee; endMarquee();
       if (!m.moved) openContextMenu(e.clientX, e.clientY, m.target ? m.target.dataset.id : null);
       return;
     }
     if (gizmo) {
+      if (e.pointerId !== gizmo.pointerId) { endForeignPointer(e); return; }
+      const g = gizmo; gizmo = null;      // nothing stays live across the write below
       pointers.delete(e.pointerId);       // release the handle's pointer (else next touch looks like a 2nd finger → pinch)
-      if (pointers.size < 2) pinch = null;
-      const b = state.blocks.find(x => x.id === gizmo.id);
+      if (pointers.size < 2) { pinch = null; flushInv(); }
+      const b = state.blocks.find(x => x.id === g.id);
       if (b) {
-        await persistBlock(b);
-        recordChange({ blocks: [{ ...gizmo.before }], edges: [], files: [] }, { blocks: [{ ...b }], edges: [], files: [] });
+        b.updatedAt = Date.now();
+        recordChange({ blocks: [{ ...g.before }], edges: [], files: [] }, { blocks: [{ ...b }], edges: [], files: [] });
+        await DB.saveBlock(b);
       }
-      gizmo = null;
       return;
     }
     pointers.delete(e.pointerId);
-    if (pointers.size < 2) pinch = null;
+    if (pointers.size < 2) { pinch = null; flushInv(); }
 
     if (dragging) {
-      justDragged = dragging.moved;                    // before any await: the click is next
+      if (e.pointerId !== dragging.pointerId) return;
+      const d = dragging; dragging = null; selFrameBox = null;   // before any await
+      justDragged = d.moved;                           // before any await: the click is next
       setTimeout(() => { justDragged = false; }, 0);
       clearGuides();
-      state.els[dragging.primary]?.classList.remove('dragging');
-      if (dragging.shift && !dragging.moved) {
-        toggleSelect(dragging.primary);          // shift+click toggles
-      } else if (dragging.moved) {
+      state.els[d.primary]?.classList.remove('dragging');
+      if (d.shift && !d.moved) {
+        toggleSelect(d.primary);                 // shift+click toggles
+      } else if (d.moved) {
         const before = { blocks: [], edges: [], files: [] };
         const after = { blocks: [], edges: [], files: [] };
-        for (const bid of dragging.ids) {
+        const moved = [];
+        for (const bid of d.ids) {
           const bb = state.blocks.find(x => x.id === bid);
           if (!bb) continue;
-          const st = dragging.starts[bid];
+          const st = d.starts[bid];
+          bb.updatedAt = Date.now();
           before.blocks.push({ ...bb, x: st.x, y: st.y });
           after.blocks.push({ ...bb });
-          await persistBlock(bb);
+          moved.push(bb);
         }
-        recordChange(before, after);
+        positionSelFrame(); positionSelBar();
+        recordChange(before, after);             // in history at once; the writes follow
+        await Promise.all(moved.map(bb => DB.saveBlock(bb)));
+        return;
       } else {
-        selectBlock(dragging.primary);           // plain click = single select
+        selectBlock(d.primary);                  // plain click = single select
       }
-      dragging = null;
-      selFrameBox = null;
       positionSelFrame(); positionSelBar();
       return;
     }
-    if (panning) {
+    // a pinch has just ended (or a stray pointer lifted): the frame carried
+    // through the gesture is measured afresh
+    if (!pinch && !panning && selFrameBox && !selScale) { selFrameBox = null; positionSelFrame(); positionSelBar(); }
+    if (panning && e.pointerId === panning.pointerId) {
       stage.classList.remove('panning');
+      selFrameBox = null;
       const moved = Math.abs(e.clientX - panning.startX) + Math.abs(e.clientY - panning.startY);
       const inkTap = panning.inkTap;
       panning = null;
@@ -4544,7 +4886,7 @@
   /* ---------------------------- marquee select ------------------------- */
   function startMarquee(e) {
     marquee = {
-      r: stage.getBoundingClientRect(), sx: e.clientX, sy: e.clientY,
+      pointerId: e.pointerId, r: stage.getBoundingClientRect(), sx: e.clientX, sy: e.clientY,
       base: e.shiftKey ? new Set(state.selectedIds) : new Set(),
       shift: e.shiftKey, moved: false, target: e.target.closest('.block'),
     };
@@ -4565,10 +4907,15 @@
     const p2 = screenToWorld(Math.max(marquee.sx, cx) - r.left, Math.max(marquee.sy, cy) - r.top);
     const hit = [];
     for (const b of state.blocks) {
-      const rect = blockRect(b.id);
+      const rect = blockRectOf(b);
       if (rect.x < p2.x && rect.x + rect.w > p1.x && rect.y < p2.y && rect.y + rect.h > p1.y) hit.push(b.id);
     }
-    setSelection([...marquee.base, ...hit]);
+    // only rebuild the selection classes when the hit set actually changed
+    const next = withGroups([...marquee.base, ...hit]);
+    const cur = state.selectedIds;
+    if (next.length === cur.size && next.every(id => cur.has(id))) return;
+    state.selectedIds = new Set(next);
+    applySelectionClasses();
   }
   function endMarquee() { $('#marquee').hidden = true; marquee = null; }
 
@@ -4776,10 +5123,19 @@
     $('#cmdk').addEventListener('mousedown', (e) => { if (e.target.id === 'cmdk') closeCmdk(); });
   }
 
+  let wheelFrameTimer = null;
   function onWheel(e) {
     if (state.levelLayout === 'list') return;   // let the list scroll
     e.preventDefault();
     const r = stage.getBoundingClientRect();
+    // a burst of wheel steps carries the selection frame instead of measuring
+    // every selected element per step; measured afresh once the burst ends
+    if (selFrameBox == null && !dragging && !selScale && state.selectedIds.size) selFrameBox = selectionWorldBox();
+    clearTimeout(wheelFrameTimer);
+    wheelFrameTimer = setTimeout(() => {
+      wheelFrameTimer = null;
+      if (!dragging && !panning && !pinch && !selScale) { selFrameBox = null; positionSelFrame(); positionSelBar(); }
+    }, 150);
     let factor;
     if (e.ctrlKey) {
       // touchpad pinch: browsers deliver it as ctrl+wheel with small fractional
@@ -4799,8 +5155,7 @@
       if (b && !['text', 'shape', 'image', 'ink', 'table', 'check'].includes(b.kind)) navigateTo(b.id);
       return;
     }
-    // while drawing, a stylus double-tap is just two dots of ink - never a new
-    // block. A finger (or mouse) double-tap still adds one, as does Add.
+    // while drawing, a stylus double-tap is just two dots of ink
     if ((state.penMode || state.penEraser) && lastPointerType === 'pen') return;
     if (e.target.closest('[data-blk]')) return; // action buttons, not "open"
     const blockEl = e.target.closest('.block');
@@ -4821,9 +5176,7 @@
       else navigateTo(blockEl.dataset.id);
       return;
     }
-    if (e.target.closest('#edge-layer g')) return;
-    const r = stage.getBoundingClientRect();
-    createBlock('block', screenToWorld(e.clientX - r.left, e.clientY - r.top));
+    // empty canvas: nothing - new blocks come from the Add button
   }
 
   // canvas hover-action buttons (edit / open) fire as native clicks
@@ -4996,20 +5349,48 @@
   // Everything one eraser gesture removes or creates is one undo entry.
   let eraseBatch = null;
   function beginEraseBatch() { if (!eraseBatch) eraseBatch = { removed: [], added: new Map() }; }
-  async function commitEraseBatch() {
+  function commitEraseBatch() {
     if (!eraseBatch) return;
     const { removed, added } = eraseBatch; eraseBatch = null;
     const after = [...added.values()];
     if (!removed.length && !after.length) return;
-    for (const b of removed) await DB.deleteBlockDeep(b.id);
-    for (const b of after) await DB.saveBlock(b);
-    recordChange({ blocks: removed, edges: [], files: [] }, { blocks: after, edges: [], files: [] });
+    const level = state.level;
+    // connectors touching an erased stroke go with it (a picked-up stroke can be linked)
+    const gone = new Set(removed.map(b => b.id));
+    const edges = state.edges.filter(ed => gone.has(ed.from) || gone.has(ed.to));
+    if (edges.length) {
+      const eids = new Set(edges.map(ed => ed.id));
+      state.edges = state.edges.filter(ed => !eids.has(ed.id));
+      drawEdges();
+    }
+    // a stroke that was opened and given contents keeps the deep delete
+    const plain = removed.filter(b => !b.__deps), deep = removed.filter(b => b.__deps);
+    removed.forEach(b => { delete b.__deps; });
+    const gen = history.gen;
+    return afterInkWrites(async () => {
+      await Promise.all([
+        ...plain.map(b => DB.del('blocks', b.id)),
+        ...after.map(b => DB.saveBlock(b)),
+        ...edges.map(ed => DB.delEdge(ed.id)),
+      ]);
+      const extra = { blocks: [], edges: [], files: [] };
+      for (const b of deep) {
+        const r = await gatherRemoval([b.id]);
+        extra.blocks.push(...r.blocks.filter(x => x.id !== b.id));
+        extra.files.push(...r.files);
+        extra.edges.push(...r.edges.filter(ed => !edges.some(k => k.id === ed.id)));
+        await DB.deleteBlockDeep(b.id);
+      }
+      if (history.gen !== gen) return;
+      recordChange({ blocks: [...removed, ...extra.blocks], edges: [...edges.map(ed => ({ ...ed })), ...extra.edges], files: extra.files },
+                   { blocks: after, edges: [], files: [] }, level);
+    });
   }
   // Take a stroke off the page (DOM + state), remembering it for undo.
   function removeInkBlock(b) {
     beginEraseBatch();
     if (eraseBatch.added.has(b.id)) eraseBatch.added.delete(b.id);   // born and gone in one gesture
-    else eraseBatch.removed.push({ ...b });
+    else { const c = state.childCounts[b.id]; eraseBatch.removed.push({ ...b, __deps: !c || !!(c.blocks || c.files) }); }
     state.blocks = state.blocks.filter(x => x.id !== b.id);
     state.selectedIds.delete(b.id);
     const el = state.els[b.id]; if (el) el.remove();
@@ -5311,42 +5692,6 @@
     toast(ids.length + (ids.length === 1 ? ' item selected' : ' items selected'));
   }
 
-  /* Two fingers tapped = undo the last stroke, three = redo. Only while
-     drawing, and only for a real tap: no movement, no long hold — so it can
-     never be confused with a pinch or a two-finger pan.                    */
-  function bindDrawTapGestures() {
-    const TAP_MS = 650, SLOP = 26;
-    let g = null;
-    const done = () => { g = null; };
-    stage.addEventListener('pointerdown', (e) => {
-      // no palm filter here: three fingers tapping firmly look broad, and a
-      // resting palm never makes a quick, still tap anyway
-      if (e.pointerType !== 'touch') return;
-      const now = Date.now();
-      if (!g || now - g.start > 700) g = { start: now, max: 0, moved: false, pts: new Map() };
-      g.pts.set(e.pointerId, { x: e.clientX, y: e.clientY, live: true });
-      g.max = Math.max(g.max, [...g.pts.values()].filter(p => p.live).length);
-    }, true);
-    window.addEventListener('pointermove', (e) => {
-      if (!g) return;
-      const p = g.pts.get(e.pointerId); if (!p) return;
-      if (Math.hypot(e.clientX - p.x, e.clientY - p.y) > SLOP) g.moved = true;
-    }, true);
-    const lift = (e) => {
-      if (!g) return;
-      const p = g.pts.get(e.pointerId); if (!p) return;
-      p.live = false;
-      if ([...g.pts.values()].some(q => q.live)) return;      // fingers still down
-      const quick = Date.now() - g.start <= TAP_MS;
-      const taps = g.max, moved = g.moved;
-      done();
-      if (!quick || moved || taps < 2 || taps > 3) return;   // a pan/pinch is not a tap
-      if (taps === 2) { undo(); toast('Undo'); }
-      else { redo(); toast('Redo'); }
-    };
-    window.addEventListener('pointerup', lift, true);
-    window.addEventListener('pointercancel', lift, true);
-  }
 
   function renderPenColors() {
     const wrap = $('#pen-colors'); if (!wrap) return;
@@ -5408,8 +5753,12 @@
     state.blocks.push(b);
     state.childCounts[b.id] = { blocks: 0, files: 0 };
     world.appendChild(makeBlockEl(b));
-    await DB.saveBlock(b);
-    recordChange(emptySet(), { blocks: [b], edges: [], files: [] });
+    const level = state.level, gen = history.gen;
+    await afterInkWrites(async () => {
+      await DB.saveBlock(b);
+      if (history.gen !== gen) return;         // the page was left meanwhile: saved, not in the new history
+      recordChange(emptySet(), { blocks: [b], edges: [], files: [] }, level);
+    });
   }
 
   /* ---------------------------- link mode ------------------------------ */
@@ -5468,7 +5817,7 @@
     }
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const b of state.blocks) {
-      const rect = blockRect(b.id);
+      const rect = blockRectOf(b);
       minX = Math.min(minX, rect.x); minY = Math.min(minY, rect.y);
       maxX = Math.max(maxX, rect.x + rect.w); maxY = Math.max(maxY, rect.y + rect.h);
     }
@@ -5485,7 +5834,7 @@
   function worldBounds() {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const b of state.blocks) {
-      const rect = blockRect(b.id);
+      const rect = blockRectOf(b);
       minX = Math.min(minX, rect.x); minY = Math.min(minY, rect.y);
       maxX = Math.max(maxX, rect.x + rect.w); maxY = Math.max(maxY, rect.y + rect.h);
     }
@@ -5503,13 +5852,23 @@
     if (!show) return;
     const dpr = window.devicePixelRatio || 1;
     const cssW = cv.clientWidth, cssH = cv.clientHeight;
+    if (!cssW || !cssH) return;                        // hidden by CSS (presenting, short phones)
     if (cv.width !== cssW * dpr) { cv.width = cssW * dpr; cv.height = cssH * dpr; }
     const ctx = cv.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cssW, cssH);
+    // Measure every block exactly once: the bounds and each node's little
+    // rectangle come from the same pass (this runs on every pan/zoom frame).
+    const rects = new Map();
+    let bMinX = Infinity, bMinY = Infinity, bMaxX = -Infinity, bMaxY = -Infinity;
+    for (const blk of state.blocks) {
+      const rc = blockRectOf(blk); rects.set(blk.id, rc);
+      bMinX = Math.min(bMinX, rc.x); bMinY = Math.min(bMinY, rc.y);
+      bMaxX = Math.max(bMaxX, rc.x + rc.w); bMaxY = Math.max(bMaxY, rc.y + rc.h);
+    }
     // An empty level has no bounds; fall back to the viewport so the minimap
     // still draws instead of throwing.
-    const b = worldBounds() || { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+    const b = isFinite(bMinX) ? { minX: bMinX, minY: bMinY, maxX: bMaxX, maxY: bMaxY } : { minX: 0, minY: 0, maxX: 0, maxY: 0 };
     const vr = stage.getBoundingClientRect();
     const vw0 = screenToWorld(0, 0), vw1 = screenToWorld(vr.width, vr.height);
     // include viewport in bounds so the indicator is always visible
@@ -5526,9 +5885,11 @@
     const accent = (cs.getPropertyValue('--accent') || '#2b7fff').trim();
     const cardBg = (cs.getPropertyValue('--card') || '#161b21').trim();
     const lineC = (cs.getPropertyValue('--card-line') || '#23262d').trim();
+    const text = (cs.getPropertyValue('--text') || '#e7eaee').trim();
     // draw nodes back-to-front (respect z-order)
     const ordered = [...state.blocks].sort((a, b) => (a.z || 0) - (b.z || 0));
-    for (const blk of ordered) drawNodeMini(ctx, blk, wx, wy, scale, { accent, cardBg, lineC });
+    const col = { accent, cardBg, lineC, text };
+    for (const blk of ordered) drawNodeMini(ctx, blk, rects.get(blk.id), wx, wy, scale, col);
     // viewport rectangle
     ctx.globalAlpha = 1;
     ctx.strokeStyle = accent; ctx.lineWidth = 1.5;
@@ -5536,6 +5897,10 @@
   }
 
   const _mmImgCache = new Map();   // src → HTMLImageElement (for image thumbnails)
+  // A stroke's mini-map polyline, built once per point array. Point arrays are
+  // only ever replaced (scale, undo, erase), never edited in place, so the
+  // array itself is the cache key and a stale path is impossible.
+  const mmPathCache = new WeakMap();
   function mmImage(src) {
     if (!src) return null;
     let im = _mmImgCache.get(src);
@@ -5543,8 +5908,7 @@
     return im.complete ? im : null;
   }
   // Draw a single node into the mini-map as a faithful little preview.
-  function drawNodeMini(ctx, b, wx, wy, scale, col) {
-    const rect = blockRect(b.id);
+  function drawNodeMini(ctx, b, rect, wx, wy, scale, col) {
     const x = wx(rect.x), y = wy(rect.y), w = Math.max(1, rect.w * scale), h = Math.max(1, rect.h * scale);
     const cx = x + w / 2, cy = y + h / 2;
     ctx.save();
@@ -5554,12 +5918,21 @@
     if (b.kind === 'ink') {
       const pad = (b.width || 3) + 2;
       const pts = b.pts || [];
+      let path = mmPathCache.get(pts);
+      if (!path) {
+        path = new Path2D();
+        pts.forEach((p, i) => { i ? path.lineTo(p[0], p[1]) : path.moveTo(p[0], p[1]); });
+        mmPathCache.set(pts, path);
+      }
       ctx.strokeStyle = b.color || col.accent;
-      ctx.lineWidth = Math.max(0.6, (b.width || 3) * scale);
       ctx.lineJoin = ctx.lineCap = 'round';
-      ctx.beginPath();
-      pts.forEach((p, i) => { const px = wx(b.x + pad + p[0]), py = wy(b.y + pad + p[1]); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
-      ctx.stroke();
+      // same picture as mapping every point through wx/wy (both are affine)
+      ctx.save();
+      ctx.translate(wx(b.x + pad), wy(b.y + pad));
+      ctx.scale(scale, scale);
+      ctx.lineWidth = Math.max(0.6, (b.width || 3) * scale) / scale;
+      ctx.stroke(path);
+      ctx.restore();
     } else if (b.kind === 'shape' && b.shape === 'line') {
       ctx.strokeStyle = b.outlineColor || b.color || col.accent;
       ctx.lineWidth = Math.max(0.6, (b.outlineW || 4) * scale);
@@ -5590,7 +5963,7 @@
     } else if (b.kind === 'text') {
       // Text is unreadable at mini scale — draw a clearly visible tinted marker
       // (a small chip) plus a few line-bars, with hard minimum sizes.
-      const color = b.color && b.color !== '' ? b.color : (getComputedStyle(document.documentElement).getPropertyValue('--text') || '#e7eaee').trim();
+      const color = b.color && b.color !== '' ? b.color : col.text;
       const lines = (b.text || 'Text').split('\n').filter(l => l.trim().length);
       const maxLen = Math.max(1, ...lines.map(l => l.length));
       const bw0 = Math.max(10, w), bh0 = Math.max(8, h);   // guaranteed footprint
@@ -5644,6 +6017,7 @@
     cv.addEventListener('pointerdown', (e) => { dragging = true; cv.setPointerCapture(e.pointerId); minimapPan(e.clientX, e.clientY); });
     cv.addEventListener('pointermove', (e) => { if (dragging) minimapPan(e.clientX, e.clientY); });
     cv.addEventListener('pointerup', (e) => { dragging = false; try { cv.releasePointerCapture(e.pointerId); } catch (_) {} });
+    cv.addEventListener('pointercancel', (e) => { dragging = false; try { cv.releasePointerCapture(e.pointerId); } catch (_) {} });
     drawMinimap();
   }
 
@@ -5765,6 +6139,9 @@
 
   // Build the portable, self-contained representation of a workspace
   // (files embedded as data URLs). Used by both download-export and file-save.
+  const fileDataCache = new Map();     // file id -> data URL; a file's blob never changes
+  let fileDataBytes = 0;
+  const FILE_CACHE_BUDGET = 32 * 1024 * 1024;   // beyond this, attachments are re-encoded per save
   async function workspacePayload(wsId, overrideName) {
     const w = await DB.getWorkspace(wsId);
     const [blocks, edges, files] = await Promise.all([
@@ -5772,7 +6149,13 @@
     ]);
     const outFiles = [];
     for (const f of files) {
-      outFiles.push({ blockId: f.blockId, name: f.name, type: f.type, size: f.size, kind: f.kind, createdAt: f.createdAt, data: await blobToDataUrl(f.blob) });
+      const cacheable = wsId === state.ws;     // an export of another workspace stays out of memory
+      let data = cacheable ? fileDataCache.get(f.id) : undefined;
+      if (!data) {
+        data = await blobToDataUrl(f.blob);
+        if (cacheable && fileDataBytes + data.length <= FILE_CACHE_BUDGET) { fileDataCache.set(f.id, data); fileDataBytes += data.length; }
+      }
+      outFiles.push({ blockId: f.blockId, name: f.name, type: f.type, size: f.size, kind: f.kind, createdAt: f.createdAt, data });
     }
     // Preserve every field (kind, text/shape/image props, src, etc.); only drop `ws`
     // which is re-assigned on import.
@@ -6537,6 +6920,34 @@
 
   /* ---- autosave / manual (Ctrl+S) save -------------------------------- */
   let autoSaveTimer = null;
+  let autosaveDue = 0;                 // when a deferred autosave must run at the latest
+  // Serialising the whole workspace in the pause between two words is exactly
+  // when it hurts, so autosave waits until no gesture is live. A 10 s deadline
+  // still guarantees the write even if a gesture flag ever sticks.
+  function autosaveTick() {
+    autoSaveTimer = null;
+    const busy = inking || erasing || dragging || gizmo || selScale || lasso || panning || pinch;
+    if (busy && Date.now() < autosaveDue) { autoSaveTimer = setTimeout(autosaveTick, 900); return; }
+    autosaveDue = 0;
+    saveCurrentWorkspace(false);
+  }
+  // One write at a time: a save requested while one is running goes after it
+  // (the newest state wins, and two writers never race on the same file).
+  let saveRun = null, saveNext = null;
+  function saveCurrentWorkspace(manual) {
+    if (saveRun) {
+      // a request is for the workspace open now; one queued for another is superseded
+      const same = saveNext && saveNext.ws === state.ws;
+      saveNext = { ws: state.ws, manual: !!manual || !!(same && saveNext.manual) };
+      return saveRun;
+    }
+    saveRun = saveWorkspaceNow(manual).catch(() => {}).finally(() => {
+      saveRun = null;
+      const n = saveNext; saveNext = null;
+      if (n && n.ws != null && n.ws === state.ws) saveCurrentWorkspace(n.manual);
+    });
+    return saveRun;
+  }
   // 3-state light: grey = autosave off, red = unsaved changes, blue = autosave on
   function setSaveState() {
     const el = $('#save-status');
@@ -6574,14 +6985,16 @@
       });
   }
 
-  async function saveCurrentWorkspace(manual) {
+  async function saveWorkspaceNow(manual) {
     if (state.ws == null) return;
-    const rec = await DB.getHandleRec(state.ws);
+    const wsId = state.ws;                         // this write is for this workspace, whatever happens meanwhile
+    const rec = await DB.getHandleRec(wsId);
     if (SHELL && rec && rec.path) {                 // app shell: write straight to the path
       try {
-        const payload = await workspacePayload(state.ws);
+        const payload = await workspacePayload(wsId);
         await NGShell.writeFile(rec.path, JSON.stringify(payload));
-        state.dirty = false; setSaveState(); saveFailShown = false;
+        if (state.ws === wsId) { state.dirty = false; setSaveState(); }
+        saveFailShown = false;
       } catch (e) {
         reportSaveFailure(e, manual, rec.path);
       }
@@ -6605,10 +7018,10 @@
       return;
     }
     try {
-      const payload = await workspacePayload(state.ws);
+      const payload = await workspacePayload(wsId);
       await writeToHandle(rec.handle, payload);
-      state.dirty = false;
-      setSaveState(); saveFailShown = false;
+      if (state.ws === wsId) { state.dirty = false; setSaveState(); }
+      saveFailShown = false;
     } catch (e) {
       reportSaveFailure(e, manual, (rec.handle && rec.handle.name) || '');
     }
@@ -6619,7 +7032,8 @@
     scheduleOutline();
     if (state.autosave) {
       clearTimeout(autoSaveTimer);
-      autoSaveTimer = setTimeout(() => saveCurrentWorkspace(false), 900);
+      if (!autosaveDue) autosaveDue = Date.now() + 10000;
+      autoSaveTimer = setTimeout(autosaveTick, 900);
     } else {
       state.dirty = true;
     }
@@ -6695,13 +7109,19 @@
   function stopTyping() { clearTimeout(typeTimer); const el = $('#hero-tag'); if (el) el.classList.remove('typing'); }
 
   async function goHome() {
+    dropLiveGestures(); lastInk = null;
+    await inkWrites;                          // a stroke still being written is recorded before the history goes
+    saveNext = null;                          // a save queued for this workspace does not fire in the next
     state.ws = null; state.wsName = '';
     clearHistory();
     closeDrawer(); hideSearchResults(); closeSearch();
     $('#menu').hidden = true; $('#add-menu').hidden = true; $('#brand-menu').hidden = true;
     if (state.linkMode) setLinkMode(false);
     if (state.penMode) setPenMode(false);
-    clearTimeout(autoSaveTimer);
+    if (state.penEraser) setEraser(false, true);
+    if (state.selectTool) setSelectMode(false);
+    clearTimeout(autoSaveTimer); autoSaveTimer = null; autosaveDue = 0;
+    fileDataCache.clear(); fileDataBytes = 0; _mmImgCache.clear();
     state.dirty = false;
     setSaveState('', '');
     document.getElementById('app').classList.add('home-mode');
@@ -6715,6 +7135,9 @@
   async function openWorkspace(id) {
     const w = await DB.getWorkspace(id);
     if (!w) return;
+    dropLiveGestures(); lastInk = null;
+    await inkWrites;                          // nothing from the old page lands in the new history
+    fileDataCache.clear(); fileDataBytes = 0; _mmImgCache.clear();
     state.ws = id; state.wsName = w.name;
     applyPaper(w.paper);
     clearHistory();
@@ -7547,10 +7970,9 @@
     // pointerrawupdate fires as soon as the digitiser reports, ahead of the
     // throttled pointermove — the lowest-latency input the web offers.
     if ('onpointerrawupdate' in window) {
-      stage.addEventListener('pointerrawupdate', (e) => { if (inking) addInkSamples(e); });
+      window.addEventListener('pointerrawupdate', (e) => { if (inking) addInkSamples(e, true); });
     }
     window.addEventListener('resize', () => { if (inking) { sizeInkSurface(); redrawInkStroke(); } });
-    bindDrawTapGestures();
 
     $('#btn-theme').addEventListener('click', () =>
       setTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'));
@@ -7569,19 +7991,27 @@
     // a touch pointer can leak — the next single finger then reads as a 2-finger
     // pinch and panning "stops working". Reset all gesture state on interruption.
     const resetGestures = () => {
-      pointers.clear(); pinch = null;
+      // every pointer-owned gesture is abandoned: moves and handle drags revert
+      const owners = new Set(pointers.keys());
+      for (const g of [dragging, panning, gizmo, colResize, rowResize, marquee]) if (g && g.pointerId != null) owners.add(g.pointerId);
+      for (const pid of owners) abandonPointer(pid);
+      pointers.clear(); pinch = null; flushInv();
       if (dragging) { state.els[dragging.primary]?.classList.remove('dragging'); dragging = null; }
       if (panning) { stage.classList.remove('panning'); panning = null; }
+      gizmo = null; colResize = null; rowResize = null;
+      if (marquee) endMarquee();
       clearTimeout(lpTimer); lpTimer = null; lpFired = false;
-      colResize = null; rowResize = null; erasing = null; commitEraseBatch();
-      if (inking) {
-        try { stage.releasePointerCapture(inking.pointerId); } catch (_) {}
-        clearInkSurface(); inking = null;                    // drop a half-drawn stroke
-      }
-      if (lasso) { lasso.path.remove(); lasso = null; }
+      if (selScale) cancelSelScale();                          // a lost grip drag reverts
+      selFrameBox = null;
+      dropLiveGestures();                                      // drop a half-drawn stroke / sweep / loop
     };
     window.addEventListener('blur', resetGestures);
-    document.addEventListener('visibilitychange', () => { if (document.hidden) resetGestures(); });
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) return;
+      resetGestures();
+      // the app is going away: a pending autosave is written now, not later
+      if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null; autosaveDue = 0; saveCurrentWorkspace(false); }
+    });
 
     // Phone bottom sheets: a drag grip at the top of every editor panel lets the
     // user stretch the sheet taller or shorter. Height is shared across panels.

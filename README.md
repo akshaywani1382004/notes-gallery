@@ -39,7 +39,7 @@ canvas of blocks/lists/files.
 
 | Action | Do this |
 |---|---|
-| Add a block | Click **Block**, double-click empty canvas, or press `N` |
+| Add a block | Click **Block** (Add menu) or press `N` |
 | Move a block | Drag it |
 | Pan the canvas | Drag empty space (one finger on phone) |
 | Zoom | Mouse wheel, pinch, or the zoom buttons |
