@@ -7637,6 +7637,7 @@
   // called after any edit; schedules a save (autosave) or flags dirty (manual)
   function markChanged() {
     if (state.ws == null) return;
+    if (!previewFlagged.has(state.ws)) flagPreviewStale(state.ws);   // the card's snapshot is behind the page now
     mmDirty = true; scheduleMinimap();
     scheduleOutline();
     if (state.autosave) {
@@ -7718,6 +7719,7 @@
   function stopTyping() { clearTimeout(typeTimer); const el = $('#hero-tag'); if (el) el.classList.remove('typing'); }
 
   async function goHome() {
+    const leaving = state.ws;                 // its card gets a fresh snapshot once the home is up
     dropLiveGestures(); lastInk = null;
     await inkWrites;                          // a stroke still being written is recorded before the history goes
     saveNext = null;                          // a save queued for this workspace does not fire in the next
@@ -7739,11 +7741,13 @@
     saveLoc();
     await renderHome();
     startTyping();
+    if (leaving) queuePreview(leaving, true);
   }
 
   async function openWorkspace(id) {
     const w = await DB.getWorkspace(id);
     if (!w) return;
+    const leaving = state.ws !== id ? state.ws : null;   // switching pages: the old one's card is redrawn after the load
     dropLiveGestures(); lastInk = null;
     await inkWrites;                          // nothing from the old page lands in the new history
     fileDataCache.clear(); fileDataBytes = 0; _mmImgCache.clear();
@@ -7759,6 +7763,7 @@
     initNav(DB.ROOT);
     state.dirty = false;
     refreshSaveUi();
+    if (leaving) queuePreview(leaving, true);
   }
 
   async function renderHome() {
@@ -7771,11 +7776,8 @@
     const grid = $('#ws-grid');
     const wss = await DB.listWorkspaces();
     wss.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-    const counts = {}, tops = {};
-    await Promise.all(wss.map(async w => {
-      const all = await DB.allByWs('blocks', w.id);
-      counts[w.id] = all.length; tops[w.id] = all.filter(b => b.parentId === '__root__');
-    }));
+    const counts = {};
+    await Promise.all(wss.map(async w => { counts[w.id] = (await DB.allByWs('blocks', w.id)).length; }));
     grid.innerHTML = '';
     let idx = 0;
     for (const w of wss) {
@@ -7794,52 +7796,316 @@
             <button data-wact="delete" title="Delete">${ic('trash')}</button>
           </div>
         </div>
-        <div class="ws-thumb-wrap"><canvas class="ws-thumb" width="480" height="264"></canvas></div>
+        <div class="ws-thumb-wrap"><img class="ws-thumb" alt="" draggable="false"></div>
         <div class="ws-name">${esc(w.name || 'Untitled')}</div>
         <div class="ws-meta">${n} block${n === 1 ? '' : 's'}</div>`;
+      if (w.preview) card.querySelector('.ws-thumb').src = w.preview;   // the stored snapshot, at once
       grid.appendChild(card);
-      drawWsThumb(card.querySelector('.ws-thumb'), tops[w.id] || [], w.color || PALETTE[0]);
     }
     const add = document.createElement('button');
     add.className = 'ws-add'; add.id = 'ws-add'; add.style.setProperty('--i', idx);
     add.innerHTML = `${ic('plus')}<span>New workspace</span>`;
     grid.appendChild(add);
+    queueStalePreviews(wss, currentTheme());   // missing / stale / other-theme snapshots, one after another
   }
 
-  // A miniature of the workspace's top page for its card: block footprints
-  // only, drawn once when the landing screen renders (decorative).
-  function drawWsThumb(cv, blocks, color) {
-    if (!cv) return;
-    const ctx = cv.getContext('2d'); if (!ctx) return;
-    const W = cv.width, H = cv.height;
-    ctx.clearRect(0, 0, W, H);
-    if (!blocks.length) return;
+  /* ----------------------- workspace card previews ---------------------- *
+   * A card shows a snapshot of the workspace's top page: the stored records
+   * rendered into a small JPEG that lives on the workspace record (preview,
+   * previewAt, previewTheme; previewStale marks a page edited since). It is
+   * rendered when the user LEAVES a workspace, or lazily on the home for a
+   * card whose snapshot is missing, stale or in the other theme - never
+   * while working: nothing here runs on the canvas paths.                  */
+  const PREVIEW_W = 480, PREVIEW_H = 264, PREVIEW_PAD = 24, PREVIEW_MAX_SCALE = 0.5, PREVIEW_MAX_IMAGES = 24;
+  const previewFlagged = new Set();   // workspaces whose record already says previewStale (one write per visit)
+  const previewQueue = [];            // [{ id, force }]: force = the page just left; the rest is the home's pass
+  let previewBusy = false;
+  const currentTheme = () => document.documentElement.getAttribute('data-theme') || 'dark';
+
+  function previewTokens() {
     const cs = getComputedStyle(document.documentElement);
-    const line = cs.getPropertyValue('--line-3').trim() || 'rgba(255,255,255,.18)';
-    const fill = cs.getPropertyValue('--bg-3').trim() || '#16181A';
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    const rects = blocks.slice(0, 400).map(b => {
-      const text = b.kind === 'text', check = b.kind === 'check';
-      const w = b.w || (text ? 120 : check ? 24 : 220), h = b.h || (text ? 28 : check ? 24 : 110);
-      const x = b.x || 0, y = b.y || 0;
-      x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x + w); y1 = Math.max(y1, y + h);
-      return { x, y, w, h, ink: b.kind === 'ink', plain: text || check || b.kind === 'shape' || b.kind === 'image' };
-    });
-    const pad = 36, s = Math.min((W - 2 * pad) / Math.max(1, x1 - x0), (H - 2 * pad) / Math.max(1, y1 - y0), 0.6);
-    const ox = (W - (x1 - x0) * s) / 2 - x0 * s, oy = (H - (y1 - y0) * s) / 2 - y0 * s;
-    ctx.lineWidth = 1;
-    for (const r of rects) {
-      const x = ox + r.x * s, y = oy + r.y * s, w = Math.max(3, r.w * s), h = Math.max(3, r.h * s);
-      if (r.ink) {
-        ctx.globalAlpha = .6; ctx.strokeStyle = color; ctx.beginPath();
-        ctx.moveTo(x, y + h); ctx.quadraticCurveTo(x + w / 2, y, x + w, y + h * .6); ctx.stroke(); continue;
-      }
-      ctx.globalAlpha = 1; ctx.fillStyle = fill; ctx.strokeStyle = line; ctx.beginPath();
-      if (ctx.roundRect) ctx.roundRect(x, y, w, h, Math.min(4, h / 3)); else ctx.rect(x, y, w, h);
-      ctx.fill(); ctx.stroke();
-      if (!r.plain) { ctx.fillStyle = color; ctx.globalAlpha = .9; ctx.fillRect(x, y, Math.min(2, w), h); }
+    const tok = (n, d) => (cs.getPropertyValue(n) || '').trim() || d;
+    return {
+      bg1: tok('--bg-1', '#0C0D0F'), bg2: tok('--bg-2', '#101113'), bg3: tok('--bg-3', '#16181A'),
+      line2: tok('--line-2', 'rgba(255,255,255,.12)'), line3: tok('--line-3', 'rgba(255,255,255,.18)'),
+      text1: tok('--text-1', '#F2F3F4'), text2: tok('--text-2', '#9BA1A6'),
+      paperDot: tok('--paper-dot', 'rgba(255,255,255,.055)'), paperGrid: tok('--paper-grid', 'rgba(255,255,255,.035)'),
+      paperLine: tok('--paper-line', 'rgba(255,255,255,.045)'),
+      font: tok('--font', 'system-ui, sans-serif'),
+    };
+  }
+  // A block's footprint from its record alone (the page is not on screen).
+  function previewRect(b) {
+    const x = b.x || 0, y = b.y || 0;
+    if (b.kind === 'ink') return inkBox(b);
+    if (b.kind === 'text') {
+      const size = b.size || 20, lines = String(b.text || 'Text').split('\n');
+      let len = 1; for (const l of lines) len = Math.max(len, l.length);
+      return { x, y, w: b.w || Math.max(120, Math.round(len * size * 0.55)), h: Math.max(28, Math.round(lines.length * size * 1.3)) };
     }
+    if (b.kind === 'check') { const n = b.size || 28; return { x, y, w: n, h: n }; }
+    if (b.kind === 'shape') return { x, y, w: b.w || 150, h: b.h || 100 };
+    if (b.kind === 'image') return { x, y, w: b.w || 200, h: b.h || 150 };
+    if (b.kind === 'table') {
+      const rows = Array.isArray(b.rows) ? b.rows : [];
+      const cols = rows.reduce((m, r) => Math.max(m, r.length), 0);
+      return { x, y, w: b.w || Math.max(120, cols * 96), h: b.h || Math.max(40, rows.length * 30 + (b.title ? 32 : 0)) };
+    }
+    return { x, y, w: b.w || 220, h: b.h || 110 };
+  }
+  // Paint order = what the DOM shows: an explicit z wins, drawing sits above the page otherwise.
+  const previewZ = (b) => b.z || (b.kind === 'ink' ? INK_Z : 0);
+  function loadPreviewImage(src) {
+    return new Promise((res) => {
+      const im = new Image();
+      const done = (ok) => { clearTimeout(t); res(ok ? im : null); };
+      const t = setTimeout(() => done(false), 4000);
+      im.onload = () => done(true); im.onerror = () => done(false);
+      im.src = src;
+    });
+  }
+  // The page's paper (screen-spaced on the page too), so the picture reads as the page.
+  function drawPreviewPaper(ctx, paper, W, H, T) {
+    if (paper === 'blank') return;
+    ctx.lineWidth = 1;
+    if (paper === 'grid') {
+      ctx.strokeStyle = T.paperGrid; ctx.beginPath();
+      for (let x = 13; x < W; x += 13) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+      for (let y = 13; y < H; y += 13) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
+      ctx.stroke(); return;
+    }
+    if (paper === 'lines') {
+      ctx.strokeStyle = T.paperLine; ctx.beginPath();
+      for (let y = 15; y < H; y += 15) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
+      ctx.stroke(); return;
+    }
+    ctx.fillStyle = T.paperDot;
+    for (let y = 6; y < H; y += 13) for (let x = 6; x < W; x += 13) ctx.fillRect(x, y, 1, 1);
+  }
+  // The top page of a workspace as a JPEG data URL, from its records: root
+  // blocks fitted into the frame (scale capped, so a small page stays small),
+  // connectors underneath, everything in z order, in the current theme.
+  async function renderWorkspacePreview(w, blocks, edges) {
+    const W = PREVIEW_W, H = PREVIEW_H, T = previewTokens();
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = T.bg1; ctx.fillRect(0, 0, W, H);
+    drawPreviewPaper(ctx, (w && w.paper) || 'dots', W, H, T);
+    blocks = (blocks || []).filter(b => b && b.parentId === DB.ROOT);
+    if (blocks.length) {
+      const rects = new Map();
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const b of blocks) {
+        const r = previewRect(b); rects.set(b.id, r);
+        x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y); x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h);
+      }
+      const s = Math.min((W - 2 * PREVIEW_PAD) / Math.max(1, x1 - x0), (H - 2 * PREVIEW_PAD) / Math.max(1, y1 - y0), PREVIEW_MAX_SCALE);
+      const ox = (W - (x1 - x0) * s) / 2 - x0 * s, oy = (H - (y1 - y0) * s) / 2 - y0 * s;
+      // pictures first: decoding them is the only wait in here
+      const imgs = new Map();
+      const withSrc = blocks.filter(b => b.kind === 'image' && b.src).slice(0, PREVIEW_MAX_IMAGES);
+      if (withSrc.length) await Promise.all(withSrc.map(b => loadPreviewImage(b.src).then(im => { if (im) imgs.set(b.id, im); })));
+      // connectors under the blocks, centre to centre
+      ctx.strokeStyle = T.line3; ctx.lineWidth = 1; ctx.beginPath();
+      for (const e of (edges || [])) {
+        const a = rects.get(e.from), c = rects.get(e.to);
+        if (!a || !c) continue;
+        ctx.moveTo(ox + (a.x + a.w / 2) * s, oy + (a.y + a.h / 2) * s);
+        ctx.lineTo(ox + (c.x + c.w / 2) * s, oy + (c.y + c.h / 2) * s);
+      }
+      ctx.stroke();
+      const ordered = blocks.map((b, i) => ({ b, i })).sort((p, q) => (previewZ(p.b) - previewZ(q.b)) || (p.i - q.i));
+      for (const { b } of ordered) drawPreviewNode(ctx, b, rects.get(b.id), ox, oy, s, T, imgs);
+    }
+    return cv.toDataURL('image/jpeg', 0.82);
+  }
+  // One block, the way the page draws it, at preview scale.
+  function drawPreviewNode(ctx, b, r, ox, oy, s, T, imgs) {
+    const x = ox + r.x * s, y = oy + r.y * s, w = Math.max(1, r.w * s), h = Math.max(1, r.h * s);
+    const col = b.color || PALETTE[0];
+    ctx.save();
     ctx.globalAlpha = 1;
+    if (b.rot && b.kind !== 'ink') { const cx = x + w / 2, cy = y + h / 2; ctx.translate(cx, cy); ctx.rotate(b.rot * Math.PI / 180); ctx.translate(-cx, -cy); }
+    if (b.kind === 'ink') {
+      const st = PEN_STYLES[b.style] || PEN_STYLES.pen;
+      const pts = inkWorldPts(b);
+      if (pts.length) {
+        ctx.globalAlpha = st.opacity;
+        ctx.strokeStyle = col; ctx.lineWidth = Math.max(0.8, (b.width || 3) * s);
+        ctx.lineCap = ctx.lineJoin = 'round';
+        ctx.beginPath();
+        ctx.moveTo(ox + pts[0][0] * s, oy + pts[0][1] * s);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(ox + pts[i][0] * s, oy + pts[i][1] * s);
+        if (pts.length === 1) ctx.lineTo(ox + pts[0][0] * s + 0.1, oy + pts[0][1] * s);   // a dot
+        ctx.stroke();
+      }
+    } else if (b.kind === 'shape') {
+      const fill = b.fill ? col : null;
+      const stroke = b.outline ? (b.outlineColor || PALETTE[0]) : null;
+      if (b.shape === 'line') {
+        ctx.strokeStyle = b.outlineColor || col; ctx.lineWidth = Math.max(0.8, (b.outlineW || 4) * s); ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(x, y + h / 2); ctx.lineTo(x + w, y + h / 2); ctx.stroke();
+      } else {
+        ctx.lineWidth = Math.max(0.8, (b.outlineW || 2) * s);
+        if (b.shape === 'circle' || b.shape === 'ellipse') { ctx.beginPath(); ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2); }
+        else {
+          const pts = b.shape === 'diamond' ? [[0.5, 0], [1, 0.5], [0.5, 1], [0, 0.5]] : shapePoints(b);
+          if (pts) { ctx.beginPath(); pts.forEach((p, i) => { const px = x + p[0] * w, py = y + p[1] * h; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }); ctx.closePath(); }
+          else roundRectPath(ctx, x, y, w, h, 8 * s);
+        }
+        if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+        if (stroke) { ctx.strokeStyle = stroke; ctx.stroke(); }
+        if (!fill && !stroke) { ctx.strokeStyle = col; ctx.stroke(); }
+      }
+    } else if (b.kind === 'text') {
+      const lines = String(b.text || 'Text').split('\n');
+      const fs = (b.size || 20) * s, lh = fs * 1.3;
+      const tc = b.color || T.text1;
+      const align = b.align === 'center' ? 'center' : (b.align === 'right' ? 'right' : 'left');
+      const tx = align === 'center' ? x + w / 2 : (align === 'right' ? x + w : x);
+      if (b.w) { ctx.beginPath(); ctx.rect(x - 1, y - 1, w + 2, Math.max(h, lines.length * lh) + 2); ctx.clip(); }
+      ctx.fillStyle = tc;
+      const n = Math.min(lines.length, Math.ceil(PREVIEW_H / Math.max(1, lh)) + 1);
+      if (fs >= 4) {
+        ctx.font = `${b.italic ? 'italic ' : ''}${b.bold ? '700' : '400'} ${fs}px ${FONT_STACK[b.font] || FONT_STACK.sans}`;
+        ctx.textBaseline = 'top'; ctx.textAlign = align;
+        for (let i = 0; i < n; i++) ctx.fillText(lines[i], tx, y + i * lh);
+      } else {                                                   // too small to read: grey bars, one per line
+        ctx.fillStyle = b.color || T.text2; ctx.globalAlpha = 0.7;
+        const bh = Math.max(1, fs * 0.6);
+        for (let i = 0; i < Math.min(n, 8); i++) {
+          const bw = Math.max(3, Math.min(w, lines[i].length * fs * 0.55));
+          ctx.fillRect(align === 'center' ? tx - bw / 2 : (align === 'right' ? tx - bw : tx), y + i * lh, bw, bh);
+        }
+      }
+    } else if (b.kind === 'check') {
+      roundRectPath(ctx, x, y, w, h, w * 0.22);
+      if (b.checked) {
+        ctx.fillStyle = col; ctx.fill();
+        if (w >= 6) {
+          const k = w / 24;
+          ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(1, 3.2 * k); ctx.lineCap = ctx.lineJoin = 'round';
+          ctx.beginPath(); ctx.moveTo(x + 6.5 * k, y + 12.5 * k); ctx.lineTo(x + 10.1 * k, y + 16.1 * k); ctx.lineTo(x + 17.5 * k, y + 7.9 * k); ctx.stroke();
+        }
+      } else {
+        ctx.fillStyle = T.bg3; ctx.fill();
+        ctx.strokeStyle = T.line2; ctx.lineWidth = 1; ctx.stroke();
+      }
+    } else if (b.kind === 'image') {
+      const im = imgs.get(b.id);
+      ctx.save();
+      roundRectPath(ctx, x, y, w, h, b.round ? 12 * s : 0); ctx.clip();
+      if (im) {
+        // object-fit: cover, like the page
+        const iw = im.naturalWidth || 1, ih = im.naturalHeight || 1, k = Math.max(w / iw, h / ih);
+        const dw = iw * k, dh = ih * k;
+        try { ctx.drawImage(im, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh); } catch (_) { ctx.fillStyle = T.bg3; ctx.fillRect(x, y, w, h); }
+      } else { ctx.fillStyle = T.bg3; ctx.fillRect(x, y, w, h); ctx.strokeStyle = T.line2; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1); }
+      ctx.restore();
+      if (b.outline) { ctx.strokeStyle = b.outlineColor || PALETTE[0]; ctx.lineWidth = Math.max(0.8, (b.outlineW || 2) * s); roundRectPath(ctx, x, y, w, h, b.round ? 12 * s : 0); ctx.stroke(); }
+    } else if (b.kind === 'table') {
+      const rows = Array.isArray(b.rows) ? b.rows : [];
+      const nr = rows.length, nc = rows.reduce((m, rw) => Math.max(m, rw.length), 0);
+      roundRectPath(ctx, x, y, w, h, Math.min(12 * s, w / 2, h / 2));
+      ctx.fillStyle = T.bg2; ctx.fill();
+      ctx.save(); ctx.clip();
+      const gr = Math.min(6, Math.max(1, nr)), gc = Math.min(6, Math.max(1, nc));
+      if (nr && b.header !== false) { ctx.fillStyle = T.bg3; ctx.fillRect(x, y, w, h / gr); }
+      ctx.strokeStyle = T.line2; ctx.lineWidth = 1; ctx.beginPath();
+      for (let i = 1; i < gr; i++) { const yy = y + h * i / gr; ctx.moveTo(x, yy); ctx.lineTo(x + w, yy); }
+      for (let j = 1; j < gc; j++) { const xx = x + w * j / gc; ctx.moveTo(xx, y); ctx.lineTo(xx, y + h); }
+      ctx.stroke();
+      ctx.restore();
+      roundRectPath(ctx, x, y, w, h, Math.min(12 * s, w / 2, h / 2)); ctx.strokeStyle = T.line2; ctx.stroke();
+    } else {
+      // block / list card: the surface, its accent bar, the colour tile and the title
+      const rr = Math.min(12 * s, w / 2, h / 2);
+      roundRectPath(ctx, x, y, w, h, rr);
+      ctx.fillStyle = T.bg2; ctx.fill();
+      ctx.strokeStyle = T.line2; ctx.lineWidth = 1; ctx.stroke();
+      ctx.clip();                                                  // bar and title stay inside the card
+      ctx.fillStyle = col;
+      ctx.fillRect(x, y, Math.min(2, w), h);
+      const t = 32 * s;
+      roundRectPath(ctx, x + 16 * s, y + 14 * s, t, t, 8 * s); ctx.fill();
+      const fs = 15 * s, tx = x + 59 * s, ty = y + 30 * s, title = b.title || 'Untitled block';
+      if (fs >= 5) {
+        ctx.font = `500 ${fs}px ${T.font}`; ctx.fillStyle = T.text1; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+        ctx.fillText(title, tx, ty);
+      } else {
+        ctx.fillStyle = T.line3;
+        ctx.fillRect(tx, ty - 1, Math.max(4, Math.min(w - 75 * s, title.length * 8 * s)), 2);
+      }
+    }
+    ctx.restore();
+  }
+
+  // Store a snapshot on the record, re-read right before the write so a
+  // concurrent property edit is never clobbered.
+  async function storeWorkspacePreview(wsId, dataUrl, theme) {
+    const w = await DB.getWorkspace(wsId);
+    if (!w) return null;
+    w.preview = dataUrl; w.previewAt = Date.now(); w.previewTheme = theme;
+    delete w.previewStale;
+    await DB.saveWorkspace(w);
+    previewFlagged.delete(wsId);
+    return w;
+  }
+  // Render and store one workspace's snapshot from its DB records; the
+  // home's card (when showing) gets the new picture. Skipped while that
+  // workspace is open: leaving it renders a fresh one anyway.
+  async function snapshotWorkspace(wsId) {
+    if (state.ws === wsId) return null;
+    const [w, blocks, edges] = await Promise.all([DB.getWorkspace(wsId), DB.allByWs('blocks', wsId), DB.levelEdges(DB.ROOT, wsId)]);
+    if (!w || state.ws === wsId) return null;
+    const theme = currentTheme();
+    const t0 = performance.now();
+    const url = await renderWorkspacePreview(w, blocks.filter(b => b.parentId === DB.ROOT), edges);
+    if (NG.Diag) NG.Diag.metrics.preview = { ws: wsId, renderMs: performance.now() - t0, blocks: blocks.length, bytes: url.length, at: performance.now() };
+    if (state.ws === wsId) return null;                          // re-entered while it rendered
+    const rec = await storeWorkspacePreview(wsId, url, theme);
+    if (rec) { const img = wsCardThumb(wsId); if (img) img.src = url; }
+    return rec;
+  }
+  function wsCardThumb(wsId) {
+    const grid = $('#ws-grid'); if (!grid) return null;
+    for (const c of grid.children) if (c.dataset && c.dataset.ws === wsId) return c.querySelector('img.ws-thumb');
+    return null;
+  }
+  // One render at a time. `force` is the page just left: it goes first and
+  // runs wherever the user is now; the home's own pass stops the moment the
+  // home is no longer showing (the user is working).
+  function queuePreview(id, force) {
+    if (!id) return;
+    const i = previewQueue.findIndex(q => q.id === id);
+    if (i >= 0) { if (!force) return; previewQueue.splice(i, 1); }
+    if (force) previewQueue.unshift({ id, force: true }); else previewQueue.push({ id, force: false });
+    if (!previewBusy) { previewBusy = true; setTimeout(runPreviewQueue, 0); }
+  }
+  async function runPreviewQueue() {
+    try {
+      while (previewQueue.length) {
+        const job = previewQueue.shift();
+        if (!job.force && $('#home').hidden) continue;
+        try { await snapshotWorkspace(job.id); } catch (e) { console.warn('preview:', e); }
+        await new Promise(r => setTimeout(r, 0));                // let the page breathe between renders
+      }
+    } finally { previewBusy = false; }
+  }
+  // Every card whose snapshot is missing, stale or from the other theme.
+  function queueStalePreviews(wss, theme) {
+    for (const w of wss) if (!w.preview || w.previewStale || w.previewTheme !== theme) queuePreview(w.id, false);
+  }
+  // The page differs from its card now: say so on the record once per visit
+  // (one write), so the home redraws it even when this visit never ends
+  // through goHome (a refresh, a closed tab).
+  function flagPreviewStale(wsId) {
+    previewFlagged.add(wsId);
+    DB.getWorkspace(wsId).then(w => {
+      if (!w || w.previewStale) return undefined;
+      w.previewStale = true;
+      return DB.saveWorkspace(w);
+    }).catch(() => {});
   }
 
   async function newWorkspaceFlow() {
@@ -8152,6 +8418,8 @@
     $('#btn-theme').innerHTML = ic(theme === 'dark' ? 'moon' : 'sun');
     try { localStorage.setItem('bn-theme', theme); } catch (_) {}
     mmDirty = true; scheduleMinimap();                  // the mini-map bitmap holds the old theme's colours
+    const home = $('#home');                            // so do the cards' snapshots
+    if (home && !home.hidden) DB.listWorkspaces().then(wss => queueStalePreviews(wss, theme)).catch(() => {});
   }
   function initTheme() {
     let t;
