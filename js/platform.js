@@ -69,5 +69,27 @@
     },
 
     basename(path) { return String(path).split(/[\\/]/).pop(); },
+
+    // ---- Android ink host (MainActivity.kt NgHost, injected as window.NGHost
+    // before the first page load). Only the Android app has it: on Windows and
+    // on the website it is null, so every call below is a guarded no-op.
+    host: window.NGHost || null,
+
+    // Pen or eraser tool active -> ask the panel for 120 Hz; off restores the
+    // default. Never a static hint.
+    setInking(on) {
+      try { if (window.NGHost && window.NGHost.setInking) window.NGHost.setInking(!!on); } catch (_) {}
+    },
+
+    // Kill switch for unbuffered stylus dispatch; the host persists it.
+    setUnbuffered(on) {
+      try { if (window.NGHost && window.NGHost.setUnbuffered) window.NGHost.setUnbuffered(!!on); } catch (_) {}
+    },
+
+    // { unbuffered, refresh, sdk } from the host, or null when there is none.
+    hostInfo() {
+      try { return window.NGHost && window.NGHost.info ? JSON.parse(window.NGHost.info()) : null; }
+      catch (_) { return null; }
+    },
   };
 })();

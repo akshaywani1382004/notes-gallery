@@ -333,6 +333,27 @@ input, textarea { font-size: 15px; }
   z-index: 6; pointer-events: none; display: none; contain: paint;
 }
 #stage.penning .ink-live { display: block; }
+/* While the pen tool is up the live canvas is the pointer-down target: a pen
+   landing on a desynchronized canvas lets Chromium stop aligning its moves to
+   animation frames (lowest latency). The eraser keeps blocks hit-testable. */
+#stage.penning:not(.erasing) .ink-live { pointer-events: auto; }
+/* selection outlines for large selections, float bitmaps, lock badges */
+.ink-ui { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 4; pointer-events: none; }
+/* many blocks moving together are lifted into one transformed container */
+#lift { position: absolute; left: 0; top: 0; will-change: transform; }
+#world.many-sel .block.block-ink.selected .ink-svg { outline: none; }
+/* diagnostics overlay */
+.diag { position: absolute; right: 12px; bottom: 56px; z-index: 9; pointer-events: none; min-width: 260px; max-width: 340px;
+  padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--panel) 82%, transparent);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border: 1px solid var(--line); box-shadow: var(--shadow-lg);
+  font: 11px/1.45 ui-monospace, Menlo, Consolas, monospace; color: var(--text); white-space: pre-wrap; }
+.diag button, .diag label, .diag input { pointer-events: auto; }
+.diag .diag-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.diag button { font: 11px ui-monospace, Menlo, Consolas, monospace; padding: 3px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); cursor: pointer; }
+.diag button.on { border-color: var(--accent); color: var(--accent); }
+.diag .warn { color: #e0a030; }
+.diag .bad { color: #e35d5d; }
+.diag .ok { color: #43c07a; }
 
 /* ---- paper styles: the surface you write on ---- */
 #stage[data-paper="grid"] {

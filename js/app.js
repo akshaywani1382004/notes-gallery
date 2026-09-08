@@ -440,7 +440,8 @@
   }
 
   function applyView() {
-    if (inking) { inking.rect = stage.getBoundingClientRect(); redrawInkStroke(); }
+    if (inking) inking.sampler.rect = inking.rect = stage.getBoundingClientRect();
+    if (NG.wet.pending.length) redrawInkStroke();
     const { scale, tx, ty } = state.view;
     world.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
     // The handles' counter-scale is a custom property on #world, and changing
@@ -455,6 +456,7 @@
     stage.style.backgroundPosition = `${tx}px ${ty}px`;
     positionSelBar();
     positionSelFrame();
+    if (NG.Overlay) NG.Overlay.draw();
     const pct = Math.round(scale * 100) + '%';
     $('#btn-zoom-reset').textContent = pct;
     scheduleMinimap();
@@ -532,6 +534,8 @@
     // wipe existing block nodes (keep the svg)
     $$('.block', world).forEach(n => n.remove());
     state.els = {};
+    prevSel = new Set();
+    mmDirty = true; mmContent = null;
     for (const b of state.blocks) world.appendChild(makeBlockEl(b));
   }
 
@@ -961,7 +965,7 @@
   }
   function drawEdges() {
     if (state.levelLayout === 'list') return;
-    scheduleMinimap();
+    mmDirty = true; scheduleMinimap();
     $$('g.edge-g', svg).forEach(n => n.remove());
     for (const e of state.edges) {
       const a = blockRect(e.from), b = blockRect(e.to);
@@ -1611,6 +1615,7 @@
     // the objects (and elements) under a live drag may just have been swapped:
     // the next move re-keys its lookup and redraws edges for the rest of it
     if (dragging) { dragging.byId = null; dragging.touchesEdge = true; }
+    if (NG.Lift && NG.Lift.has()) NG.Lift.refresh(state.els);
     for (const rec of target.blocks) noteParent(rec.parentId);
     for (const f of [...target.files, ...other.files]) noteParent(f.blockId);
     await Promise.all([...parents].filter(pid => here.has(pid)).map(pid => recount(pid)));
@@ -1790,7 +1795,8 @@
     // align/distribute need two; with one item only the style tools apply
     bar.querySelectorAll('[data-align]').forEach(b => { b.disabled = ids.length < 2; });
     bar.querySelector('[data-sel="group"]').disabled = ids.length < 2;
-    bar.querySelector('[data-sel="ungroup"]').disabled = !ids.some(id => { const b = state.blocks.find(x => x.id === id); return b && b.group; });
+    const byId = new Map(state.blocks.map(b => [b.id, b]));
+    bar.querySelector('[data-sel="ungroup"]').disabled = !ids.some(id => { const b = byId.get(id); return b && b.group; });
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     const sr = stage.getBoundingClientRect();
     const fb = liveFrameBox();
@@ -1802,7 +1808,16 @@
       minY = fb.y * sc + state.view.ty + sr.top;
       maxX = minX + fb.w * sc; maxY = minY + fb.h * sc;
     } else {
+      const sc = state.view.scale || 1;
       ids.forEach(id => {
+        const b = byId.get(id);
+        if (b && b.kind === 'ink') {                 // strokes: from data, no layout read
+          const ib = inkBox(b);
+          const l = ib.x * sc + state.view.tx + sr.left, t = ib.y * sc + state.view.ty + sr.top;
+          minX = Math.min(minX, l); maxX = Math.max(maxX, l + ib.w * sc);
+          minY = Math.min(minY, t); maxY = Math.max(maxY, t + ib.h * sc);
+          return;
+        }
         const el = state.els[id]; if (!el) return;
         const r = el.getBoundingClientRect();
         minX = Math.min(minX, r.left); maxX = Math.max(maxX, r.right);
@@ -1834,11 +1849,14 @@
     const sr = stage.getBoundingClientRect();
     const sc = state.view.scale || 1;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const byId = new Map(state.blocks.map(b => [b.id, b]));
     state.selectedIds.forEach(id => {
-      const b = state.blocks.find(x => x.id === id); if (!b) return;
+      const b = byId.get(id); if (!b) return;
       const el = state.els[id];
       let x, y, w, h;
-      if (el) {
+      if (b.kind === 'ink') {                        // strokes: from data, no layout read
+        const ib = inkBox(b); x = ib.x; y = ib.y; w = ib.w; h = ib.h;
+      } else if (el) {
         const r = el.getBoundingClientRect();
         x = (r.left - sr.left - state.view.tx) / sc;
         y = (r.top - sr.top - state.view.ty) / sc;
@@ -1890,6 +1908,7 @@
         pts: b.kind === 'ink' && Array.isArray(b.pts) ? b.pts.map(q => q.slice()) : null,
       })),
     };
+    if (items.length >= 2 && NG.Lift) { NG.Lift.begin(items.map(b => b.id), 'scale', { world, els: state.els }); selScale.lifted = true; }
     try { e.target.setPointerCapture(e.pointerId); } catch (_) {}
   }
 
@@ -1911,6 +1930,14 @@
     const dx = (e.clientX - selScale.startX) / sc, dy = (e.clientY - selScale.startY) / sc;
     const ratio = clamp(((box.w + dx) / box.w + (box.h + dy) / box.h) / 2, 0.02, 200);
     selScale.ratio = ratio;
+    if (selScale.lifted && !selScale.finalizing) {
+      // mid-gesture the whole selection scales as one transform (one style
+      // write); the per-item data below is written once, on release
+      NG.Lift.scale(box.x, box.y, ratio);
+      selScale.box = { x: box.x, y: box.y, w: box.w * ratio, h: box.h * ratio };
+      positionSelFrame();
+      return;
+    }
     for (const it of selScale.items) {
       const b = it.b;
       b.x = Math.round(box.x + (it.x - box.x) * ratio);
@@ -1949,7 +1976,12 @@
   async function endSelScale() {
     if (!selScale) return;
     if (selScale.raf) { cancelAnimationFrame(selScale.raf); selScale.raf = 0; }
-    if (selScale.pendingEvent) applySelScale(selScale.pendingEvent);   // the last move lands
+    if (selScale.lifted) {
+      selScale.finalizing = true;                                       // the per-item data scaling runs once, now
+      if (selScale.pendingEvent) applySelScale(selScale.pendingEvent);
+      NG.Lift.end(true);
+      if (NG.Overlay) NG.Overlay.draw();
+    } else if (selScale.pendingEvent) applySelScale(selScale.pendingEvent);   // the last move lands
     const { items, before, ratio } = selScale;
     selScale = null;
     if (!ratio || Math.abs(ratio - 1) < 0.001) { positionSelFrame(); return; }
@@ -1971,6 +2003,7 @@
       const el = state.els[it.b.id]; if (el) { el.style.left = it.b.x + 'px'; el.style.top = it.b.y + 'px'; }
       refreshBlockCard(it.b.id);
     }
+    if (NG.Lift && NG.Lift.has()) NG.Lift.end(false);
     positionSelFrame(); positionSelBar(); drawEdges();
   }
 
@@ -1992,11 +2025,17 @@
     });
   }
 
+  let prevSel = new Set();
   function applySelectionClasses() {
     // a carried frame box describes the previous selection
     if (selFrameBox && !selScale) selFrameBox = (panning || pinch) ? selectionWorldBox() : null;
     const sel = state.selectedIds;
-    for (const id in state.els) state.els[id].classList.toggle('selected', sel.has(id));
+    // only what changed: the class comes off what left the selection and goes
+    // on what is in it (a replaced element gets it back too)
+    for (const id of prevSel) if (!sel.has(id)) { const el = state.els[id]; if (el) el.classList.remove('selected'); }
+    for (const id of sel) { const el = state.els[id]; if (el && !el.classList.contains('selected')) el.classList.add('selected'); }
+    prevSel = new Set(sel);
+    if (NG.Overlay) NG.Overlay.draw();
     if (state.levelLayout === 'list') $$('.list-row').forEach(n => n.classList.toggle('selected', sel.has(n.dataset.id)));
     // a whole paragraph picked up at once: the per-stroke glow gives way to a
     // light outline (hundreds of blurred surfaces is what made lassos slow)
@@ -3683,8 +3722,9 @@
     const hits = [];
     for (const b of state.blocks) {
       if (b.parentId !== state.level) continue;
-      const el = state.els[b.id]; if (!el) continue;
-      const cx = (b.x || 0) + el.offsetWidth / 2, cy = (b.y || 0) + el.offsetHeight / 2;
+      let cx, cy;
+      if (b.kind === 'ink') { const ib = inkBox(b); cx = ib.x + ib.w / 2; cy = ib.y + ib.h / 2; }
+      else { const el = state.els[b.id]; if (!el) continue; cx = (b.x || 0) + el.offsetWidth / 2; cy = (b.y || 0) + el.offsetHeight / 2; }
       if (pointInPoly(cx, cy, poly)) hits.push(b.id);
     }
     const grown = withGroups(hits);
@@ -4123,83 +4163,41 @@
   }
 
   /* ------------------------- live ink surface --------------------------- *
-   * A canvas the browser may hand us with a low-latency (desynchronized)
-   * path, so a mark reaches the glass in the next scan-out instead of after
-   * a full layout + composite of the page.                                 */
-  let inkCv = null, inkCtx = null, inkDpr = 1;
+   * The wet layer (js/ink/wet.js) owns the desynchronized canvas: clipped
+   * dirty-rect repaints from the same path generator the saved SVG uses, a
+   * predicted tail, and a hand-off that keeps the stroke on the glass until
+   * the committed pixels are on screen. app.js only feeds it samples.       */
+  let inkCv = null;
   function inkSurface() {
-    if (inkCtx) return inkCtx;
-    inkCv = $('#ink-live');
-    if (!inkCv) return null;
-    try { inkCtx = inkCv.getContext('2d', { desynchronized: true, alpha: true }); }
-    catch (_) { inkCtx = inkCv.getContext('2d'); }
-    return inkCtx;
+    if (!inkCv) {
+      inkCv = $('#ink-live');
+      if (inkCv) NG.wet.attach(inkCv, { getView: () => state.view, styles: PEN_STYLES, strokeD: inkStrokeD, centreline: taperCentreline });
+    }
+    return NG.wet.ctx;
   }
-  function sizeInkSurface() {
-    const ctx = inkSurface(); if (!ctx) return;
-    let r = inkCv.getBoundingClientRect();
-    if (!r.width || !r.height) r = stage.getBoundingClientRect();   // not laid out yet
-    inkDpr = Math.min(window.devicePixelRatio || 1, 2.5);   // 2.5 is plenty, and cheaper
-    const w = Math.max(1, Math.round(r.width * inkDpr)), h = Math.max(1, Math.round(r.height * inkDpr));
-    if (inkCv.width !== w || inkCv.height !== h) { inkCv.width = w; inkCv.height = h; }
-    ctx.setTransform(inkDpr, 0, 0, inkDpr, 0, 0);
-  }
-  const clearInkSurface = () => {
-    if (!inkCtx || !inkCv) return;
-    inkCtx.save(); inkCtx.setTransform(1, 0, 0, 1, 0, 0);
-    inkCtx.clearRect(0, 0, inkCv.width, inkCv.height);
-    inkCtx.restore();
-  };
+  function sizeInkSurface() { inkSurface(); NG.wet.size(stage.getBoundingClientRect()); }
   // world -> screen, matching the #world transform
   const wx = (x) => x * state.view.scale + state.view.tx;
   const wy = (y) => y * state.view.scale + state.view.ty;
 
   function beginInkStroke(st) {
-    const ctx = inkSurface(); if (!ctx) return;
-    sizeInkSurface();
-    clearInkSurface();
-    // the highlighter multiplies into the page; the canvas layer must too
-    if (inkCv) inkCv.style.mixBlendMode = st.blend || '';
+    inkSurface(); sizeInkSurface();
     inking.taper = st.taper || 0;
+    NG.wet.begin(inking);
   }
-
-  /* The preview IS the result. Every sample repaints the whole in-progress
-     stroke from the same path generator and the same style attributes the
-     saved SVG uses (brush ribbon, pencil grain, highlighter blend), mapped
-     through the view transform. Nothing is approximated segment by segment,
-     so what is under the nib is exactly what stays on the page.            */
-  function paintLiveStroke() {
-    const ctx = inkCtx; if (!ctx || !inking) return;
-    const st = PEN_STYLES[inking.style] || PEN_STYLES.pen;
-    const pts = inking.pts; if (!pts.length) return;
-    clearInkSurface();
-    const sc = state.view.scale || 1;
-    const path = new Path2D(inkStrokeD(pts, inking.style, inking.width));
-    ctx.save();
-    ctx.setTransform(inkDpr * sc, 0, 0, inkDpr * sc, inkDpr * state.view.tx, inkDpr * state.view.ty);
-    ctx.globalAlpha = st.opacity;
-    if (st.taper > 0) { ctx.fillStyle = inking.color; ctx.fill(path); }
-    else {
-      ctx.strokeStyle = inking.color; ctx.lineWidth = inking.width;
-      ctx.lineCap = st.cap; ctx.lineJoin = 'round';
-      ctx.setLineDash(st.grain ? [inking.width * 1.1, inking.width * 0.55] : []);
-      ctx.stroke(path);
-    }
-    ctx.restore();
-  }
-  const redrawInkStroke = paintLiveStroke;      // the view moved: same picture, new place
+  // the view moved or the canvas was resized: same picture, new place
+  function redrawInkStroke() { if (NG.wet.pending.length) NG.wet.repaintAll(); }
 
   // At most two repaints per display frame: the first sample of a frame goes
   // to the glass at once (the low-latency path); the rest of that frame's
-  // samples land in one trailing paint on the next animation frame. A pen
-  // reporting at 240-360 Hz otherwise repainted the whole stroke per sample.
+  // samples land in one trailing paint on the next animation frame.
   function scheduleLivePaint() {
     const s = inking; if (!s) return;
     if (!s.paintRAF) {
-      paintLiveStroke();
+      NG.wet.paint(s, true);
       s.paintRAF = requestAnimationFrame(() => {
         s.paintRAF = 0;
-        if (s.dirty && inking === s) { s.dirty = false; paintLiveStroke(); }
+        if (s.dirty && inking === s) { s.dirty = false; NG.wet.paint(s, false); }
       });
     } else s.dirty = true;
   }
@@ -4207,9 +4205,11 @@
   // focus): nothing is saved, the glass is wiped, the pointer let go.
   function dropLiveStroke() {
     if (!inking) return;
-    try { stage.releasePointerCapture(inking.pointerId); } catch (_) {}
-    if (inking.paintRAF) cancelAnimationFrame(inking.paintRAF);
-    clearInkSurface(); inking = null;
+    const s = inking; inking = null;
+    try { stage.releasePointerCapture(s.pointerId); } catch (_) {}
+    if (s.paintRAF) { cancelAnimationFrame(s.paintRAF); s.paintRAF = 0; }
+    NG.wet.release(s);
+    NG.emit('stroke:drop', { id: s.pointerId });
   }
 
   // A navigation or workspace change ends every stylus gesture: the stroke is
@@ -4220,38 +4220,14 @@
     if (lasso) { lasso.path.remove(); lasso = null; }
   }
 
-  // Take every sample the digitiser reported. On Chromium each sample arrives
-  // twice: through pointerrawupdate and again inside the next pointermove's
-  // coalesced list. Once the raw channel has delivered for this stroke, the
-  // replay (nothing newer than the last stored sample) is skipped - it used
-  // to append every frame's batch a second time, a backward jog per frame.
+  // Every sample the digitiser reported, taken once: the sampler decides the
+  // stroke's channel from the first move-class event (pointerrawupdate wins;
+  // the following pointermove then only contributes prediction).
   function addInkSamples(e, fromRaw) {
     if (!inking || e.pointerId !== inking.pointerId) return;
-    if (fromRaw) inking.rawSeen = true;
     inking.lastX = e.clientX; inking.lastY = e.clientY;
-    const r = inking.rect;
-    const list = (e.getCoalescedEvents && e.getCoalescedEvents().length) ? e.getCoalescedEvents() : [e];
-    const minStep = 0.7 / (state.view.scale || 1);
-    const taper = inking.taper || 0;
-    let pushed = false;
-    for (const ev of list) {
-      const t = ev.timeStamp || e.timeStamp || performance.now();
-      if (!fromRaw && inking.rawSeen && t <= inking.lastT) continue;   // already taken from the raw channel
-      const p = screenToWorld(ev.clientX - r.left, ev.clientY - r.top);
-      const last = inking.pts[inking.pts.length - 1];
-      if (last && Math.hypot(p.x - last[0], p.y - last[1]) < minStep) continue;
-      // pen velocity in screen px/ms, smoothed so the width does not flicker
-      const dt = Math.max(1, t - (inking.lastT || t - 8));
-      const dist = last ? Math.hypot(p.x - last[0], p.y - last[1]) * (state.view.scale || 1) : 0;
-      const v = dist / dt;
-      inking.vel = inking.vel == null ? v : inking.vel * 0.7 + v * 0.3;
-      inking.lastT = t;
-      const press = inking.pressure ? (ev.pressure || e.pressure || 0.5) : 0;
-      inking.pts.push([Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, press,
-                       taper ? Math.round(nibFactor(inking.vel, press, taper) * 1000) / 1000 : 0]);
-      pushed = true;
-    }
-    if (pushed) scheduleLivePaint();
+    const kept = inking.sampler.consumeEvent(e, fromRaw ? 'raw' : 'move');
+    if (kept || inking.sampler.predicted.length) scheduleLivePaint();
   }
 
   // Smooth ink path (midpoint quadratic curves) — pen strokes render as fluid
@@ -4386,12 +4362,16 @@
       // jump once the stroke ends
       for (const pid of [...pointers.keys()]) abandonPointer(pid);
       clearTimeout(lpTimer); lpTimer = null;
-      inking = { pts: [[p.x, p.y, press0, st0.taper ? nibFactor(0, press0, st0.taper) : 0]],
-                 pointerId: e.pointerId, lastX: e.clientX, lastY: e.clientY,
-                 lastT: e.timeStamp || performance.now(), vel: 0,
+      const sampler = new NG.StrokeSampler({
+        pointerId: e.pointerId, pointerType: e.pointerType, rect: r, toWorld: screenToWorld,
+        getScale: () => state.view.scale || 1, taper: st0.taper || 0, usePressure: pen, nibFactor,
+        t0: e.timeStamp || performance.now(), x0: e.clientX, y0: e.clientY, p0: press0,
+      });
+      inking = { sampler, pointerId: e.pointerId, lastX: e.clientX, lastY: e.clientY,
                  style: penStyle, color: penColor, width, pressure: pen, rect: r,
-                 rawSeen: false, paintRAF: 0, dirty: false,
-                 ws: state.ws, level: state.level };          // the page it belongs to
+                 paintRAF: 0, dirty: false, taper: st0.taper || 0,
+                 ws: state.ws, level: state.level,            // the page it belongs to
+                 get pts() { return this.sampler.toPts(); } };
       beginInkStroke(st0);
       try { stage.setPointerCapture(e.pointerId); } catch (_) {}   // never lose the stroke
       return;
@@ -4497,6 +4477,9 @@
         dragging.frame0 = selectionWorldBox();
         // connectors only need redrawing per move when one is attached to what moves
         dragging.touchesEdge = state.edges.some(ed => starts[ed.from] || starts[ed.to]);
+        // many blocks (a lassoed word, a paragraph) are lifted into one
+        // transformed container: one style write per move instead of hundreds
+        if (dragging.ids.length >= 2 && NG.Lift) NG.Lift.begin(dragging.ids, 'move', { world, els: state.els });
         blockEl.classList.add('dragging');
       }
     } else {
@@ -4521,7 +4504,7 @@
         lpTimer = null;
         if (inking || erasing || lasso) return;      // the stylus is busy: no menu under the hand
         lpFired = true;
-        if (dragging) { state.els[dragging.primary]?.classList.remove('dragging'); dragging = null; }
+        cancelDrag();
         if (panning) { stage.classList.remove('panning'); panning = null; }
         selFrameBox = null;
         if (tid && (lpCell || lpTitle)) {
@@ -4674,6 +4657,7 @@
       const byId = dragging.byId || (dragging.byId = new Map(state.blocks.map(b => [b.id, b])));
       // smart guides: nudge the drag so edges/centres line up with neighbours
       const adj = alignAdjust(dragging, dx / s, dy / s, byId);
+      const lifted = !!(NG.Lift && NG.Lift.has());
       for (const bid of dragging.ids) {
         const st = dragging.starts[bid]; if (!st) continue;
         const bb = byId.get(bid); if (!bb) continue;
@@ -4682,7 +4666,12 @@
         const fit = bb.kind === 'ink' ? (v) => Math.round(v) : snapVal;
         const nx = fit(st.x + dx / s + adj.dx), ny = fit(st.y + dy / s + adj.dy);
         bb.x = nx; bb.y = ny;
-        const el = state.els[bid]; if (el) { el.style.left = nx + 'px'; el.style.top = ny + 'px'; }
+        if (!lifted) { const el = state.els[bid]; if (el) { el.style.left = nx + 'px'; el.style.top = ny + 'px'; } }
+      }
+      mmDirty = true;
+      if (lifted) {
+        NG.Lift.move(dx / s + adj.dx, dy / s + adj.dy);
+        if (NG.Overlay) NG.Overlay.setLiftOffset(dx / s + adj.dx, dy / s + adj.dy);
       }
       // the dashed frame and the floating bar travel with what they are round
       if (dragging.frame0) {
@@ -4716,6 +4705,7 @@
         bb.x = st.x; bb.y = st.y;
         const el = state.els[bid]; if (el) { el.style.left = st.x + 'px'; el.style.top = st.y + 'px'; }
       }
+      if (NG.Lift && NG.Lift.has()) NG.Lift.end(false);
       state.els[dragging.primary]?.classList.remove('dragging');
       clearGuides(); dragging = null; drawEdges();
     }
@@ -4743,8 +4733,26 @@
     selFrameBox = null; positionSelFrame(); positionSelBar();
   }
   function endForeignPointer(e) { abandonPointer(e.pointerId); }
+  // A drag that ends without a drop (long-press menu, pinch, lost focus):
+  // what it moved goes back and the lift container is dissolved.
+  function cancelDrag() {
+    if (!dragging) return;
+    const d = dragging; dragging = null;
+    for (const bid of d.ids) {
+      const st = d.starts[bid], bb = (d.byId && d.byId.get(bid)) || state.blocks.find(x => x.id === bid);
+      if (!st || !bb) continue;
+      bb.x = st.x; bb.y = st.y;
+      const el = state.els[bid]; if (el) { el.style.left = st.x + 'px'; el.style.top = st.y + 'px'; }
+    }
+    if (NG.Lift && NG.Lift.has()) NG.Lift.end(false);
+    state.els[d.primary]?.classList.remove('dragging');
+    clearGuides(); selFrameBox = null;
+  }
 
+  let lastPointerUpAt = 0;
   async function onPointerUp(e) {
+    lastPointerUpAt = performance.now();
+    if (NG.Diag) NG.Diag.lastPointerUpAt = lastPointerUpAt;
     // the pointer's own gesture is handled first, whatever else is live
     if (colResize && colResize.pointerId === e.pointerId) {
       const cr = colResize; colResize = null; pointers.delete(e.pointerId);
@@ -4784,23 +4792,28 @@
     if (inking && inking.pointerId === e.pointerId) {
       const stroke = inking; inking = null;
       try { stage.releasePointerCapture(e.pointerId); } catch (_) {}
-      if (stroke.paintRAF) cancelAnimationFrame(stroke.paintRAF);
-      requestAnimationFrame(() => { if (!inking) clearInkSurface(); });
+      if (stroke.paintRAF) { cancelAnimationFrame(stroke.paintRAF); stroke.paintRAF = 0; }
       // the page changed under the pen (a tap on Home, Back or a crumb): the
       // stroke belongs to the level it started on and is not carried over
-      if (stroke.ws !== state.ws || stroke.level !== state.level) return;
-      const pts = stroke.pts;
+      if (stroke.ws !== state.ws || stroke.level !== state.level) { NG.wet.release(stroke); return; }
+      const pts = stroke.sampler.toPts();
       if (pts.length >= 2) {
         const hit = shapeSnap ? recognizeShape(pts) : null;
         if (hit) {
+          NG.wet.release(stroke);
           createRecognizedShape(hit, stroke.color || penColor, stroke.width || 3);
           toast('Snapped to ' + shapeSnapName(hit));
         } else {
-          // not awaited: the block appears at once and the save lands after,
-          // so the next stroke can start immediately
-          finalizeInk(pts, stroke);
+          // The last wet frame is painted from the points the record will
+          // hold, so the glass shows exactly what the committed renderer
+          // draws; the element is appended now and the wet copy leaves once
+          // that frame is on screen (never a gap, never a blank frame).
+          const width = stroke.width || curWidth();
+          NG.wet.finish(stroke, decodeInk(encodeInk(pts, width)));
+          finalizeInk(pts, stroke);          // not awaited: the save lands after
+          NG.afterNextPaint(() => NG.wet.release(stroke));
         }
-      }
+      } else NG.wet.release(stroke);
       return;
     }
     // a stylus gesture (or a table handle) is live and this is not its pointer
@@ -4808,7 +4821,7 @@
     if (lpTimer && lpPid === e.pointerId) { clearTimeout(lpTimer); lpTimer = null; }
     if (lpFired && lpPid === e.pointerId) {   // long-press already opened the context menu
       lpFired = false;
-      if (dragging) { state.els[dragging.primary]?.classList.remove('dragging'); dragging = null; }
+      cancelDrag();
       if (panning) { stage.classList.remove('panning'); panning = null; }
       pointers.delete(e.pointerId);
       return;
@@ -4842,6 +4855,14 @@
       setTimeout(() => { justDragged = false; }, 0);
       clearGuides();
       state.els[d.primary]?.classList.remove('dragging');
+      if (NG.Lift && NG.Lift.has()) {
+        // the lifted elements return to #world; their records already hold the final positions
+        for (const it of NG.Lift.end(true)) {
+          const bb = (d.byId && d.byId.get(it.id)) || state.blocks.find(x => x.id === it.id);
+          if (bb) { it.el.style.left = bb.x + 'px'; it.el.style.top = bb.y + 'px'; }
+        }
+        if (NG.Overlay) NG.Overlay.draw();
+      }
       if (d.shift && !d.moved) {
         toggleSelect(d.primary);                 // shift+click toggles
       } else if (d.moved) {
@@ -5021,6 +5042,7 @@
         { g: 'Edit', icon: 'arrow-left', title: 'Undo', fn: () => undo() },
         { g: 'Edit', icon: 'arrow-right', title: 'Redo', fn: () => redo() },
         { g: 'Workspace', icon: 'upload', title: 'Export workspace', fn: () => exportWorkspaceFlow(state.ws) },
+        { g: 'Workspace', icon: 'info', title: 'Diagnostics', fn: () => { if (NG.Diag) NG.Diag.toggle(); } },
         { g: 'Style', icon: 'copy', title: 'Copy look (Ctrl+Alt+C)', fn: () => copyStyle() },
         { g: 'Style', icon: 'brush', title: 'Paste look (Ctrl+Alt+V)', fn: () => pasteStyle() },
         { g: 'Arrange', icon: 'group', title: 'Group selection', fn: () => groupSelection() },
@@ -5238,6 +5260,7 @@
     if (on && (state.ws == null || state.levelLayout !== 'canvas')) return;
     state.penMode = on;
     stage.classList.toggle('penning', on);
+    notifyInking();
     $('#pen-bar').hidden = !on;
     if (on) {
       setLinkMode(false); closeDrawerIfOpen(); clearSelection();
@@ -5251,6 +5274,10 @@
       if (state.penEraser) setEraser(false, true);       // Done means done
     }
     syncToolButtons();
+  }
+  // the Android host raises the refresh rate while a stylus tool is up
+  function notifyInking() {
+    try { if (window.NGShell && NGShell.setInking) NGShell.setInking(!!(state.penMode || state.penEraser)); } catch (_) {}
   }
   function syncToolButtons() {
     $('#btn-pen')?.classList.toggle('active', state.penMode && !state.penEraser);
@@ -5322,6 +5349,7 @@
     state.penEraser = on;
     if (on) { if (state.selectTool) setSelectMode(false); setLinkMode(false); }
     stage.classList.toggle('erasing', on);
+    notifyInking();
     stage.classList.toggle('erase-normal', on && eraserMode === 'normal');
     if (!on) { hideEraserCursor(); if (lasso && lasso.erase) { lasso.path.remove(); lasso = null; } }
     renderPenTools(); syncPenSize(); syncToolButtons();
@@ -5416,6 +5444,9 @@
   }
   // A stroke's points in world units (they are stored relative to its box).
   const inkPad = (b) => (b.width || 3) + 2;
+  // A stroke's element box, from its record alone (what getBoundingClientRect
+  // measured before): no layout read per stroke.
+  const inkBox = (b) => { const pad = inkPad(b); return { x: b.x || 0, y: b.y || 0, w: (b.w || 1) + 2 * pad, h: (b.h || 1) + 2 * pad }; };
   function inkWorldPts(b) {
     const pad = inkPad(b), ox = (b.x || 0) + pad, oy = (b.y || 0) + pad;
     return (b.pts || []).map(p => [ox + p[0], oy + p[1], p[2] || 0, p[3] || 0]);
@@ -5713,11 +5744,10 @@
   }
   // Ink floats above other blocks unless it is explicitly sent backward.
   const INK_Z = 500;
-  let lastInk = null;          // { group, at, x, y, w, h } — the previous stroke
-  async function finalizeInk(pts, stroke) {
-    const style = (stroke && stroke.style) || penStyle;
-    const color = (stroke && stroke.color) || penColor;
-    const width = (stroke && stroke.width) || curWidth();
+  // A stroke's record geometry: box at (bx, by), points relative to the box's
+  // origin plus the nib padding, on a 0.05 grid. One function, so the wet
+  // layer's last frame and the saved record are built from identical numbers.
+  function encodeInk(pts, width) {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const [x, y] of pts) { minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); }
     const bx = Math.round(minX - width - 2), by = Math.round(minY - width - 2);
@@ -5728,10 +5758,20 @@
       if (k) q.push(k);                    // the nib width the preview drew with
       return q;
     });
+    return { bx, by, ox, oy, rel, w: Math.round(maxX - ox), h: Math.round(maxY - oy) };
+  }
+  const decodeInk = (enc) => enc.rel.map(q => [enc.ox + q[0], enc.oy + q[1], q[2] || 0, q[3] || 0]);
+  let lastInk = null;          // { group, at, x, y, w, h } — the previous stroke
+  async function finalizeInk(pts, stroke) {
+    const style = (stroke && stroke.style) || penStyle;
+    const color = (stroke && stroke.color) || penColor;
+    const width = (stroke && stroke.width) || curWidth();
+    const enc = encodeInk(pts, width);
+    const { bx, by, rel } = enc;
     const b = {
       id: uid(), ws: state.ws, parentId: state.level, kind: 'ink',
       title: '', color, width, style,
-      pts: rel, w: Math.round(maxX - ox), h: Math.round(maxY - oy),
+      pts: rel, w: enc.w, h: enc.h,
       x: bx, y: by,
       z: 0, createdAt: Date.now(), updatedAt: Date.now(),
     };
@@ -5859,18 +5899,13 @@
     const ctx = cv.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cssW, cssH);
-    // Measure every block exactly once: the bounds and each node's little
-    // rectangle come from the same pass (this runs on every pan/zoom frame).
-    const rects = new Map();
-    let bMinX = Infinity, bMinY = Infinity, bMaxX = -Infinity, bMaxY = -Infinity;
-    for (const blk of state.blocks) {
-      const rc = blockRectOf(blk); rects.set(blk.id, rc);
-      bMinX = Math.min(bMinX, rc.x); bMinY = Math.min(bMinY, rc.y);
-      bMaxX = Math.max(bMaxX, rc.x + rc.w); bMaxY = Math.max(bMaxY, rc.y + rc.h);
-    }
-    // An empty level has no bounds; fall back to the viewport so the minimap
-    // still draws instead of throwing.
-    const b = isFinite(bMinX) ? { minX: bMinX, minY: bMinY, maxX: bMaxX, maxY: bMaxY } : { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+    // The page content is rendered into a bitmap at most four times a second
+    // after something changed; a pan or zoom frame only re-projects that
+    // bitmap and draws the viewport rectangle, so the per-frame cost no
+    // longer grows with what is on the page.
+    const now = performance.now();
+    if (!mmContent || (mmDirty && now - mmContent.at > 250)) renderMinimapContent(cssW, cssH, dpr);
+    const b = mmContent.bounds;
     const vr = stage.getBoundingClientRect();
     const vw0 = screenToWorld(0, 0), vw1 = screenToWorld(vr.width, vr.height);
     // include viewport in bounds so the indicator is always visible
@@ -5883,19 +5918,54 @@
     const offY = (cssH - bh * scale) / 2 - (minY - pad) * scale;
     mmMap = { scale, offX, offY };
     const wx = (x) => x * scale + offX, wy = (y) => y * scale + offY;
-    const cs = getComputedStyle(document.documentElement);
-    const accent = (cs.getPropertyValue('--accent') || '#2b7fff').trim();
-    const cardBg = (cs.getPropertyValue('--card') || '#161b21').trim();
-    const lineC = (cs.getPropertyValue('--card-line') || '#23262d').trim();
-    const text = (cs.getPropertyValue('--text') || '#e7eaee').trim();
+    const c = mmContent;
+    if (c.canvas) {
+      ctx.globalAlpha = 1;
+      ctx.drawImage(c.canvas, wx(c.x0), wy(c.y0), (c.x1 - c.x0) * scale, (c.y1 - c.y0) * scale);
+    }
+    // viewport rectangle
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = c.accent; ctx.lineWidth = 1.5;
+    ctx.strokeRect(wx(vw0.x), wy(vw0.y), (vw1.x - vw0.x) * scale, (vw1.y - vw0.y) * scale);
+  }
+  let mmContent = null, mmDirty = true;
+  // Everything on the level drawn once into an offscreen bitmap that covers
+  // the content bounds (plus the same padding the map uses), at twice the
+  // map's resolution so it stays crisp when re-projected.
+  function renderMinimapContent(cssW, cssH, dpr) {
+    // measure every block exactly once
+    const rects = new Map();
+    let bMinX = Infinity, bMinY = Infinity, bMaxX = -Infinity, bMaxY = -Infinity;
+    for (const blk of state.blocks) {
+      const rc = blockRectOf(blk); rects.set(blk.id, rc);
+      bMinX = Math.min(bMinX, rc.x); bMinY = Math.min(bMinY, rc.y);
+      bMaxX = Math.max(bMaxX, rc.x + rc.w); bMaxY = Math.max(bMaxY, rc.y + rc.h);
+    }
+    // An empty level has no bounds; fall back to the viewport so the minimap
+    // still draws instead of throwing.
+    const bounds = isFinite(bMinX) ? { minX: bMinX, minY: bMinY, maxX: bMaxX, maxY: bMaxY } : { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+    const pad = 30;
+    const x0 = bounds.minX - pad, y0 = bounds.minY - pad, x1 = bounds.maxX + pad, y1 = bounds.maxY + pad;
+    const W = Math.max(2, Math.round(cssW * dpr * 2)), H = Math.max(2, Math.round(cssH * dpr * 2));
+    const cs = Math.min(W / Math.max(1, x1 - x0), H / Math.max(1, y1 - y0));
+    const bw = Math.max(1, Math.ceil((x1 - x0) * cs)), bh = Math.max(1, Math.ceil((y1 - y0) * cs));
+    const canvas = (mmContent && mmContent.canvas) || document.createElement('canvas');
+    if (canvas.width !== bw || canvas.height !== bh) { canvas.width = bw; canvas.height = bh; }
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, bw, bh);
+    const wx = (x) => (x - x0) * cs, wy = (y) => (y - y0) * cs;
+    const st = getComputedStyle(document.documentElement);
+    const accent = (st.getPropertyValue('--accent') || '#2b7fff').trim();
+    const cardBg = (st.getPropertyValue('--card') || '#161b21').trim();
+    const lineC = (st.getPropertyValue('--card-line') || '#23262d').trim();
+    const text = (st.getPropertyValue('--text') || '#e7eaee').trim();
     // draw nodes back-to-front (respect z-order)
     const ordered = [...state.blocks].sort((a, b) => (a.z || 0) - (b.z || 0));
     const col = { accent, cardBg, lineC, text };
-    for (const blk of ordered) drawNodeMini(ctx, blk, rects.get(blk.id), wx, wy, scale, col);
-    // viewport rectangle
-    ctx.globalAlpha = 1;
-    ctx.strokeStyle = accent; ctx.lineWidth = 1.5;
-    ctx.strokeRect(wx(vw0.x), wy(vw0.y), (vw1.x - vw0.x) * scale, (vw1.y - vw0.y) * scale);
+    for (const blk of ordered) drawNodeMini(ctx, blk, rects.get(blk.id), wx, wy, cs, col);
+    mmContent = { canvas, bounds, x0, y0, x1, y1, accent, at: performance.now() };
+    mmDirty = false;
   }
 
   const _mmImgCache = new Map();   // src → HTMLImageElement (for image thumbnails)
@@ -5906,7 +5976,7 @@
   function mmImage(src) {
     if (!src) return null;
     let im = _mmImgCache.get(src);
-    if (!im) { im = new Image(); im.onload = () => scheduleMinimap(); im.src = src; _mmImgCache.set(src, im); }
+    if (!im) { im = new Image(); im.onload = () => { mmDirty = true; scheduleMinimap(); }; im.src = src; _mmImgCache.set(src, im); }
     return im.complete ? im : null;
   }
   // Draw a single node into the mini-map as a faithful little preview.
@@ -6945,7 +7015,8 @@
   // still guarantees the write even if a gesture flag ever sticks.
   function autosaveTick() {
     autoSaveTimer = null;
-    const busy = inking || erasing || dragging || gizmo || selScale || lasso || panning || pinch;
+    const busy = inking || erasing || dragging || gizmo || selScale || lasso || panning || pinch
+      || (performance.now() - lastPointerUpAt < 1500);          // the hand has only just lifted
     if (busy && Date.now() < autosaveDue) { autoSaveTimer = setTimeout(autosaveTick, 900); return; }
     autosaveDue = 0;
     saveCurrentWorkspace(false);
@@ -7010,8 +7081,11 @@
     const rec = await DB.getHandleRec(wsId);
     if (SHELL && rec && rec.path) {                 // app shell: write straight to the path
       try {
-        const payload = await workspacePayload(wsId);
-        await NGShell.writeFile(rec.path, JSON.stringify(payload));
+        const t0 = performance.now();
+        const json = JSON.stringify(await workspacePayload(wsId));
+        const t1 = performance.now();
+        await NGShell.writeFile(rec.path, json);
+        if (NG.Diag) NG.Diag.metrics.save = { payloadMs: t1 - t0, writeMs: performance.now() - t1, bytes: json.length, at: performance.now() };
         if (state.ws === wsId) { state.dirty = false; setSaveState(); }
         saveFailShown = false;
       } catch (e) {
@@ -7037,8 +7111,11 @@
       return;
     }
     try {
+      const t0 = performance.now();
       const payload = await workspacePayload(wsId);
+      const t1 = performance.now();
       await writeToHandle(rec.handle, payload);
+      if (NG.Diag) NG.Diag.metrics.save = { payloadMs: t1 - t0, writeMs: performance.now() - t1, bytes: 0, at: performance.now() };
       if (state.ws === wsId) { state.dirty = false; setSaveState(); }
       saveFailShown = false;
     } catch (e) {
@@ -7048,11 +7125,12 @@
   // called after any edit; schedules a save (autosave) or flags dirty (manual)
   function markChanged() {
     if (state.ws == null) return;
+    mmDirty = true; scheduleMinimap();
     scheduleOutline();
     if (state.autosave) {
       clearTimeout(autoSaveTimer);
       if (!autosaveDue) autosaveDue = Date.now() + 10000;
-      autoSaveTimer = setTimeout(autosaveTick, 900);
+      autoSaveTimer = setTimeout(autosaveTick, (state.penMode || state.penEraser) ? 2500 : 900);
     } else {
       state.dirty = true;
     }
@@ -7560,6 +7638,7 @@
       if (act === 'add-child') createBlock('block');
       if (act === 'fit') fitToView();
       if (act === 'zoom-reset') resetZoom();
+      if (act === 'diag') { if (NG.Diag) NG.Diag.toggle(); }
       if (act === 'snap') { snapOn = !snapOn; try { localStorage.setItem('ng-snap', snapOn ? '1' : '0'); } catch (_) {} updateSnapLabel(); toast(snapOn ? 'Snap to grid on' : 'Snap to grid off'); }
       if (act === 'properties') openProperties(state.ws);
       if (act === 'about') openAbout('about');
@@ -7720,6 +7799,7 @@
         return;
       }
       if ((e.key === 's' || e.key === 'S') && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveCurrentWorkspace(true); return; }
+      if ((e.key === 'd' || e.key === 'D') && e.ctrlKey && e.shiftKey) { e.preventDefault(); if (NG.Diag) NG.Diag.toggle(); return; }
       if ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey) && !e.shiftKey) { e.preventDefault(); undo(); return; }
       if (((e.key === 'y' || e.key === 'Y') && (e.ctrlKey || e.metaKey)) ||
           ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey) && e.shiftKey)) { e.preventDefault(); redo(); return; }
@@ -7992,7 +8072,11 @@
     if ('onpointerrawupdate' in window) {
       window.addEventListener('pointerrawupdate', (e) => { if (inking) addInkSamples(e, true); });
     }
-    window.addEventListener('resize', () => { if (inking) { sizeInkSurface(); redrawInkStroke(); } });
+    window.addEventListener('resize', () => {
+      sizeInkSurface();
+      if (inking) inking.sampler.rect = inking.rect = stage.getBoundingClientRect();
+      redrawInkStroke();
+    });
 
     $('#btn-theme').addEventListener('click', () =>
       setTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'));
@@ -8016,7 +8100,7 @@
       for (const g of [dragging, panning, gizmo, colResize, rowResize, marquee]) if (g && g.pointerId != null) owners.add(g.pointerId);
       for (const pid of owners) abandonPointer(pid);
       pointers.clear(); pinch = null; flushInv();
-      if (dragging) { state.els[dragging.primary]?.classList.remove('dragging'); dragging = null; }
+      cancelDrag();
       if (panning) { stage.classList.remove('panning'); panning = null; }
       gizmo = null; colResize = null; rowResize = null;
       if (marquee) endMarquee();
@@ -8111,6 +8195,9 @@
     bindAddMenu(); bindListView(); bindHome(); bindPrompt(); bindBrandMenu(); bindAutosave(); bindProps(); bindAbout(); bindContextMenu();
     bindTextEditor(); bindShapeEditor(); bindImageEditor(); bindCheckEditor(); bindInkEditor(); bindTableEditor(); bindImagePaste(); bindCmdk(); bindMinimap(); bindSelFrame();
     document.addEventListener('click', (e) => { const rb = e.target.closest && e.target.closest('.param-reset'); if (rb) { e.preventDefault(); resetParamField(rb); } });
+    NG.attachApi(makeBag());
+    if (NG.Overlay && $('#ink-ui')) { try { NG.Overlay.attach($('#ink-ui'), NG.bag); } catch (err) { console.warn('overlay:', err); } }
+    if (NG.Diag) { try { NG.Diag.init(); } catch (err) { console.warn('diag:', err); } }
     try {
       await DB.open();
     } catch (err) {
@@ -8123,6 +8210,31 @@
       return;
     }
     await restoreOrHome();   // reopen the last workspace/level, or the landing screen
+  }
+
+  // What the ink engine, the diagnostics overlay and window.__ng may reach.
+  function makeBag() {
+    return {
+      version: NG.version, state, history, DB, PEN_STYLES, PEN_ORDER, inkStrokeD, inkPad, inkWorldPts, nibFactor, taperCentreline, inkBox,
+      stage, world,
+      liveCanvas: () => { inkSurface(); return inkCv; },
+      liveCtx: () => inkSurface(),
+      liveDpr: () => NG.wet.dpr,
+      screenToWorld, worldToScreen: (x, y) => ({ x: wx(x), y: wy(y) }),
+      getInking: () => inking,
+      getGesture: gestureState,
+      getTools: () => ({ penMode: state.penMode, penEraser: state.penEraser, selectTool: state.selectTool, eraserMode, lassoMode, penStyle, penColor, penSize, fingerDraw }),
+      selectionWorldBox, applySelectionClasses, setSelection, clearSelection, selectBlock,
+      afterInkWrites, flushWrites: () => afterInkWrites(() => Promise.resolve()),
+      blockScreenRect: (id) => { const el = state.els[id]; if (!el) return null; const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; },
+      toast, markChanged,
+    };
+  }
+  function gestureState() {
+    const g = inking ? ['ink', inking.pointerId] : erasing ? ['erase', erasing.pointerId] : lasso ? ['lasso', lasso.pointerId]
+      : dragging ? ['drag', dragging.pointerId] : gizmo ? ['gizmo', gizmo.pointerId] : panning ? ['pan', panning.pointerId]
+      : pinch ? ['pinch', null] : marquee ? ['marquee', marquee.pointerId] : selScale ? ['selScale', selScale.pointerId] : ['none', null];
+    return { kind: g[0], owner: g[1] };
   }
 
   document.addEventListener('DOMContentLoaded', init);
