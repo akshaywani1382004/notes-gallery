@@ -2473,7 +2473,7 @@
       const from = idMap.get(e.from), to = idMap.get(e.to);
       if (!from || !to) continue;
       // internal edges keep their (remapped) parent; sibling edges land in this level
-      const ne = { id: uid(), ws: state.ws, parentId: idMap.get(e.parentId) || state.level, from, to, createdAt: now };
+      const ne = edgeIn({ id: uid(), ws: state.ws, parentId: idMap.get(e.parentId) || state.level, from, to, createdAt: now }, e);
       await DB.saveEdge(ne); madeEdges.push(ne);
     }
     for (const f of files) {
@@ -6236,6 +6236,22 @@
 
   // Build the portable, self-contained representation of a workspace
   // (files embedded as data URLs). Used by both download-export and file-save.
+  // A connector's look travels with it: label, line style and the both-ends
+  // arrow are written to exports (only when set, so files stay small - 1.x
+  // readers ignore the extra keys) and read back on import and paste.
+  const edgeOut = (e) => {
+    const o = { id: e.id, parentId: e.parentId, from: e.from, to: e.to, createdAt: e.createdAt };
+    if (e.label) o.label = e.label;
+    if (e.style) o.style = e.style;
+    if (e.both) o.both = true;
+    return o;
+  };
+  const edgeIn = (rec, src) => {
+    if (src.label) rec.label = src.label;
+    if (src.style) rec.style = src.style;
+    if (src.both) rec.both = true;
+    return rec;
+  };
   const fileDataCache = new Map();     // file id -> data URL; a file's blob never changes
   let fileDataBytes = 0;
   const FILE_CACHE_BUDGET = 32 * 1024 * 1024;   // beyond this, attachments are re-encoded per save
@@ -6257,7 +6273,7 @@
     // Preserve every field (kind, text/shape/image props, src, etc.); only drop `ws`
     // which is re-assigned on import.
     const outBlocks = blocks.map(b => { const o = { ...b }; delete o.ws; return o; });
-    const outEdges = edges.map(e => ({ id: e.id, parentId: e.parentId, from: e.from, to: e.to, createdAt: e.createdAt }));
+    const outEdges = edges.map(e => edgeOut(e));
     return {
       app: 'NotesGallery', kind: 'workspace', version: 2, exportedAt: new Date().toISOString(),
       workspace: { name: overrideName || (w && w.name) || 'Workspace', color: (w && w.color) || PALETTE[0] },
@@ -6955,7 +6971,7 @@
       const from = idMap.get(e.from), to = idMap.get(e.to);
       if (!from || !to) continue;
       const parentId = (e.parentId === DB.ROOT || e.parentId == null) ? DB.ROOT : (idMap.get(e.parentId) || DB.ROOT);
-      await DB.saveEdge({ id: uid(), ws: wsId, parentId, from, to, createdAt: e.createdAt || now });
+      await DB.saveEdge(edgeIn({ id: uid(), ws: wsId, parentId, from, to, createdAt: e.createdAt || now }, e));
     }
     for (const f of (data.files || [])) {
       const blockId = idMap.get(f.blockId);
@@ -8222,6 +8238,12 @@
     bindTextEditor(); bindShapeEditor(); bindImageEditor(); bindCheckEditor(); bindInkEditor(); bindTableEditor(); bindImagePaste(); bindCmdk(); bindMinimap(); bindSelFrame();
     document.addEventListener('click', (e) => { const rb = e.target.closest && e.target.closest('.param-reset'); if (rb) { e.preventDefault(); resetParamField(rb); } });
     NG.attachApi(makeBag());
+    // the About header names the build: app version and the site's cache-busting number
+    try {
+      const av = $('#about-version');
+      const tag = [...document.scripts].map(s => (s.src.match(/app\.js\?v=(\d+)/) || [])[1]).find(Boolean);
+      if (av) av.textContent = NG.version + (tag ? ' · v' + tag : '');
+    } catch (_) {}
     if (NG.Overlay && $('#ink-ui')) { try { NG.Overlay.attach($('#ink-ui'), NG.bag); } catch (err) { console.warn('overlay:', err); } }
     if (NG.Diag) { try { NG.Diag.init(); } catch (err) { console.warn('diag:', err); } }
     try {
