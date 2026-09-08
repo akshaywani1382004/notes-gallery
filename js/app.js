@@ -153,6 +153,8 @@
     lasso: '<path d="M6.4 12.6C4 10.2 6.6 5.3 12.4 4.5c5.6-.8 9.8 2.3 9 5.5-.4 1.6-2 2.9-4.2 3.6"/><circle cx="5.6" cy="14.3" r="1.9"/><path d="M4.4 15.8l-1 2.6"/><path d="M11.5 10.6v10.6l2.7-2.8 2 3.6 1.9-1.1-2-3.6 3.5-.5Z" fill="currentColor" stroke="none"/>',
     grip: '<circle cx="9" cy="6" r="1.3"/><circle cx="15" cy="6" r="1.3"/><circle cx="9" cy="12" r="1.3"/><circle cx="15" cy="12" r="1.3"/><circle cx="9" cy="18" r="1.3"/><circle cx="15" cy="18" r="1.3"/>',
     expand: '<path d="M9 4H4v5"/><path d="M15 4h5v5"/><path d="M9 20H4v-5"/><path d="M15 20h5v-5"/>',
+    // exit full screen: four arrows from the corners pointing in at the centre
+    compress: '<path d="M9.5 9.5L4.5 4.5M9.5 5.5v4h-4"/><path d="M14.5 9.5l5-5M14.5 5.5v4h4"/><path d="M9.5 14.5l-5 5M9.5 18.5v-4h-4"/><path d="M14.5 14.5l5 5M14.5 18.5v-4h4"/>',
     map: '<path d="M9 4 4 6v14l5-2 6 2 5-2V4l-5 2-6-2Z"/><line x1="9" y1="4" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="20"/>',
     undo: '<path d="M4 8h9.5a5.5 5.5 0 0 1 0 11H8"/><polyline points="7.5 4 4 8 7.5 12"/>',
     front: '<rect x="8" y="8" width="12" height="12" rx="2" fill="currentColor" stroke="none"/><path d="M4 14V5.5A1.5 1.5 0 0 1 5.5 4H14"/>',
@@ -2232,6 +2234,18 @@
     set('#lockx-state', axisLock === 'x');
     set('#locky-state', axisLock === 'y');
     set('#fs-state', !!document.fullscreenElement);
+    syncFullscreenButton();
+  }
+
+  // The landing screen's full-screen button wears the current state: expand
+  // when windowed, compress + "Exit full screen" while full screen is on.
+  function syncFullscreenButton() {
+    const b = $('#btn-fullscreen'); if (!b) return;
+    const on = !!document.fullscreenElement;
+    const name = on ? 'compress' : 'expand';
+    const ico = b.querySelector('[data-icon]');
+    if (ico && ico.getAttribute('data-icon') !== name) { ico.setAttribute('data-icon', name); ico.innerHTML = ic(name); }
+    b.title = on ? 'Exit full screen' : 'Full screen';
   }
 
   /* ------------------------------ read mode ----------------------------- *
@@ -8911,6 +8925,10 @@
 
     $('#btn-theme').addEventListener('click', () =>
       setTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'));
+    // landing-screen extras: full screen (same as F11 / the ... menu) and Help
+    $('#btn-fullscreen').addEventListener('click', () => toggleFullscreen());
+    $('#btn-help').addEventListener('click', () => openAbout('help'));
+    syncFullscreenButton();
     const r = () => stage.getBoundingClientRect();
     $('#btn-zoom-in').addEventListener('click',  () => zoomAt(r().width / 2, r().height / 2, 1.18));
     $('#btn-zoom-out').addEventListener('click', () => zoomAt(r().width / 2, r().height / 2, 1 / 1.18));
