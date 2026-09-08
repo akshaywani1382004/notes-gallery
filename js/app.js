@@ -1274,12 +1274,13 @@
     let i = 0, n = 0;
     for (const f of files) {
       const at = { x: base.x + i * 28, y: base.y + i * 28 };
+      if (isWorkspaceFile(f)) { await importWorkspaceFile(f); n++; continue; }   // a saved workspace: imported whole
       if (/^image\//.test(f.type)) { await createImageBlock(f, { at, openAfter: false }); n++; i++; }
       else if (/\.xlsx$/i.test(f.name)) { await importSheetFile(f, at); n++; i++; }
       else if (isCsvFile(f)) { await createListFromCsv(f, at); n++; i++; }
       else if (isTextFile(f)) { await createTextFromFile(f, { at, silent: true }); n++; i++; }
     }
-    if (!n) toast('Drop images, .xlsx, .txt/.md, or .csv files.');
+    if (!n) toast('Drop images, .xlsx, .txt/.md, .csv or .notesgallery.json files.');
     else if (n > 1) toast(`${n} files imported`);
   }
 
@@ -3627,7 +3628,8 @@
       const f = e.target.files && e.target.files[0];
       e.target.value = '';
       if (!f) return;
-      if (isCsvFile(f)) createListFromCsv(f, pendingTextAt); else createTextFromFile(f);
+      if (isWorkspaceFile(f)) importWorkspaceFile(f);
+      else if (isCsvFile(f)) createListFromCsv(f, pendingTextAt); else createTextFromFile(f);
     });
     $('#xlsx-input').addEventListener('change', (e) => {
       const f = e.target.files && e.target.files[0];
@@ -6872,15 +6874,28 @@
     return data && (data.app === 'NotesGallery' || data.app === 'BlockNotes') && Array.isArray(data.blocks);
   }
 
+  const isWorkspaceFile = (f) => /\.json$/i.test(f.name || '') || f.type === 'application/json';
+  // After an import: say so, refresh Home, and from inside a workspace offer to
+  // jump to the new one (what is open stays saved).
+  async function afterImport(wsId, name, linked) {
+    toast(`Imported “${name}”` + (linked ? ' (linked to file)' : ''));
+    await renderHome();
+    if (state.ws != null) {
+      confirmDialog(`Imported “${esc(name)}”`, 'Open it now? What you are working on stays saved.', 'Open',
+        () => openWorkspace(wsId), 'primary');
+    }
+  }
   // Fallback import (no file link) via a normal file input.
   async function importWorkspaceFile(file) {
+    let text;
+    try { text = await file.text(); }
+    catch (e) { toast('Could not read that file: ' + ((e && e.message) || e)); return; }
     let data;
-    try { data = JSON.parse(await file.text()); }
+    try { data = JSON.parse(text); }
     catch (_) { toast('That file is not valid JSON.'); return; }
     if (!validWorkspaceData(data)) { toast('Not a Notes Gallery workspace file.'); return; }
-    const { name } = await createWorkspaceFromData(data);
-    toast(`Imported “${name}”`);
-    await renderHome();
+    const { wsId, name } = await createWorkspaceFromData(data);
+    await afterImport(wsId, name, false);
   }
 
   // Import via the File System Access API and BIND the file so edits save back.
@@ -6888,14 +6903,16 @@
     if (SHELL) {                                     // app shell: native open dialog, keep the full path
       const path = await NGShell.openDialog();
       if (!path) return;
+      let text;
+      try { text = await NGShell.readFile(path); }
+      catch (e) { toast('Could not read that file: ' + ((e && e.message) || e)); return; }
       let data;
-      try { data = JSON.parse(await NGShell.readFile(path)); }
+      try { data = JSON.parse(text); }
       catch (_) { toast('That file is not valid JSON.'); return; }
       if (!validWorkspaceData(data)) { toast('Not a Notes Gallery workspace file.'); return; }
       const { wsId, name } = await createWorkspaceFromData(data);
       await DB.savePathRec(wsId, path);
-      toast(`Imported “${name}” (linked to file)`);
-      await renderHome();
+      await afterImport(wsId, name, true);
       return;
     }
     if (!FS_OK) { $('#import-input').click(); return; }
@@ -6908,14 +6925,16 @@
       $('#import-input').click();                 // fall back to the plain file dialog
       return;
     }
+    let text;
+    try { text = await (await handle.getFile()).text(); }
+    catch (e) { toast('Could not read that file: ' + ((e && e.message) || e)); return; }
     let data;
-    try { data = JSON.parse(await (await handle.getFile()).text()); }
+    try { data = JSON.parse(text); }
     catch (_) { toast('That file is not valid JSON.'); return; }
     if (!validWorkspaceData(data)) { toast('Not a Notes Gallery workspace file.'); return; }
     const { wsId, name } = await createWorkspaceFromData(data);
     await DB.saveHandleRec(wsId, handle);   // future saves write back to this file
-    toast(`Imported “${name}” (linked to file)`);
-    await renderHome();
+    await afterImport(wsId, name, true);
   }
 
   /* ---- autosave / manual (Ctrl+S) save -------------------------------- */
@@ -7830,6 +7849,7 @@
       if (kind === 'image') pickImage();
       else if (kind === 'txtfile') pickTextFile();
       else if (kind === 'xlsx') pickSheetFile();
+      else if (kind === 'wsfile') importViaPicker();
       else createBlock(kind);
     });
     document.addEventListener('click', (e) => {

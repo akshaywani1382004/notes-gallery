@@ -43,8 +43,14 @@
     },
 
     async readFile(path) {
-      if (T.fs && T.fs.readTextFile) return T.fs.readTextFile(path);
-      return inv('plugin:fs|read_text_file', { path });
+      const r = (T.fs && T.fs.readTextFile) ? await T.fs.readTextFile(path)
+                                            : await inv('plugin:fs|read_text_file', { path });
+      if (typeof r === 'string') return r;
+      // the raw command returns the file's bytes, not text: decode them here
+      const bytes = r instanceof ArrayBuffer ? new Uint8Array(r)
+        : (r && r.buffer instanceof ArrayBuffer) ? new Uint8Array(r.buffer, r.byteOffset || 0, r.byteLength)
+        : Uint8Array.from(r || []);
+      return new TextDecoder().decode(bytes);
     },
 
     // open Windows Explorer / Finder with the file selected

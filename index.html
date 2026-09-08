@@ -557,11 +557,15 @@
           </button>
           <button data-add="txtfile">
             <span class="am-ico" data-icon="filetext"></span>
-            <span class="am-text"><b>Import file</b><small>.txt / .md → text · .csv → list</small></span>
+            <span class="am-text"><b>Import file</b><small>.txt / .md → text · .csv → list · .json → workspace</small></span>
           </button>
           <button data-add="xlsx">
             <span class="am-ico" data-icon="table"></span>
             <span class="am-text"><b>Import Excel</b><small>.xlsx / .csv → a table</small></span>
+          </button>
+          <button data-add="wsfile">
+            <span class="am-ico" data-icon="download"></span>
+            <span class="am-text"><b>Import workspace</b><small>a saved .notesgallery.json file</small></span>
           </button>
         </div>
       </div>
@@ -798,7 +802,7 @@
     <input type="file" id="file-input" hidden multiple />
     <input type="file" id="import-input" hidden accept="application/json,.json" />
     <input type="file" id="image-input" hidden accept="image/*" />
-    <input type="file" id="txt-input" hidden accept=".txt,.md,.markdown,.csv,text/plain,text/markdown,text/csv" />
+    <input type="file" id="txt-input" hidden accept=".txt,.md,.markdown,.csv,.json,text/plain,text/markdown,text/csv,application/json" />
     <input type="file" id="xlsx-input" hidden accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" />
   </div>
 
