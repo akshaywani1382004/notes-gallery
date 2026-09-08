@@ -3,7 +3,7 @@
    Near-black studio surfaces, hairline borders, one muted emerald accent,
    halftone dot texture, soft light from the top. Loaded after styles.css:
    tokens first, then the skin that styles.css's layout consumes.
-   Performance rules kept here: no backdrop blur over the canvas, no SVG
+   Performance rules kept here: backdrop blur only on floating panels (the user's choice), no SVG
    filters on connectors, no blended full-screen overlays, static textures
    only, every transition on colour/opacity/transform and under 200 ms.
    ========================================================================== */
@@ -57,10 +57,12 @@
   /* surfaces */
   --top-edge: linear-gradient(180deg, rgba(255,255,255,0.045), transparent 90px);
   --bleed: radial-gradient(120% 60% at 50% -10%, rgba(255,255,255,0.055), transparent 60%);
-  --panel-float: rgba(16,17,19,0.96);          /* floating panels: near-opaque, no blur */
+  --panel-float: rgba(16,17,19,0.72);          /* floating panels: frosted (blur below) */
+  --frost: blur(16px) saturate(1.3);
   --modal-veil: rgba(8,9,10,0.72);
   --dot-ink: rgba(255,255,255,0.10);
   --knob: #F2F3F4;
+  --silver: #DFE3EA;   /* the mark's glyph */
   --grain: url("data:image/png;base64,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");
   color-scheme: dark;
 }
@@ -90,10 +92,11 @@ html[data-theme="light"] {
   --paper-line: rgba(20,24,22,0.08);
   --top-edge: linear-gradient(180deg, rgba(255,255,255,0.7), transparent 90px);
   --bleed: radial-gradient(120% 60% at 50% -10%, rgba(255,255,255,0.9), transparent 60%);
-  --panel-float: rgba(252,252,251,0.97);
+  --panel-float: rgba(252,252,251,0.78);
   --modal-veil: rgba(40,44,42,0.45);
   --dot-ink: rgba(20,24,22,0.16);
   --knob: #FFFFFF;
+  --silver: #DFE3EA;
   color-scheme: light;
 }
 
@@ -144,16 +147,17 @@ small, .muted, .ws-meta, .block-meta, .lr-meta, .file-sub, .r-sub, .cmdk-sub { f
 #topbar { background: linear-gradient(180deg, rgba(255,255,255,0.03), transparent 70%), var(--bg-0); border-bottom: 1px solid var(--line-1); }
 #app.home-mode #topbar { background: transparent; border-bottom-color: transparent; }
 #app.home-mode #topbar > .divider { display: none; }   /* the landing screen shows only the theme button */
-/* the mark: a raised tile with the monoline glyph in accent ink */
+/* the mark: a raised dark tile, the glyph in silver, one emerald point at the nib */
 #topbar .brand { gap: 10px; border-radius: var(--r-sm); height: var(--tb-btn); padding: 0 6px; margin: 0 -6px; }   /* same height as the buttons beside it */
 .brand:hover { background: var(--bg-3); }
 .brand-mark, .about-head .brand-mark {
   width: 30px; height: 30px; border-radius: var(--r-sm);
   background: linear-gradient(180deg, rgba(255,255,255,0.06), transparent 60%), var(--bg-3);
-  color: var(--accent-ink); --accent: var(--accent-ink);
+  color: var(--silver); --accent: var(--accent-ink);
   box-shadow: inset 0 0 0 1px var(--line-2), inset 0 1px 0 rgba(255,255,255,0.06);
 }
 .brand-mark .ic { width: 20px; height: 20px; stroke-width: 1.6; }
+html[data-theme="light"] .brand-mark, html[data-theme="light"] .hero-mark { background: linear-gradient(180deg, #171A1D, #0E0F11); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.09), inset 0 1px 0 rgba(255,255,255,0.08), 0 8px 20px -10px rgba(20,30,26,.5); }
 .brand-name { font-family: var(--font); font-size: 16px; font-weight: 500; letter-spacing: -0.02em; color: var(--text-1); }
 .divider { background: var(--line-2); height: 22px; }
 .zoom-label { color: var(--text-3); font-size: 13px; font-variant-numeric: tabular-nums; font-weight: 500; }
@@ -213,18 +217,19 @@ small, .muted, .ws-meta, .block-meta, .lr-meta, .file-sub, .r-sub, .cmdk-sub { f
 .help-list code, .modal-card code { font-family: var(--font-mono); font-size: 12px; background: var(--bg-3); border: 1px solid var(--line-1); border-radius: 6px; }
 .kbd-grid { color: var(--text-2); }
 
-/* ---- floating panels: near-opaque, hairline, lifted --------------------------- */
+/* ---- floating panels: frosted glass, hairline, lifted (the user chose blur over opacity) ---- */
 .add-menu, .menu, .ctxmenu, .pen-menu, .search-results, .search-pop #search, .sel-bar, #pen-bar, .minimap, .toast, .link-banner, .present-bar, .diag, .cmdk-card {
-  background: var(--panel-float); border: 1px solid var(--line-1); box-shadow: 0 24px 60px -28px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,0.04); }
+  background: var(--panel-float); border: 1px solid var(--line-1); box-shadow: 0 24px 60px -28px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,0.04);
+  -webkit-backdrop-filter: var(--frost); backdrop-filter: var(--frost); }
 .add-menu, .menu, .ctxmenu, .pen-menu, .search-results { border-radius: var(--r-md); }
 .cmdk-card, #pen-bar, .sel-bar { border-radius: var(--r-lg); }
 .menu button:hover, .add-menu button:hover, .pen-menu button:hover, .result:hover, .cmdk-item.active, .cmdk-item:hover, .outline-row:hover, .brand-menu .bm-item:hover { background: var(--bg-3); }
 .pen-menu button.active { background: var(--accent-tint); color: var(--accent-ink); }
 .brand-menu .bm-item.active, .brand-menu .bm-item.active .bm-t::after { color: var(--accent-ink); }
-.outline { background: var(--panel-float); border-right: 1px solid var(--line-1); box-shadow: none; }
+.outline { background: var(--panel-float); border-right: 1px solid var(--line-1); box-shadow: none; -webkit-backdrop-filter: var(--frost); backdrop-filter: var(--frost); }
 .outline-head { font-weight: 600; color: var(--text-2); }
 .outline-row.here { background: var(--accent-tint); color: var(--text-1); }
-.drawer { background: var(--bg-2); border-left: 1px solid var(--line-1); box-shadow: -24px 0 60px -40px rgba(0,0,0,.7); }
+.drawer { background: color-mix(in srgb, var(--bg-2) 82%, transparent); border-left: 1px solid var(--line-1); box-shadow: -24px 0 60px -40px rgba(0,0,0,.7); -webkit-backdrop-filter: var(--frost); backdrop-filter: var(--frost); }
 .drawer-head, .drawer-foot { border-color: var(--line-1); }
 .title-field { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
 .sel-bar button:hover, .file-actions button:hover { background: var(--bg-3); color: var(--accent-ink); }
@@ -344,7 +349,7 @@ small, .muted, .ws-meta, .block-meta, .lr-meta, .file-sub, .r-sub, .cmdk-sub { f
 #app.home-mode .home-watermark { display: block; }
 .home-hero { padding: 72px 20px 18px; }
 .hero-mark { width: 64px; height: 64px; border-radius: var(--r-lg); background: linear-gradient(180deg, rgba(255,255,255,0.07), transparent 60%), var(--bg-3);
-  color: var(--accent-ink); --accent: var(--accent-ink); box-shadow: inset 0 0 0 1px var(--line-2), inset 0 1px 0 rgba(255,255,255,0.06), 0 30px 60px -30px rgba(0,0,0,.8); }
+  color: var(--silver); --accent: var(--accent-ink); box-shadow: inset 0 0 0 1px var(--line-2), inset 0 1px 0 rgba(255,255,255,0.06), 0 30px 60px -30px rgba(0,0,0,.8); }
 .hero-mark .ic { width: 38px; height: 38px; stroke-width: 1.6; }
 .hero-name { font-family: var(--font); font-weight: 600; font-size: clamp(44px, 5.6vw, 56px); letter-spacing: -0.035em; line-height: 1.02; color: var(--text-1); }
 /* two-tone headline: the second line steps back */

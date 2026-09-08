@@ -4625,11 +4625,9 @@
     // canvas. Without this the canvas cleared the selection first and every
     // button on the selection bar appeared to do nothing.
     if (e.target.closest && e.target.closest('#sel-bar, #sel-frame, #outline, #present-bar, #pen-bar, .banner-stack, #minimap')) return;
-    // read mode: panning and navigating still work, editing does not
-    if (state.readOnly) {
-      const onBlock = e.target.closest && e.target.closest('.block');
-      if (onBlock) return;
-    }
+    // read mode: panning and navigating still work, editing does not - a
+    // pointer landing on a block pans the page like one on empty paper
+    // (see the pass-through rule below); a double-tap still steps inside
 
     // committing an in-progress table cell / title edit when clicking away from it
     if (editTableId && tsel && tsel.editing) {
@@ -4786,6 +4784,9 @@
     }
     // with the eraser up, a finger (the stylus never gets here) only pans
     if (blockEl && state.penEraser) { blockEl = null; inkPassThrough = null; blockTap = null; }
+    // read mode: nothing is picked up or moved, so any object under the pointer pans
+    if (blockEl && state.readOnly) { blockEl = null; inkPassThrough = null; blockTap = null; }
+    if (state.readOnly) { inkPassThrough = null; blockTap = null; }
     // clicked a different block (or empty canvas) while a table's cells were active → leave cell mode
     if (editTableId && (!blockEl || blockEl.dataset.id !== editTableId)) closeTableEditor();
     if (blockEl) {

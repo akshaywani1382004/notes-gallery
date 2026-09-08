@@ -69,3 +69,9 @@ Stage 2 of the Ink Plane (stroke model, spatial index, handles on demand, Indexe
 - Image properties: Crop (rectangle) and Crop by selection (freehand loop, transparent outside). Apply replaces the image at full resolution and is one undo step.
 
 Ink Plane stage 2 moves to 2.0.4 / v118.
+
+## 2.0.4 (site v118) — polish after the theme
+
+- Floating panels (draw panel, selection bar, menus, context menu, command palette, search, mini-map, toasts, outline, editor drawer) are frosted glass again: 16 px backdrop blur at 72% surface, by the user's choice after the cost was explained (a blur re-renders whenever the canvas under it changes, so pan and zoom with panels open cost a few ms per frame on a tablet).
+- Read mode: a pointer landing on any object pans the page, exactly like one on empty paper. Nothing is picked up or moved; a double-tap on a card still steps inside.
+- The mark is silver again with one emerald point at the nib, on the dark tile: toolbar, About, home hero, favicon, icon.svg and all Windows and Android icons.
