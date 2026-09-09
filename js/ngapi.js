@@ -117,6 +117,7 @@
 
     // Which block sits under a client point: what a real tap would land on.
     hitTest: (cx, cy) => {
+      if (attached && attached.hitAt) return attached.hitAt(cx, cy);
       const el = document.elementFromPoint(cx, cy);
       const blk = el && el.closest ? el.closest('.block') : null;
       return (blk && blk.dataset.id) || null;
@@ -138,7 +139,10 @@
 
   /* ------------------------- bag-dependent surface ---------------------- */
 
+  let attached = null;                 // the app's accessor bag, once it has attached
+
   NG.onAttach((bag) => {
+    attached = bag;
     const { state, stage, PEN_STYLES } = bag;
     const styleOf = (b) => (PEN_STYLES[b.style] ? b.style : 'pen');
     const widthOf = (b) => b.width || 3;

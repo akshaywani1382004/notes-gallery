@@ -208,6 +208,26 @@ Kept: all interaction constants; ink record encoding and the width-shift quirk; 
 
 **Stage 2 — 2.0.1 "Model and storage" (v115).** `js/ink/{codec,styles,spatial,model,hit}.js` extracted verbatim with golden `d`-string fixtures; InkModel + SpatialIndex built alongside the DOM renderer; `hit.js` used for tap-pick, stroke eraser, lasso, sweep with dual-run assertions against `elementFromPoint`; handles/actions mounted only when selected; ResizeObserver rect cache; keyed `drawEdges`; compositor-only `#paper`; IDB v4 indexes + key-only counts + WriteQueue + engine worker owning IDB; autosave payload built off-thread from cached chunks (still one file write per save). Acceptance (harness): goldens string-equal for all styles/widths; hit-test dual-run 100 % agreement over the r3/r4/r6 scenarios; undo/redo of 500 strokes = one transaction (≤ 40 ms at 2206 blocks, was 9–23 ms median with per-record commits at smaller counts); zoom-step forced flush ≤ 3 ms at 2206 blocks (was 36); level open at 10k strokes ≤ 300 ms in the worker; v3→v4 upgrade test; importtest/savetest unchanged; zero storage-attributable main-thread tasks > 16 ms during a 10 s scribble (LoAF). Tablet only: LoAF count during scribble ≤ 1; payload build no longer visible in the overlay's main-thread ms. Risk: low–medium (worker/undo ordering — covered by r10/r11 and new ack tests).
 
+**Stage 3 as built (2.1.0, v122) - what changed from the plan.** The measurement that drove it: with
+2000 strokes a pan ran at 33 ms/frame painted and 16.7 ms with the identical elements present but
+`visibility:hidden` - script, layout and style were flat, so the whole cost was rastering the vector
+paths. That made a much smaller change sufficient than the plan assumed. Built: `js/ink/planes.js`
+(`NG.Planes`) drawing committed strokes into `#ink-under` (z0) and `#ink-over` (z2) through 512 px
+device tiles keyed by the exact device scale, an 8-tile-per-frame budget with a stale-scale blit while
+the crisp tiles fill in, an LRU cap of 240 tiles, and per-stroke bounds taken from the points (a
+record's own box does not always contain what it paints). NOT built, and not needed for the win: a
+tile worker, a backend interface, plane assignment beyond over/under, LoD, float bitmaps, and the
+removal of `.block-ink`. The elements stay in the page unpainted, so hit-testing, the eraser, export,
+the mini-map and the lift container are unchanged; a selected or lifted stroke is shown again and the
+planes exclude it (`setExcluded`). Because a hidden element is not hit-testable, `inkHitAt` /
+`topBlockAt` resolve strokes from data with the old box semantics and honour paint order (ink at
+`z||INK_Z` beats a card at `z||0`); `bag.hitAt` backs `__ng.hitTest`. Parity against the DOM renderer:
+99.998 % of pixels identical. Fallback: `?ink=dom` or `localStorage['ng-ink-renderer']='dom'`.
+Measured after: 6000 strokes pan at 16.7 ms (p95 16.9) versus 66.7 ms (p95 133) on the DOM renderer.
+Also learned: 2000 CARDS pan worse than 2000 strokes (50 ms/frame), so the same "painted elements are
+the cost" finding applies to the page itself - virtualising off-screen blocks is the natural stage 4,
+ahead of deleting `.block-ink`.
+
 **Stage 3 — 2.1.0 "Ink to tiles".** `tiles.js`, `tile-worker.js`, `backend-2d.js`, planes and plane assignment, `overlay.js` (glow/outline/float/lock badge), commit-first hand-off (pixel-identical swap), exact-S keys, stale-scaled zoom, LoD, `__ng.readInkPixels/tiles/renderStroke` wired to the real renderer; drag and scale via float bitmap / vector lift; minimap from the model; DOM ink renderer behind `ng-ink-renderer='dom'`. Acceptance (harness): suite green in both renderers; `parity` ≥ 99.5 % identical pixels wet vs committed and r6/matchtest via `readInkPixels`; `tiles` invalidation exactness; `scale` growth < 1.3× from 606 to 10000 strokes for pan/zoom/minimap/undo; `#world` child count independent of stroke count; drag300 `LayoutCount` Δ = 0; lasso1000 `LayoutCount` Δ ≤ 1. Tablet only: pan of a 2000-stroke page within 1.3× of a 100-stroke page (frame-gap p95); dense-tile raster ms and post-zoom time-to-crisp recorded; GPU memory under the 96-tile cap without context loss; z-ordered cards above ink render correctly on existing files. Risk: medium–high (largest change; mitigated by the stage-1 port, the renderer flag, and the 2D backend being the legacy generator).
 
 **Stage 4 — 2.2.0 "Flat cost everywhere".** Delete `paintInkNode`/`.block-ink`; ES-module split + `tools/bundle.mjs`; OPFS JSONL journal + idle byte-identical full save + Android OPFS snapshot before the content:// mirror + journal replay; worker import; additive export fields; in-canvas Import of workspace files; `content://` read check; dead code removed. Acceptance (harness): `autosave` test (bytes after one stroke ∝ stroke; full file byte-identical to `JSON.stringify(payload)`; replay after simulated kill mid-mirror restores IDB); importtest/savetest/pdftest unchanged; suite runs against the bundle from `file://` and `http://`; total suite time ≤ 2 min with `flush()`. Tablet only: kill the app mid-save and reopen — no truncated workspace; Windows: 10–50 MB full save happens at idle with no main-thread task > 16 ms. Risk: medium (FileSystemFileHandle cloning into workers — main-thread Blob fallback; SAF providers ignoring "t" — length check).

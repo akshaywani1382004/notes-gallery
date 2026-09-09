@@ -459,6 +459,7 @@
     stage.style.backgroundPosition = `${tx}px ${ty}px`;
     positionSelBar();
     positionSelFrame();
+    if (planesOn) NG.Planes.draw();
     if (NG.Overlay) NG.Overlay.draw();
     const pct = Math.round(scale * 100) + '%';
     $('#btn-zoom-reset').textContent = pct;
@@ -557,7 +558,81 @@
     untrackAllSizes();
     mmDirty = true; mmContent = null;
     for (const b of state.blocks) world.appendChild(makeBlockEl(b));
+    planesRefresh();
   }
+
+  /* --------------------------- ink planes ------------------------------ *
+   * Committed strokes are painted by NG.Planes onto two canvases. Their DOM
+   * elements stay in the page (everything that reads the DOM keeps working)
+   * but are not painted, which is what a big page was paying for. A stroke
+   * that is selected or lifted for a drag paints itself again and the planes
+   * leave it out, so the glow and the lift container are untouched.        */
+  const INK_PLANES = (() => {
+    try { if (new URLSearchParams(location.search).get('ink') === 'dom') return false; } catch (_) {}
+    try { if (localStorage.getItem('ng-ink-renderer') === 'dom') return false; } catch (_) {}
+    return true;
+  })();
+  let planesOn = false;
+  function initPlanes() {
+    if (!INK_PLANES || planesOn || !NG.Planes) return;
+    const over = $('#ink-over'), under = $('#ink-under');
+    if (!over || !under) return;
+    NG.Planes.init(planeBag(), over, under);
+    world.classList.add('ink-planes');
+    planesOn = true;
+  }
+  function planeBag() {
+    return { state, stageRect, inkBox, inkWorldPts, INK_Z };
+  }
+  // the strokes on this level, and what the DOM is drawing right now
+  function planesSync(full) {
+    if (!planesOn) return;
+    if (full) NG.Planes.setStrokes(state.blocks.filter(b => b.kind === 'ink' && b.parentId === state.level));
+    const busy = new Set();
+    for (const id of state.selectedIds) busy.add(id);
+    if (NG.Lift && NG.Lift.active) for (const it of NG.Lift.active.items) busy.add(it.id);
+    if (dragging) for (const id of (dragging.ids || [])) busy.add(id);
+    NG.Planes.setExcluded(busy);
+    NG.Planes.draw();
+  }
+  function planesInvalidate(box) { if (planesOn) { NG.Planes.invalidate(box); NG.Planes.draw(); } }
+  // The topmost stroke under a screen point, by the same box rule the hidden
+  // element would have answered with. Only needed while the planes paint.
+  function inkHitAt(clientX, clientY) {
+    if (!planesOn) return null;
+    const r = stageRect();
+    const p = screenToWorld(clientX - r.left, clientY - r.top);
+    const slack = 6 / (state.view.scale || 1);       // a finger's worth of room, as before
+    let best = null, bestKey = -Infinity;
+    for (const b of state.blocks) {
+      if (b.kind !== 'ink' || b.parentId !== state.level) continue;
+      const box = inkBox(b);
+      if (p.x < box.x - slack || p.y < box.y - slack || p.x > box.x + box.w + slack || p.y > box.y + box.h + slack) continue;
+      // The box, not the line: the stroke's own element answered anywhere
+      // inside its box before (its SVG path is stroke-only, the div is not),
+      // and the eraser and tap-to-pick were built on that.
+      const key = (b.z || 0) * 1e13 + (b.createdAt || 0);
+      if (key >= bestKey) { bestKey = key; best = b; }
+    }
+    return best;
+  }
+  // What a tap lands on, honouring paint order: handwriting paints above the
+  // page, so a stroke lying over a card wins even though the browser can only
+  // see the card (the stroke's element is not painted while the planes are).
+  function topBlockAt(clientX, clientY, domEl) {
+    const ink = inkHitAt(clientX, clientY);
+    const dom = domEl && domEl.dataset ? state.blocks.find(x => x.id === domEl.dataset.id) : null;
+    if (!ink) return dom || null;
+    if (!dom) return ink;
+    const zi = ink.z || INK_Z, zd = dom.z || 0;
+    return zi >= zd ? ink : dom;
+  }
+  const topElAt = (clientX, clientY, domEl) => {
+    const b = topBlockAt(clientX, clientY, domEl);
+    return b ? (state.els[b.id] || domEl || null) : (domEl || null);
+  };
+  const inkElAt = (clientX, clientY) => { const b = inkHitAt(clientX, clientY); return b ? state.els[b.id] : null; };
+  function planesRefresh() { if (planesOn) planesSync(true); }
 
   /* ------------------------- block size cache -------------------------- *
    * A card's height comes from its content, so the old code asked the element
@@ -854,7 +929,7 @@
     else if (b.kind === 'shape') { paintShapeNode(el, b); }
     else if (b.kind === 'image') { paintImageNode(el, b); }
     else if (b.kind === 'check') { paintCheckNode(el, b); }
-    else if (b.kind === 'ink') { paintInkNode(el, b); }
+    else if (b.kind === 'ink') { paintInkNode(el, b); planesInvalidate(inkBox(b)); }
     else if (b.kind === 'table') { paintTableNode(el, b); }
     else { paintBlock(el, b); el.style.setProperty('--b-accent', b.color || PALETTE[0]); }
     el.classList.toggle('locked', !!b.locked);
@@ -1746,6 +1821,7 @@
     for (const f of [...target.files, ...other.files]) noteParent(f.blockId);
     await Promise.all([...parents].filter(pid => here.has(pid)).map(pid => recount(pid)));
     state.edges = await DB.levelEdges(state.level, state.ws);
+    planesRefresh();
     applySelectionClasses(); applyTagFilter(); drawEdges(); scheduleOutline(); updateNavButtons();
   }
 
@@ -2202,6 +2278,7 @@
     for (const id of prevSel) if (!sel.has(id)) unmountChrome(id);
     for (const id of sel) if (!prevSel.has(id)) mountChrome(id);
     prevSel = new Set(sel);
+    planesSync(false);
     if (NG.Overlay) NG.Overlay.draw();
     if (state.levelLayout === 'list') $$('.list-row').forEach(n => n.classList.toggle('selected', sel.has(n.dataset.id)));
     syncSelectionButtons();
@@ -4858,7 +4935,7 @@
     // a finger pans the page instead.
     if (lassoActive() && !lasso && inkAccepts(e) && offTools) {      // inkAccepts: fingers only when the hand button says so
       const erase = eraseLasso();
-      const hitBlock = e.target.closest('.block');
+      const hitBlock = topElAt(e.clientX, e.clientY, e.target.closest('.block'));
       // With the Select tool a block still behaves normally (tap to pick,
       // drag to move) and the loop starts from empty canvas. The eraser's
       // loop starts anywhere.
@@ -4949,7 +5026,7 @@
       return;
     }
 
-    let blockEl = e.target.closest('.block');
+    let blockEl = topElAt(e.clientX, e.clientY, e.target.closest('.block'));
     // Handwriting behaves like ink on paper: it only moves once you have
     // deliberately picked it up with a Select tool. Otherwise a drag that
     // starts on a stroke pans the page, so writing never shifts by accident
@@ -5758,7 +5835,7 @@
     // while drawing, a stylus double-tap is just two dots of ink
     if ((state.penMode || state.penEraser) && lastPointerType === 'pen') return;
     if (e.target.closest('[data-blk]')) return; // action buttons, not "open"
-    const blockEl = e.target.closest('.block');
+    const blockEl = topElAt(e.clientX, e.clientY, e.target.closest('.block'));
     if (blockEl) {
       const b = state.blocks.find(x => x.id === blockEl.dataset.id);
       if (b && b.kind === 'text') openTextEditor(b.id);
@@ -6015,6 +6092,7 @@
     if (eraseBatch.added.has(b.id)) eraseBatch.added.delete(b.id);   // born and gone in one gesture
     else { const c = state.childCounts[b.id]; eraseBatch.removed.push({ ...b, __deps: !c || !!(c.blocks || c.files) }); }
     if (b.kind !== 'ink') closeEditorsFor(b.id);
+    if (b.kind === 'ink') planesInvalidate(inkBox(b));
     state.blocks = state.blocks.filter(x => x.id !== b.id);
     const wasSel = state.selectedIds.delete(b.id);
     const el = state.els[b.id]; if (el) el.remove();
@@ -6089,6 +6167,7 @@
     state.blocks.push(nb);
     state.childCounts[nb.id] = { blocks: 0, files: 0 };
     world.appendChild(makeBlockEl(nb));
+    planesRefresh();
   }
   // whole-stroke eraser: whatever stroke is under the point goes
   function eraseStrokeAt(clientX, clientY) {
@@ -6097,12 +6176,11 @@
     if (eraserScope === 'all') {                       // the toolbar eraser: whatever object is under the point
       const g = el.closest('g.edge-g');
       if (g) { const ed = state.edges.find(x => x.id === g.dataset.id); if (ed) removeEdgeByEraser(ed); return; }
-      const any = el.closest('.block');
-      const b = any && state.blocks.find(x => x.id === any.dataset.id);
+      const b = topBlockAt(clientX, clientY, el.closest('.block'));
       if (b && !b.locked) removeInkBlock(b);
       return;
     }
-    const node = el.closest('.block-ink');
+    const node = el.closest('.block-ink') || inkElAt(clientX, clientY);
     if (!node) return;
     const b = state.blocks.find(x => x.id === node.dataset.id);
     if (!b || b.kind !== 'ink' || b.locked) return;
@@ -6482,6 +6560,7 @@
     state.blocks.push(b);
     state.childCounts[b.id] = { blocks: 0, files: 0 };
     world.appendChild(makeBlockEl(b));
+    planesRefresh();             // on the plane before the wet layer releases it
     const level = state.level, gen = history.gen;
     await afterInkWrites(async () => {
       await DB.saveBlock(b);
@@ -9258,6 +9337,7 @@
     bindTextEditor(); bindShapeEditor(); bindImageEditor(); bindCheckEditor(); bindInkEditor(); bindTableEditor(); bindImagePaste(); bindCmdk(); bindMinimap(); bindSelFrame();
     document.addEventListener('click', (e) => { const rb = e.target.closest && e.target.closest('.param-reset'); if (rb) { e.preventDefault(); resetParamField(rb); } });
     NG.attachApi(makeBag());
+    initPlanes();
     // the About header names the build: app version and the site's cache-busting number
     try {
       const av = $('#about-version');
@@ -9294,6 +9374,11 @@
       getTools: () => ({ penMode: state.penMode, penEraser: state.penEraser, selectTool: state.selectTool, eraserMode, lassoMode, penStyle, penColor, penSize, fingerDraw }),
       selectionWorldBox, applySelectionClasses, setSelection, clearSelection, selectBlock,
       afterInkWrites, flushWrites: () => afterInkWrites(() => DB.flush()),
+      hitAt: (cx, cy) => {
+        const el = document.elementFromPoint(cx, cy);
+        const b = topBlockAt(cx, cy, el && el.closest ? el.closest('.block') : null);
+        return b ? b.id : null;
+      },
       blockScreenRect: (id) => { const el = state.els[id]; if (!el) return null; const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; },
       toast, markChanged,
     };

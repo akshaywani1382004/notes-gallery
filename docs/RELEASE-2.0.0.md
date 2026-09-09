@@ -138,3 +138,25 @@ What changed:
 - The database moves to version 4, adding workspace-and-parent indexes. Existing data upgrades in place on first open.
 
 Still to come in stage 2: the database moves into a worker, and the autosave payload is built off the input thread.
+
+## 2.1.0 (site v122) - Ink Plane stage 3: handwriting is painted on canvas
+
+A page full of handwriting used to slow down for a reason none of the earlier timings could see. Script, layout and style recalculation were all flat; the cost was the browser rastering thousands of vector paths every time the page moved. Measured by hiding the very same strokes and panning again: 2000 strokes went from 33 ms a frame to 16.7 ms with nothing else changed.
+
+Committed strokes are now drawn onto two canvases, one under the page and one over it, in 512 pixel tiles keyed by the exact zoom. Panning re-uses the tiles it has and fills only what comes into view; a zoom shows the nearest tiles it already has for a moment, then sharpens.
+
+Pan frame time, same machine, GPU rasterisation on:
+
+| Strokes on the page | Before | Now |
+| --- | --- | --- |
+| 600 | 16.7 ms (p95 16.8) | 16.7 ms (p95 16.8) |
+| 2000 | 16.7 ms (p95 49.8) | 16.7 ms (p95 17.1) |
+| 6000 | 66.7 ms (p95 133) | 16.7 ms (p95 16.9) |
+
+At 6000 strokes the page ran at 15 frames a second; it now holds 60. A tablet reaches that point far sooner than this desktop does, so the change matters earlier there.
+
+What deliberately did not change: a stroke's element stays in the page, so hit-testing, the eraser, export, the mini-map and every other reader work as before; it simply is not painted. A stroke you pick up or drag paints itself again and the canvas leaves a hole for it, so the selection glow, the lift container and the scale grip are untouched. Rendering was checked against the old renderer pixel by pixel: 99.998% of pixels identical, the rest antialiasing along stroke edges.
+
+Handwriting sits above the page unless you send it behind, which is what the two canvases represent. A stroke cannot be sandwiched between two cards any more; it is above the page or behind it.
+
+If anything looks wrong, `?ink=dom` in the address (or `localStorage.setItem('ng-ink-renderer','dom')`) puts the old renderer back for that session.
