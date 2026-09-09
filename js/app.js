@@ -649,6 +649,18 @@
   function planesAdd(b, now) { if (planesOn) { NG.Planes.addStroke(b); if (now) NG.Planes.draw(false); else planesQueueDraw(); } }
   function planesUpdate(b) { if (planesOn) { NG.Planes.updateStroke(b); planesQueueDraw(); } }
   function planesRemove(id) { if (planesOn) { NG.Planes.removeStroke(id); planesQueueDraw(); } }
+  // Any block a recorded change touched: re-place the ink ones in the plane's
+  // index (a drag, an align, a group move - anything that changes x/y or
+  // shape without going through finalizeInk/refreshBlockCard) and drop the
+  // ones that no longer exist. Everything else is not the plane's concern.
+  function planesNotifyMoved(before, after) {
+    if (!planesOn) return;
+    const afterBlocks = (after && after.blocks) || [];
+    const beforeBlocks = (before && before.blocks) || [];
+    const afterIds = new Set(afterBlocks.map(b => b.id));
+    for (const b of afterBlocks) if (b.kind === 'ink') planesUpdate(b);
+    for (const b of beforeBlocks) if (b.kind === 'ink' && !afterIds.has(b.id)) planesRemove(b.id);
+  }
   // The topmost stroke under a screen point, by the same box rule the hidden
   // element would have answered with. Only needed while the planes paint.
   function inkHitAt(clientX, clientY) {
@@ -1752,6 +1764,16 @@
     if (history.past.length > history.limit) history.past.shift();
     history.future.length = 0;
     markChanged(before, after);        // exactly what changed, straight to the mini-map's index
+    // A handwriting block can change position or shape without ever passing
+    // through finalizeInk/refreshBlockCard - a multi-select drag is exactly
+    // this: the record moves and the DOM element follows it, but nothing told
+    // the plane's spatial index the stroke was no longer where it last filed
+    // it. It kept looking in the old spot, found nothing, and the stroke
+    // stayed invisible - masked for as long as the drag's own selection
+    // outline covered for it - until the level reloaded and rebuilt the index
+    // from scratch. recordChange is where every such move is already known,
+    // so the plane is told here rather than at each place that could move ink.
+    if (level === state.level) planesNotifyMoved(before, after);
   }
   function clearHistory() { history.past.length = 0; history.future.length = 0; history.gen++; }
 
