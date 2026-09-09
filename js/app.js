@@ -1257,7 +1257,7 @@
       pasteKeyAt = 0;
       if (state.ws == null || state.levelLayout !== 'canvas') return;
       const t = document.activeElement;
-      if (t && /^(INPUT|TEXTAREA)$/.test(t.tagName)) return;   // let text fields paste normally
+      if (t && (/^(INPUT|TEXTAREA)$/.test(t.tagName) || t.isContentEditable)) return;   // let text fields and table cells paste normally
       let got = null;
       if (NG.Clip) { try { got = await NG.Clip.fromPasteEvent(e); } catch (_) { got = null; } }
       else {
@@ -1494,6 +1494,10 @@
   // History is per workspace session (cleared on open/home).
   const history = { past: [], future: [], limit: 200, gen: 0 };   // gen: bumped by every clear
   const cloneRec = (r) => ({ ...r });      // shallow clone (keeps file Blob refs)
+  // Everything that is a leaf: it holds no inner canvas, so it never "opens".
+  const LEAF_KINDS = ['text', 'shape', 'image', 'ink', 'table', 'check'];
+  const isLeafKind = (k) => LEAF_KINDS.includes(k);
+  const opensInside = (b) => !!b && !isLeafKind(b.kind);
   const emptySet = () => ({ blocks: [], edges: [], files: [] });
   const cloneSet = (s) => ({
     blocks: (s.blocks || []).map(cloneRec),
@@ -1579,7 +1583,7 @@
   // before; anything in `other` and not in `target` goes.
   async function applyRecsToView(target, other, level) {
     if (level !== state.level || state.levelLayout === 'list') { await loadLevel(level, {}); return; }
-    const LEAF = ['text', 'shape', 'image', 'ink', 'table', 'check'];
+    const LEAF = LEAF_KINDS;
     const onLevel = (r) => r.parentId === state.level;
     const keep = new Set(target.blocks.map(b => b.id));
     const here = new Set(state.blocks.map(b => b.id));
@@ -2192,7 +2196,8 @@
   async function addSibling(id) {
     const b = state.blocks.find(x => x.id === id); if (!b) return;
     const box = blockBox(b);
-    await createBlock('block', { x: box.x + box.w + 40, y: box.y });
+    // createBlock centres the new block on the point it is given
+    await createBlock('block', { x: box.x + box.w + 40 + BLOCK_W / 2, y: box.y + 30 });
   }
 
   /* --------------------- full screen + axis locks ----------------------- *
@@ -2267,6 +2272,18 @@
   const STYLE_FIELDS = ['color', 'font', 'size', 'bold', 'italic', 'align', 'glow', 'glowColor',
                         'fill', 'outline', 'outlineW', 'outlineColor', 'round', 'width', 'style',
                         'dash', 'layout'];
+  // What a look means depends on what it lands on: a text's size must not
+  // resize a checkbox, and a card's "opens as list" is not a look at all for
+  // anything else. Across kinds only the colour travels.
+  const STYLE_BY_KIND = {
+    text:  ['color', 'font', 'size', 'bold', 'italic', 'align', 'glow', 'glowColor'],
+    shape: ['color', 'fill', 'outline', 'outlineW', 'outlineColor'],
+    image: ['round', 'outline', 'outlineW', 'outlineColor'],
+    ink:   ['color', 'width', 'style'],
+    check: ['color', 'size'],
+    table: ['color', 'font', 'size', 'bold', 'align'],
+    block: ['color', 'layout'],
+  };
   let styleClip = null;
   function copyStyle() {
     const id = [...state.selectedIds][0];
@@ -2285,8 +2302,14 @@
     const items = ids.map(id => state.blocks.find(x => x.id === id)).filter(Boolean);
     const undoBefore = { blocks: items.map(b => ({ ...b })), edges: [], files: [] };
     let done = 0;
+    const from = styleClip.__kind || 'block';
+    let colourOnly = 0;
     for (const b of items) {
-      STYLE_FIELDS.forEach(f => { if (styleClip[f] !== undefined) b[f] = styleClip[f]; });
+      const kind = b.kind || 'block';
+      const fields = STYLE_BY_KIND[kind] || ['color'];
+      const same = kind === from;
+      if (!same) colourOnly++;
+      fields.forEach(f => { if (styleClip[f] !== undefined && (same || f === 'color')) b[f] = styleClip[f]; });
       b.updatedAt = Date.now();
       await DB.saveBlock(b);
       refreshItem(b.id);
@@ -2294,7 +2317,8 @@
     }
     recordChange(undoBefore, { blocks: items.map(b => ({ ...b })), edges: [], files: [] });
     drawEdges();
-    toast(done + (done === 1 ? ' block painted' : ' blocks painted'));
+    toast(done + (done === 1 ? ' block painted' : ' blocks painted') +
+          (colourOnly ? ' \u2014 only the colour fits a different kind' : ''));
   }
 
   /* ------------------------------ groups -------------------------------- *
@@ -2600,6 +2624,7 @@
     else if (b.kind === 'image') openImageEditor(b.id);
     else if (b.kind === 'check') openCheckEditor(b.id);
     else if (b.kind === 'ink') openInkEditor(b.id);
+    else openDrawer(b.id);
     toast('Reset to original');
   }
 
@@ -2676,6 +2701,7 @@
     if (focusTitle) setTimeout(() => { $('#f-title').select(); $('#f-title').focus(); }, 60);
   }
   function closeDrawer() {
+    blurPanelField();
     flushEdit();
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; if (drawerBlock) persistBlock(drawerBlock); }
     $('#drawer').hidden = true;
@@ -2744,6 +2770,8 @@
       });
     });
     $('#drawer-close').addEventListener('click', closeDrawer);
+    $('#f-done').addEventListener('click', closeDrawer);
+    $('#f-reset').addEventListener('click', resetActiveEditor);
     $('#f-delete').addEventListener('click', () => drawerBlock && deleteBlock(drawerBlock.id));
     $('#f-open').addEventListener('click', () => drawerBlock && navigateTo(drawerBlock.id));
     $('#f-upload').addEventListener('click', () => $('#file-input').click());
@@ -3780,7 +3808,11 @@
     if (tt && b) {
       const val = cancel ? (tableOrig ? tableOrig.title : b.title) : tt.textContent.trim();
       tt.removeAttribute('contenteditable');
-      if ((b.title || '') !== val) { b.title = val; b.updatedAt = Date.now(); persistBlock(b); markChanged(); }
+      if ((b.title || '') !== val) {
+        const before = tableSnapshot(b);
+        b.title = val; b.updatedAt = Date.now(); persistBlock(b);
+        recordChange({ blocks: [before], edges: [], files: [] }, { blocks: [tableSnapshot(b)], edges: [], files: [] });
+      }
       refreshBlockCard(b.id);
     }
     titleEditing = false;
@@ -3852,6 +3884,9 @@
     const cell = cellEl(r, c); if (cell) cell.textContent = val;
     b.updatedAt = Date.now(); persistBlock(b); markChanged();
   }
+  // A table's rows are arrays of arrays and history clones records shallowly,
+  // so an entry has to carry its own copy of the grid.
+  const tableSnapshot = (b) => ({ ...b, rows: (b.rows || []).map(r => r.slice()) });
   function commitCellEdit(cancel) {
     if (!tsel || !tsel.editing) return;
     const cell = cellEl(tsel.r, tsel.c);
@@ -3860,7 +3895,11 @@
       if (cancel) cell.textContent = tsel.orig != null ? tsel.orig : '';
       const val = cell.textContent;
       ensureCell(b, tsel.r, tsel.c);
-      if (b.rows[tsel.r][tsel.c] !== val) { b.rows[tsel.r][tsel.c] = val; b.updatedAt = Date.now(); persistBlock(b); markChanged(); }
+      if (b.rows[tsel.r][tsel.c] !== val) {
+        const before = tableSnapshot(b);
+        b.rows[tsel.r][tsel.c] = val; b.updatedAt = Date.now(); persistBlock(b);
+        recordChange({ blocks: [before], edges: [], files: [] }, { blocks: [tableSnapshot(b)], edges: [], files: [] });
+      }
       cell.removeAttribute('contenteditable');
       if (tsel.r === 0 || tsel.c === 0) refreshBlockCard(b.id);   // restore column/row grips wiped while editing an edge cell
     }
@@ -3974,7 +4013,7 @@
     $('#file-count').textContent = files.length ? `(${files.length})` : '';
     list.innerHTML = '';
     if (!files.length) { list.innerHTML = '<div class="muted" style="font-size:13px;padding:2px 2px 6px">No files yet.</div>'; return; }
-    files.sort((a, b) => a.createdAt - b.createdAt);
+    files.sort((a, b) => (a.createdAt - b.createdAt) || String(a.name || '').localeCompare(String(b.name || '')) || String(a.id).localeCompare(String(b.id)));
     for (const f of files) {
       const row = document.createElement('div');
       row.className = 'file-row';
@@ -5340,12 +5379,19 @@
   }
   function endMarquee() { $('#marquee').hidden = true; marquee = null; }
 
+  // A panel that is put away must not keep the keyboard: a field left focused
+  // inside it makes every shortcut think the user is typing.
+  function blurPanelField() {
+    const a = document.activeElement;
+    if (a && a.closest && a.closest('.drawer, .modal, #pen-bar, #props, #prompt')) { try { a.blur(); } catch (_) {} }
+  }
   function closeDrawerIfOpen() {
     if (!$('#drawer').hidden) closeDrawer();
     if (!$('#text-drawer').hidden) closeTextEditor();
     if (!$('#shape-drawer').hidden) closeShapeEditor();
     if (!$('#image-drawer').hidden) closeImageEditor();
     if (!$('#ink-drawer').hidden) closeInkEditor();
+    if (!$('#check-drawer').hidden) closeCheckEditor();
     if (!$('#table-drawer').hidden || editTableId) closeTableEditor();   // also exits drawer-less cell mode
     hideSearchResults();
     $('#menu').hidden = true;
@@ -5363,7 +5409,7 @@
       if (!state.selectedIds.has(targetId)) selectBlock(targetId);
       const b = state.blocks.find(x => x.id === targetId);
       const many = state.selectedIds.size > 1;
-      const openable = b && b.kind !== 'text' && b.kind !== 'shape' && b.kind !== 'image';
+      const openable = opensInside(b);
       items = [{ icon: 'pencil', label: 'Edit', fn: () => openAnyEditor(targetId), disabled: many }];
       if (openable) items.push({ icon: 'arrow-right', label: 'Open inside', fn: () => navigateTo(targetId), disabled: many });
       items.push(
@@ -5574,7 +5620,7 @@
     if (state.readOnly) {                       // look, step in, change nothing
       const el = e.target.closest('.block');
       const b = el && state.blocks.find(x => x.id === el.dataset.id);
-      if (b && !['text', 'shape', 'image', 'ink', 'table', 'check'].includes(b.kind)) navigateTo(b.id);
+      if (opensInside(b)) navigateTo(b.id);
       return;
     }
     // while drawing, a stylus double-tap is just two dots of ink
@@ -6596,7 +6642,7 @@
   function bindMinimap() {
     const cv = $('#minimap');
     let dragging = false;
-    cv.addEventListener('pointerdown', (e) => { dragging = true; cv.setPointerCapture(e.pointerId); minimapPan(e.clientX, e.clientY); });
+    cv.addEventListener('pointerdown', (e) => { dragging = true; try { cv.setPointerCapture(e.pointerId); } catch (_) {} minimapPan(e.clientX, e.clientY); });
     cv.addEventListener('pointermove', (e) => { if (dragging) minimapPan(e.clientX, e.clientY); });
     cv.addEventListener('pointerup', (e) => { dragging = false; try { cv.releasePointerCapture(e.pointerId); } catch (_) {} });
     cv.addEventListener('pointercancel', (e) => { dragging = false; try { cv.releasePointerCapture(e.pointerId); } catch (_) {} });
@@ -6761,7 +6807,7 @@
     const outEdges = edges.map(e => edgeOut(e));
     return {
       app: 'NotesGallery', kind: 'workspace', version: 2, exportedAt: new Date().toISOString(),
-      workspace: { name: overrideName || (w && w.name) || 'Workspace', color: (w && w.color) || PALETTE[0] },
+      workspace: { name: overrideName || (w && w.name) || 'Workspace', color: (w && w.color) || PALETTE[0], paper: (w && w.paper) || 'dots' },
       blocks: outBlocks, edges: outEdges, files: outFiles,
     };
   }
@@ -7300,7 +7346,7 @@
       tree.appendChild(row);
       // every block that can hold things - not the loose text, shapes, images,
       // strokes and tables, which would swamp the tree
-      kids.forEach(k => { if (!['text', 'shape', 'image', 'ink', 'table', 'check'].includes(k.kind)) add(k.id, blockLabel(k), k.color, depth + 1); });
+      kids.forEach(k => { if (opensInside(k)) add(k.id, blockLabel(k), k.color, depth + 1); });
     };
     add(DB.ROOT, state.wsName || 'Workspace', PALETTE[0], 0);
   }
@@ -7444,7 +7490,8 @@
     const count = (await DB.listWorkspaces()).length;
     const name = (data.workspace && data.workspace.name) || 'Imported workspace';
     const color = (data.workspace && data.workspace.color) || pickWsColor(count);
-    await DB.saveWorkspace({ id: wsId, name, color, createdAt: now, updatedAt: now });
+    const paper = (data.workspace && data.workspace.paper) || 'dots';
+    await DB.saveWorkspace({ id: wsId, name, color, paper, createdAt: now, updatedAt: now, usedAt: now });
     const idMap = new Map();
     data.blocks.forEach(b => idMap.set(b.id, uid()));
     for (const b of data.blocks) {
@@ -7694,6 +7741,8 @@
       const w = await DB.getWorkspace(loc.ws);
       if (w) {
         state.ws = loc.ws; state.wsName = w.name;
+        applyPaper(w.paper);                       // a refresh lands here, not in openWorkspace
+        touchWorkspaceUse(loc.ws);
         clearHistory();
         document.getElementById('app').classList.remove('home-mode');
         $('#home').hidden = true; $('#stage').hidden = false;
@@ -7758,6 +7807,19 @@
     if (leaving) queuePreview(leaving, true);
   }
 
+  // "Last used" is its own stamp: updatedAt only moves when the workspace's
+  // own properties change, so opening or editing a page would never reorder
+  // the landing. One write per open, off every hot path.
+  function touchWorkspaceUse(wsId) {
+    if (!wsId) return;
+    DB.getWorkspace(wsId).then(w => {
+      if (!w) return undefined;
+      w.usedAt = Date.now();
+      return DB.saveWorkspace(w);
+    }).catch(() => {});
+  }
+  const wsLastUse = (w) => Math.max(w.usedAt || 0, w.updatedAt || 0);
+
   async function openWorkspace(id) {
     const w = await DB.getWorkspace(id);
     if (!w) return;
@@ -7767,6 +7829,7 @@
     fileDataCache.clear(); fileDataBytes = 0; _mmImgCache.clear();
     state.ws = id; state.wsName = w.name;
     applyPaper(w.paper);
+    touchWorkspaceUse(id);
     clearHistory();
     stopTyping();
     $('#brand-menu').hidden = true;
@@ -7789,7 +7852,7 @@
     }
     const grid = $('#ws-grid');
     const wss = await DB.listWorkspaces();
-    wss.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    wss.sort((a, b) => wsLastUse(b) - wsLastUse(a));
     const counts = {};
     await Promise.all(wss.map(async w => { counts[w.id] = (await DB.allByWs('blocks', w.id)).length; }));
     grid.innerHTML = '';
@@ -8117,8 +8180,10 @@
   function flagPreviewStale(wsId) {
     previewFlagged.add(wsId);
     DB.getWorkspace(wsId).then(w => {
-      if (!w || w.previewStale) return undefined;
+      if (!w) return undefined;
+      if (w.previewStale && w.usedAt) return undefined;
       w.previewStale = true;
+      w.usedAt = Date.now();                     // an edit counts as use for the landing order
       return DB.saveWorkspace(w);
     }).catch(() => {});
   }
@@ -8192,6 +8257,7 @@
 
   /* ---- workspace Properties dialog (name, colour, file location) ------ */
   let propsWs = null, propsColor = null;
+  let propsPaper0 = 'dots';   // the paper the properties dialog opened on
   function renderPropsColors(active) {
     const wrap = $('#props-colors');
     wrap.innerHTML = '';
@@ -8203,10 +8269,16 @@
       wrap.appendChild(s);
     });
   }
+  // Cancel (button, backdrop or Escape) undoes the live paper preview.
+  function closeProps() {
+    if (propsWs && state.ws === propsWs) applyPaper(propsPaper0);
+    $('#props').hidden = true; propsWs = null;
+  }
   async function openProperties(id) {
     const w = await DB.getWorkspace(id);
     if (!w) return;
     propsWs = id;
+    propsPaper0 = w.paper || 'dots';
     propsColor = w.color || PALETTE[0];
     promptPaper = w.paper || 'dots';
     $$('#props-papers button').forEach(b => b.classList.toggle('active', b.dataset.paper === promptPaper));
@@ -8231,7 +8303,7 @@
     setTimeout(() => { $('#props-name').focus(); $('#props-name').select(); }, 50);
   }
   function bindProps() {
-    const close = () => { $('#props').hidden = true; propsWs = null; };
+    const close = closeProps;
     $('#props-cancel').addEventListener('click', close);
     $('#props').addEventListener('mousedown', (e) => { if (e.target.id === 'props') close(); });
     $('#props-save').addEventListener('click', async () => {
@@ -8242,6 +8314,7 @@
       w.name = name || w.name;
       w.color = propsColor || w.color;
       w.paper = promptPaper || 'dots';
+      propsPaper0 = w.paper;                     // saved: nothing for close() to put back
       w.updatedAt = Date.now();
       if (state.ws === propsWs) applyPaper(w.paper);
       await DB.saveWorkspace(w);
@@ -8292,7 +8365,7 @@
     if (state.ws == null) return;              // no switcher on the landing screen
     const menu = $('#brand-menu');
     const wss = await DB.listWorkspaces();
-    wss.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    wss.sort((a, b) => wsLastUse(b) - wsLastUse(a));
     let html = '<div class="bm-head">Switch workspace</div>';
     for (const w of wss) {
       html += `<button class="bm-item${w.id === state.ws ? ' active' : ''}" data-ws="${esc(w.id)}">` +
@@ -8605,13 +8678,14 @@
         return;
       }
       if (e.key === 'Escape') {
+        blurPanelField();                                    // never leave the focus inside a closed panel
         if (presenting) { stopPresenting(); return; }        // leave the slideshow
         if (!$('#cmdk').hidden) { closeCmdk(); return; }
         if (!$('#pen-menu').hidden) { closePenMenu(); return; }
         if (!$('#search-pop').hidden) { closeSearch(); return; }
         if (!$('#ctxmenu').hidden) { hideCtxMenu(); }
         else if (!$('#prompt').hidden) { $('#prompt').hidden = true; promptCb = null; }
-        else if (!$('#props').hidden) { $('#props').hidden = true; propsWs = null; }
+        else if (!$('#props').hidden) { closeProps(); }
         else if (!$('#confirm').hidden) { $('#confirm').hidden = true; confirmCb = null; }
         else if (!$('#about').hidden) $('#about').hidden = true;
         else if (state.penMode) setPenMode(false);
@@ -8622,6 +8696,7 @@
         else if (!$('#shape-drawer').hidden) closeShapeEditor();
         else if (!$('#image-drawer').hidden) closeImageEditor();
         else if (!$('#ink-drawer').hidden) closeInkEditor();
+        else if (!$('#check-drawer').hidden) closeCheckEditor();
         else if (!$('#drawer').hidden) closeDrawer();
         else if (state.selectedIds.size) clearSelection();
         else hideSearchResults();
@@ -8662,8 +8737,11 @@
       if ((e.key === 'd' || e.key === 'D') && (e.ctrlKey || e.metaKey)) {
         if (state.selectedIds.size && state.levelLayout === 'canvas') { e.preventDefault(); duplicateSelection(); } return;
       }
-      if (e.key === ']' && (e.ctrlKey || e.metaKey)) { if (state.selectedIds.size) { e.preventDefault(); (e.shiftKey ? bringToFront : bringForward)([...state.selectedIds]); } return; }
-      if (e.key === '[' && (e.ctrlKey || e.metaKey)) { if (state.selectedIds.size) { e.preventDefault(); (e.shiftKey ? sendToBack : sendBackward)([...state.selectedIds]); } return; }
+      // Shift turns ] into } on most layouts, so match the character either way
+      const brR = e.key === ']' || e.key === '}' || e.code === 'BracketRight';
+      const brL = e.key === '[' || e.key === '{' || e.code === 'BracketLeft';
+      if (brR && (e.ctrlKey || e.metaKey)) { if (state.selectedIds.size) { e.preventDefault(); (e.shiftKey ? bringToFront : bringForward)([...state.selectedIds]); } return; }
+      if (brL && (e.ctrlKey || e.metaKey)) { if (state.selectedIds.size) { e.preventDefault(); (e.shiftKey ? sendToBack : sendBackward)([...state.selectedIds]); } return; }
       // arrow-key nudge (canvas only)
       if (/^Arrow/.test(e.key) && state.selectedIds.size && state.levelLayout === 'canvas') {
         e.preventDefault();

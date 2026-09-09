@@ -80,3 +80,38 @@ Ink Plane stage 2 moves to 2.0.4 / v118.
 
 - Workspace cards show a real preview of the workspace's top page: cards, shapes, text, checkboxes, images, tables, handwriting and connectors, drawn small in the current theme. The preview is rendered once when you leave the workspace (or switch to another) and stored with the workspace, so nothing renders while you work. A workspace edited since its last snapshot, or viewed in the other theme, is redrawn the next time the landing screen shows it; never-opened workspaces get their first preview lazily on the landing screen.
 - Two buttons join the theme toggle at the top right of the landing screen: Full screen (the same behaviour as F11 and the menu entry; the icon turns into inward-pointing arrows while full screen is on, and hides the system bars in the apps) and About, help and shortcuts (opens the help dialog).
+
+## 2.0.6 (site v120) - what the full feature verification found
+
+Every feature was driven end to end in a real browser, area by area. Twelve defects were confirmed and fixed; three reported items turned out to be intended behaviour and were left alone (with the wording corrected where it disagreed).
+
+- A refresh inside a workspace kept the default dotted paper instead of the one you chose. It now restores the saved paper.
+- The workspace list ignored use: opening or editing a workspace never moved its card. Workspaces are now ordered by when you last used them, and the switcher in the logo menu matches.
+- Export dropped the paper choice, so an exported and re-imported workspace came back on dots. The paper now travels with the file.
+- Cancelling the workspace properties dialog left the paper you were previewing on screen. Cancel, Escape and a click on the backdrop all put the saved one back.
+- Tab dropped a sibling card on top of the one you were on. It now lands beside it.
+- Ctrl+Shift+] and Ctrl+Shift+[ (bring to front, send to back) never fired, because a shifted bracket arrives as a brace. Both work now.
+- The context menu offered "Open inside" on checkboxes, handwriting and tables, which have nothing inside. Only cards and lists offer it now.
+- Copy look then paste look ignored what it landed on: a text's look turned a list card into a canvas card and resized checkboxes. A look now only paints what the target understands, and across different kinds only the colour travels.
+- The checkbox panel could not be closed with Escape.
+- Editing a table cell or its title in place was not undoable. Each inline edit is now one undo step, and Ctrl+V inside a cell pastes into the cell instead of making a new text block.
+- Closing a panel left the keyboard focus inside it, so the next shortcut was swallowed. Panels release the focus when they close.
+- Attachments added in the same second could list in any order; they now sort stably.
+- The card editor gained Reset and Done, like every other editor.
+
+Left as designed: the checkbox has no corner grip (tap ticks it, hold it to size and colour) - the Add menu's tip now says so; a fresh install still starts with one empty workspace.
+
+### Measured in the deep drawing pass (headless Edge, dpr 2, 480 strokes)
+
+Each of the four pen styles wrote 120 lines, 13,080 samples per style.
+
+| What | Result |
+| --- | --- |
+| Per-sample work, 95th percentile | 0.1 ms, every style |
+| Samples kept vs sent | 13,080 of 13,080, none dropped or doubled |
+| Cost of the last 20 lines vs the first 20 | unchanged |
+| Ink spread beyond the nib | 0.0 px |
+| Lasso over 352 strokes | 29 ms to close, 0.2 ms per move |
+| Dragging 352 strokes as one | 0.2 ms per move |
+| Undo of that move | 210 ms, every stroke back in place |
+| Heap after 480 strokes | 16 MB |
