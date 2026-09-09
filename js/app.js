@@ -478,7 +478,8 @@
     world.style.setProperty('--inv', 1 / (state.view.scale || 1));
   }
   let mmRAF = null;
-  function scheduleMinimap() { if (mmRAF) return; mmRAF = requestAnimationFrame(() => { mmRAF = null; drawMinimap(); }); }
+  let mmAutoSuppressed = false;   // test-only: drive the mini-map by hand, with no race against its own cycle
+  function scheduleMinimap() { if (mmAutoSuppressed || mmRAF) return; mmRAF = requestAnimationFrame(() => { mmRAF = null; drawMinimap(); }); }
   const screenToWorld = (sx, sy) => ({
     x: (sx - state.view.tx) / state.view.scale,
     y: (sy - state.view.ty) / state.view.scale,
@@ -556,7 +557,7 @@
     state.els = {};
     prevSel = new Set();
     untrackAllSizes();
-    mmDirty = true; mmContent = null;
+    mmDirty = true; mmDirtyAll = true; mmContent = null;
     for (const b of state.blocks) world.appendChild(makeBlockEl(b));
     planesRefresh();
   }
@@ -1198,7 +1199,7 @@
   // appends made the browser lay the page out again for each connector.
   function drawEdges() {
     if (state.levelLayout === 'list') return;
-    mmDirty = true; scheduleMinimap();
+    mmDirty = true; mmDirtyAll = true; scheduleMinimap();
     const parts = [];
     for (const e of state.edges) {
       const a = blockRect(e.from), b = blockRect(e.to);
@@ -1750,7 +1751,7 @@
     history.past.push({ level, before: cloneSet(before), after: cloneSet(after) });
     if (history.past.length > history.limit) history.past.shift();
     history.future.length = 0;
-    markChanged();
+    markChanged(before, after);        // exactly what changed, straight to the mini-map's index
   }
   function clearHistory() { history.past.length = 0; history.future.length = 0; history.gen++; }
 
@@ -5367,7 +5368,7 @@
         bb.x = nx; bb.y = ny;
         if (!lifted) { const el = state.els[bid]; if (el) { el.style.left = nx + 'px'; el.style.top = ny + 'px'; } }
       }
-      mmDirty = true;
+      mmDirty = true; mmDirtyAll = true;   // live drag: no committed before/after to diff yet
       if (lifted) {
         NG.Lift.move(dx / s + adj.dx, dy / s + adj.dy);
         if (NG.Overlay) NG.Overlay.setLiftOffset(dx / s + adj.dx, dy / s + adj.dy);
@@ -6727,7 +6728,7 @@
     // bitmap and draws the viewport rectangle, so the per-frame cost no
     // longer grows with what is on the page.
     const now = performance.now();
-    if (!mmContent || (mmDirty && now - mmContent.at > 250)) renderMinimapContent(cssW, cssH, dpr);
+    if (!mmContent || (mmDirty && now - mmContent.at > 250)) updateMinimapContent(cssW, cssH, dpr);
     const b = mmContent.bounds;
     const vr = stageRect();
     const vw0 = screenToWorld(0, 0), vw1 = screenToWorld(vr.width, vr.height);
@@ -6752,21 +6753,176 @@
     ctx.strokeRect(wx(vw0.x), wy(vw0.y), (vw1.x - vw0.x) * scale, (vw1.y - vw0.y) * scale);
   }
   let mmContent = null, mmDirty = true, mmSize = null;
+
+  /* ---- where every block sits, so one edit only repaints its own patch --- *
+   * The mini-map used to redraw its whole picture - sort every block, then
+   * draw every block - each time anything changed. A spatial index (the same
+   * idea as the ink planes, generalised to every kind of block) remembers
+   * which small patch of the page each block occupies, so a committed edit
+   * with a known before/after (almost everything that isn't a bulk operation)
+   * can invalidate just that patch instead. Reset in full whenever the level
+   * does (mmResetIndex), which is also what the full-picture path below uses
+   * to (re)build it, so the two paths never disagree about what is where.  */
+  const MM_GRID = 256;                 // world units per cell, same rationale as the ink planes
+  const MM_PATCH_LIMIT = 40;           // more changed blocks than this: a full redraw is simpler
+  const mmGrid = new Map();            // "cx,cy" -> Set(blockId)
+  const mmCellsOf = new Map();         // blockId -> the cell keys it is registered under
+  const mmSeen = new Map();            // blockId -> the rect it was last placed at
+  const mmBlocksById = new Map();      // blockId -> the block, for the patch path's own drawing
+  let mmBounds = null;                 // running {minX,minY,maxX,maxY} over every block, kept live
+  let mmBoundsStale = false;           // a removal might have shrunk it; only then is a rescan needed
+  let mmDirtyIds = null;               // Set(blockId) touched since the last redraw, or null = unknown
+  let mmDirtyAll = false;              // an edit arrived with no before/after to diff: redraw everything
+  let mmDirtyRect = null;              // world-space union of every patch touched since the last redraw
+
+  function mmCellRange(rect) {
+    return {
+      x0: Math.floor(rect.x / MM_GRID), y0: Math.floor(rect.y / MM_GRID),
+      x1: Math.floor((rect.x + rect.w) / MM_GRID), y1: Math.floor((rect.y + rect.h) / MM_GRID),
+    };
+  }
+  function mmUnionRects(a, b) {
+    if (!a) return b; if (!b) return a;
+    const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+    return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
+  }
+  function mmExtendBounds(rect) {
+    if (!mmBounds) { mmBounds = { minX: rect.x, minY: rect.y, maxX: rect.x + rect.w, maxY: rect.y + rect.h }; return; }
+    if (rect.x < mmBounds.minX) mmBounds.minX = rect.x;
+    if (rect.y < mmBounds.minY) mmBounds.minY = rect.y;
+    if (rect.x + rect.w > mmBounds.maxX) mmBounds.maxX = rect.x + rect.w;
+    if (rect.y + rect.h > mmBounds.maxY) mmBounds.maxY = rect.y + rect.h;
+  }
+  // Was this rect sitting right on the current outer edge? Only then can
+  // taking it away have shrunk the true bounds - anything else leaves them
+  // exactly as they were, no rescan needed.
+  function mmTouchesBoundsEdge(rect) {
+    if (!mmBounds) return false;
+    const eps = 0.5;
+    return Math.abs(rect.x - mmBounds.minX) < eps || Math.abs(rect.y - mmBounds.minY) < eps
+        || Math.abs(rect.x + rect.w - mmBounds.maxX) < eps || Math.abs(rect.y + rect.h - mmBounds.maxY) < eps;
+  }
+  function mmInvalidateRect(r) { if (r) mmDirtyRect = mmUnionRects(mmDirtyRect, r); }
+  // Register (or re-register) one block at the cells its current rect
+  // touches, replacing wherever it was before.
+  function mmPlace(b) {
+    const rect = blockRectOf(b);
+    const old = mmCellsOf.get(b.id);
+    if (old) for (const k of old) { const s = mmGrid.get(k); if (s) { s.delete(b.id); if (!s.size) mmGrid.delete(k); } }
+    const { x0, y0, x1, y1 } = mmCellRange(rect);
+    const cells = [];
+    for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++) cells.push(cx + ',' + cy);
+    mmCellsOf.set(b.id, cells);
+    for (const k of cells) { let s = mmGrid.get(k); if (!s) { s = new Set(); mmGrid.set(k, s); } s.add(b.id); }
+    const oldRect = mmSeen.get(b.id);
+    mmSeen.set(b.id, rect); mmBlocksById.set(b.id, b);
+    mmInvalidateRect(oldRect ? mmUnionRects(oldRect, rect) : rect);
+    if (oldRect && mmTouchesBoundsEdge(oldRect)) mmBoundsStale = true;
+    mmExtendBounds(rect);
+    return rect;
+  }
+  function mmUnplace(id) {
+    const cells = mmCellsOf.get(id);
+    if (cells) for (const k of cells) { const s = mmGrid.get(k); if (s) { s.delete(id); if (!s.size) mmGrid.delete(k); } }
+    mmCellsOf.delete(id); mmBlocksById.delete(id);
+    const rect = mmSeen.get(id);
+    mmSeen.delete(id);
+    mmInvalidateRect(rect);
+    if (rect && mmTouchesBoundsEdge(rect)) mmBoundsStale = true;
+  }
+  // Full rebuild of the index (and, as a side effect, of mmBounds): the one
+  // place a pass over every block is expected. Level loads and every "we
+  // don't know exactly what changed" trigger below go through this.
+  function mmResetIndex() {
+    mmGrid.clear(); mmCellsOf.clear(); mmSeen.clear(); mmBlocksById.clear();
+    mmBounds = null; mmBoundsStale = false; mmDirtyRect = null;
+    for (const b of state.blocks) mmPlace(b);
+  }
+  // An edit with a known before/after (almost everything that goes through
+  // recordChange) updates just the blocks that actually changed. Anything
+  // bigger than a handful, or an edit with no before/after to read, falls
+  // back to a full redraw next time the mini-map actually repaints.
+  function mmMarkDirty(before, after) {
+    mmDirty = true;
+    if (mmDirtyAll) return;                          // already committed to a full redraw this round
+    const afterBlocks = (after && after.blocks) || null;
+    const beforeBlocks = (before && before.blocks) || null;
+    if (!afterBlocks && !beforeBlocks) { mmDirtyAll = true; return; }
+    if ((afterBlocks ? afterBlocks.length : 0) + (beforeBlocks ? beforeBlocks.length : 0) > MM_PATCH_LIMIT) {
+      mmDirtyAll = true; return;
+    }
+    if (!mmDirtyIds) mmDirtyIds = new Set();
+    const afterIds = new Set((afterBlocks || []).map(b => b.id));
+    for (const b of (afterBlocks || [])) { mmPlace(b); mmDirtyIds.add(b.id); }
+    for (const b of (beforeBlocks || [])) { if (!afterIds.has(b.id)) { mmUnplace(b.id); mmDirtyIds.add(b.id); } }
+  }
+  function mmCurrentColors() {
+    const st = getComputedStyle(document.documentElement);
+    return {
+      accent: (st.getPropertyValue('--accent') || '#2b7fff').trim(),
+      cardBg: (st.getPropertyValue('--card') || '#161b21').trim(),
+      lineC: (st.getPropertyValue('--card-line') || '#23262d').trim(),
+      text: (st.getPropertyValue('--text') || '#e7eaee').trim(),
+    };
+  }
+  // Does the picture already on the canvas still match the current bounds
+  // and pixel size? If not, nothing can be patched onto it - it was drawn
+  // for a different rectangle of the page.
+  function mmPatchFits(cssW, cssH, dpr) {
+    if (!mmContent || mmBoundsStale || !mmBounds) return false;
+    const pad = 30;
+    const x0 = mmBounds.minX - pad, y0 = mmBounds.minY - pad, x1 = mmBounds.maxX + pad, y1 = mmBounds.maxY + pad;
+    const W = Math.max(2, Math.round(cssW * dpr * 2)), H = Math.max(2, Math.round(cssH * dpr * 2));
+    // the same scale renderMinimapContent would choose: whichever dimension is
+    // the tighter fit, width or height - comparing only the width's ratio
+    // failed every time on content taller than it is wide, which is most of
+    // what a page of handwriting looks like.
+    const cs = Math.min(W / Math.max(1, x1 - x0), H / Math.max(1, y1 - y0));
+    const eps = 0.5;
+    return Math.abs(x0 - mmContent.x0) < eps && Math.abs(y0 - mmContent.y0) < eps
+        && Math.abs(x1 - mmContent.x1) < eps && Math.abs(y1 - mmContent.y1) < eps
+        && mmContent.canvas.width === Math.max(1, Math.ceil((x1 - x0) * mmContent.cs))
+        && mmContent.canvas.height === Math.max(1, Math.ceil((y1 - y0) * mmContent.cs))
+        && Math.abs(cs - mmContent.cs) < 0.001;
+  }
+  // Redraw only the patch of the persistent bitmap the changed blocks touch.
+  function patchMinimapContent() {
+    const c = mmContent, ctx = c.canvas.getContext('2d');
+    const wx = (x) => (x - c.x0) * c.cs, wy = (y) => (y - c.y0) * c.cs;
+    if (mmDirtyRect) {
+      const r = mmDirtyRect;
+      const px0 = Math.max(0, Math.floor(wx(r.x))), py0 = Math.max(0, Math.floor(wy(r.y)));
+      const px1 = Math.min(c.canvas.width, Math.ceil(wx(r.x + r.w))), py1 = Math.min(c.canvas.height, Math.ceil(wy(r.y + r.h)));
+      if (px1 > px0 && py1 > py0) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.save();
+        ctx.beginPath(); ctx.rect(px0, py0, px1 - px0, py1 - py0); ctx.clip();
+        ctx.clearRect(px0, py0, px1 - px0, py1 - py0);
+        const world = { x: r.x - 1, y: r.y - 1, w: r.w + 2, h: r.h + 2 };
+        const { x0, y0, x1, y1 } = mmCellRange(world);
+        const already = new Set(); const here = [];
+        for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++) {
+          const cell = mmGrid.get(cx + ',' + cy); if (!cell) continue;
+          for (const id of cell) {
+            if (already.has(id)) continue; already.add(id);
+            const rect = mmSeen.get(id); if (!rect) continue;
+            if (rect.x > world.x + world.w || rect.y > world.y + world.h || rect.x + rect.w < world.x || rect.y + rect.h < world.y) continue;
+            const blk = mmBlocksById.get(id); if (blk) here.push(blk);
+          }
+        }
+        here.sort((a, b) => (a.z || 0) - (b.z || 0));      // this patch's own handful, never the whole page
+        for (const blk of here) drawNodeMini(ctx, blk, mmSeen.get(blk.id), wx, wy, c.cs, c.col);
+        ctx.restore();
+      }
+    }
+    mmContent.at = performance.now();
+  }
   // Everything on the level drawn once into an offscreen bitmap that covers
   // the content bounds (plus the same padding the map uses), at twice the
   // map's resolution so it stays crisp when re-projected.
   function renderMinimapContent(cssW, cssH, dpr) {
-    // measure every block exactly once
-    const rects = new Map();
-    let bMinX = Infinity, bMinY = Infinity, bMaxX = -Infinity, bMaxY = -Infinity;
-    for (const blk of state.blocks) {
-      const rc = blockRectOf(blk); rects.set(blk.id, rc);
-      bMinX = Math.min(bMinX, rc.x); bMinY = Math.min(bMinY, rc.y);
-      bMaxX = Math.max(bMaxX, rc.x + rc.w); bMaxY = Math.max(bMaxY, rc.y + rc.h);
-    }
-    // An empty level has no bounds; fall back to the viewport so the minimap
-    // still draws instead of throwing.
-    const bounds = isFinite(bMinX) ? { minX: bMinX, minY: bMinY, maxX: bMaxX, maxY: bMaxY } : { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+    mmResetIndex();                                    // the one full pass; also rebuilds mmBounds
+    const bounds = mmBounds || { minX: 0, minY: 0, maxX: 0, maxY: 0 };   // an empty level has no bounds
     const pad = 30;
     const x0 = bounds.minX - pad, y0 = bounds.minY - pad, x1 = bounds.maxX + pad, y1 = bounds.maxY + pad;
     const W = Math.max(2, Math.round(cssW * dpr * 2)), H = Math.max(2, Math.round(cssH * dpr * 2));
@@ -6778,17 +6934,20 @@
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, bw, bh);
     const wx = (x) => (x - x0) * cs, wy = (y) => (y - y0) * cs;
-    const st = getComputedStyle(document.documentElement);
-    const accent = (st.getPropertyValue('--accent') || '#2b7fff').trim();
-    const cardBg = (st.getPropertyValue('--card') || '#161b21').trim();
-    const lineC = (st.getPropertyValue('--card-line') || '#23262d').trim();
-    const text = (st.getPropertyValue('--text') || '#e7eaee').trim();
+    const col = mmCurrentColors();
     // draw nodes back-to-front (respect z-order)
     const ordered = [...state.blocks].sort((a, b) => (a.z || 0) - (b.z || 0));
-    const col = { accent, cardBg, lineC, text };
-    for (const blk of ordered) drawNodeMini(ctx, blk, rects.get(blk.id), wx, wy, cs, col);
-    mmContent = { canvas, bounds, x0, y0, x1, y1, accent, at: performance.now() };
+    for (const blk of ordered) drawNodeMini(ctx, blk, mmSeen.get(blk.id), wx, wy, cs, col);
+    mmContent = { canvas, bounds, x0, y0, x1, y1, cs, col, accent: col.accent, at: performance.now() };
     mmDirty = false;
+  }
+  // Patch when we know precisely what changed and the picture still fits;
+  // otherwise the same full redraw as always. Either way the dirty state is
+  // clear before the next edit starts filling it in again.
+  function updateMinimapContent(cssW, cssH, dpr) {
+    if (!mmDirtyAll && mmDirtyIds && mmDirtyIds.size && mmPatchFits(cssW, cssH, dpr)) patchMinimapContent();
+    else renderMinimapContent(cssW, cssH, dpr);
+    mmDirtyIds = null; mmDirtyAll = false; mmDirtyRect = null;
   }
 
   const _mmImgCache = new Map();   // src → HTMLImageElement (for image thumbnails)
@@ -6799,7 +6958,7 @@
   function mmImage(src) {
     if (!src) return null;
     let im = _mmImgCache.get(src);
-    if (!im) { im = new Image(); im.onload = () => { mmDirty = true; scheduleMinimap(); }; im.src = src; _mmImgCache.set(src, im); }
+    if (!im) { im = new Image(); im.onload = () => { mmDirty = true; mmDirtyAll = true; scheduleMinimap(); }; im.src = src; _mmImgCache.set(src, im); }
     return im.complete ? im : null;
   }
   // Draw a single node into the mini-map as a faithful little preview.
@@ -8030,10 +8189,13 @@
     }
   }
   // called after any edit; schedules a save (autosave) or flags dirty (manual)
-  function markChanged() {
+  // before/after (when the caller has them, from recordChange) are the exact
+  // records that changed, so the mini-map can patch just their patch of the
+  // page instead of redrawing all of it; omit them and it falls back to that.
+  function markChanged(before, after) {
     if (state.ws == null) return;
     if (!previewFlagged.has(state.ws)) flagPreviewStale(state.ws);   // the card's snapshot is behind the page now
-    mmDirty = true; scheduleMinimap();
+    mmMarkDirty(before, after); scheduleMinimap();
     scheduleOutline();
     if (state.autosave) {
       clearTimeout(autoSaveTimer);
@@ -8877,7 +9039,7 @@
     document.documentElement.setAttribute('data-theme', theme);
     $('#btn-theme').innerHTML = ic(theme === 'dark' ? 'moon' : 'sun');
     try { localStorage.setItem('bn-theme', theme); } catch (_) {}
-    mmDirty = true; scheduleMinimap();                  // the mini-map bitmap holds the old theme's colours
+    mmDirty = true; mmDirtyAll = true; scheduleMinimap();   // the mini-map bitmap holds the old theme's colours
     const home = $('#home');                            // so do the cards' snapshots
     if (home && !home.hidden) DB.listWorkspaces().then(wss => queueStalePreviews(wss, theme)).catch(() => {});
   }
@@ -9539,6 +9701,30 @@
       liveCanvas: () => { inkSurface(); return inkCv; },
       liveCtx: () => inkSurface(),
       liveDpr: () => NG.wet.dpr,
+      // the mini-map's offscreen bitmap and a way to force it fresh right now
+      // (bypassing the usual 250ms throttle), so a test can compare the
+      // patched picture against a known-clean full rebuild.
+      minimapCanvas: () => (mmContent && mmContent.canvas) || null,
+      // pause the mini-map's own scheduled redraws (not the feature itself -
+      // the canvas stays visible), so a test can drive it entirely through
+      // forceMinimapRebuild/applyMinimapUpdate without racing the normal
+      // throttled cycle for the same dirty flags.
+      setMinimapAuto: (on) => { mmAutoSuppressed = !on; },
+      forceMinimapRebuild: () => {
+        const cv = $('#minimap');
+        renderMinimapContent(cv.clientWidth, cv.clientHeight, window.devicePixelRatio || 1);
+        mmDirtyIds = null; mmDirtyAll = false; mmDirtyRect = null;   // a clean baseline, like updateMinimapContent leaves
+      },
+      // acts on whatever an edit just marked dirty (patch or full, its own
+      // normal choice), bypassing only the wall-clock throttle so a test does
+      // not have to wait on it.
+      applyMinimapUpdate: () => {
+        const cv = $('#minimap');
+        updateMinimapContent(cv.clientWidth, cv.clientHeight, window.devicePixelRatio || 1);
+      },
+      minimapStats: () => ({ dirtyIds: mmDirtyIds ? mmDirtyIds.size : 0, dirtyAll: mmDirtyAll, gridCells: mmGrid.size, boundsStale: mmBoundsStale }),
+      minimapDirtyRectDebug: () => mmDirtyRect ? { ...mmDirtyRect } : null,
+      minimapContentDebug: () => mmContent ? { x0: mmContent.x0, y0: mmContent.y0, x1: mmContent.x1, y1: mmContent.y1, cs: mmContent.cs, cw: mmContent.canvas.width, ch: mmContent.canvas.height } : null,
       screenToWorld, worldToScreen: (x, y) => ({ x: wx(x), y: wy(y) }),
       getInking: () => inking,
       getGesture: gestureState,
