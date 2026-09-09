@@ -446,10 +446,11 @@
     if (NG.wet.pending.length) redrawInkStroke();
     const { scale, tx, ty } = state.view;
     world.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
-    // The handles' counter-scale is a custom property on #world, and changing
-    // it restyles every block's handles - fine per zoom step, too much per
-    // pinch frame on a full page, so during a pinch it waits for the fingers.
-    if (pinch) invPending = true;
+    // The handles' counter-scale is a custom property on #world. Writing it
+    // restyles everything that reads it, so it waits for the fingers during a
+    // pinch - and while no handles are mounted (nothing reads it) it is not
+    // written at all; mountChrome catches up.
+    if (pinch || !chromeMounted()) invPending = true;
     else { world.style.setProperty('--inv', 1 / (scale || 1)); invPending = false; }
     const paper = stage.dataset.paper || 'dots';
     stage.style.backgroundSize = paper === 'lines'
@@ -465,7 +466,15 @@
   }
   let invPending = false;
   function flushInv() {
-    if (invPending && !pinch) { invPending = false; world.style.setProperty('--inv', 1 / (state.view.scale || 1)); }
+    if (invPending && !pinch && chromeMounted()) { invPending = false; world.style.setProperty('--inv', 1 / (state.view.scale || 1)); }
+  }
+  // is any block's chrome on the page right now?
+  const chromeMounted = () => state.selectedIds.size > 0 || hoverChromeId != null;
+  // a newly mounted handle needs the counter-scale the page skipped writing
+  function syncInv() {
+    if (!invPending || pinch) return;
+    invPending = false;
+    world.style.setProperty('--inv', 1 / (state.view.scale || 1));
   }
   let mmRAF = null;
   function scheduleMinimap() { if (mmRAF) return; mmRAF = requestAnimationFrame(() => { mmRAF = null; drawMinimap(); }); }
@@ -501,12 +510,20 @@
     // per-block counts + item previews for cards
     state.childCounts = {};
     state.childPeek = {};
-    await Promise.all(state.blocks.map(async b => {
-      const [kids, files] = await Promise.all([DB.childBlocks(b.id), DB.blockFiles(b.id)]);
-      state.childCounts[b.id] = { blocks: kids.length, files: files.length };
-      kids.sort((a, c) => (a.createdAt || 0) - (c.createdAt || 0));
-      state.childPeek[b.id] = kids.slice(0, 4).map(k => ({ title: k.title, color: k.color }));
-    }));
+    // one transaction for the whole level; only list cards show a peek
+    {
+      const ids = state.blocks.map(b => b.id);
+      const peekIds = state.blocks.filter(b => b.layout === 'list').map(b => b.id);
+      const stats = await DB.levelStats(ids, peekIds);
+      for (const b of state.blocks) {
+        state.childCounts[b.id] = stats.counts[b.id] || { blocks: 0, files: 0 };
+        const kids = stats.peeks[b.id];
+        if (kids) {
+          kids.sort((a, c) => (a.createdAt || 0) - (c.createdAt || 0));
+          state.childPeek[b.id] = kids.slice(0, 4).map(k => ({ title: k.title, color: k.color }));
+        }
+      }
+    }
 
     const listMode = state.levelLayout === 'list';
     document.getElementById('app').classList.toggle('list-mode', listMode);
@@ -537,8 +554,108 @@
     $$('.block', world).forEach(n => n.remove());
     state.els = {};
     prevSel = new Set();
+    untrackAllSizes();
     mmDirty = true; mmContent = null;
     for (const b of state.blocks) world.appendChild(makeBlockEl(b));
+  }
+
+  /* ------------------------- block size cache -------------------------- *
+   * A card's height comes from its content, so the old code asked the element
+   * (`offsetWidth`/`offsetHeight`). Every such read after a write forces a
+   * layout of the whole page - the cost of dragging or nudging a big
+   * selection. A ResizeObserver reports sizes after layout instead, so the
+   * readers below never trigger one.                                        */
+  const sizeCache = new Map();
+  const sizeRO = (typeof ResizeObserver === 'function') ? new ResizeObserver((entries) => {
+    for (const e of entries) {
+      const id = e.target && e.target.dataset ? e.target.dataset.id : null;
+      if (!id) continue;
+      const bs = e.borderBoxSize && e.borderBoxSize[0];
+      const w = bs ? bs.inlineSize : (e.contentRect ? e.contentRect.width : 0);
+      const h = bs ? bs.blockSize : (e.contentRect ? e.contentRect.height : 0);
+      if (w || h) sizeCache.set(id, { w, h });
+    }
+  }) : null;
+  function trackSize(el) { if (sizeRO && el) { try { sizeRO.observe(el); } catch (_) {} } }
+  function untrackSize(id) {
+    const el = state.els[id];
+    if (sizeRO && el) { try { sizeRO.unobserve(el); } catch (_) {} }
+    sizeCache.delete(id);
+  }
+  function untrackAllSizes() { if (sizeRO) { try { sizeRO.disconnect(); } catch (_) {} } sizeCache.clear(); }
+  // The observer has not reported yet for a block made this frame: measure it
+  // once (the only read that can force a layout, and only for new elements).
+  function elSize(id, el) {
+    const c = sizeCache.get(id);
+    if (c && (c.w || c.h)) return c;
+    if (!el) return null;
+    const s = { w: el.offsetWidth, h: el.offsetHeight };
+    if (s.w || s.h) sizeCache.set(id, s);
+    return s;
+  }
+
+  /* --------------------------- block chrome ---------------------------- *
+   * The edit buttons and the rotate/resize/edge handles are only ever visible
+   * on the block you have picked (or, with a mouse, the one under the cursor).
+   * Keeping them out of the page until then matters: they carry
+   * `transform: scale(var(--inv))`, so every one of them is restyled on every
+   * zoom step. Mounted on demand this is O(selected), not O(blocks).        */
+  function chromeHtml(b) {
+    const kind = b.kind || 'block';
+    if (kind === 'ink' || kind === 'check') return '';
+    const edit = (title) => `<div class="block-actions"><button class="blk-btn" data-blk="edit" title="${title}">${ic('pencil')}</button></div>`;
+    if (kind === 'text') return edit('Edit text') +
+      `<div class="tnode-rotate" title="Rotate"></div>` +
+      `<div class="tnode-edge e" data-edge="e" title="Wrap width"></div>` +
+      `<div class="tnode-resize" title="Resize text size"></div>`;
+    if (kind === 'shape') return edit('Edit shape') +
+      `<div class="tnode-rotate" title="Rotate"></div>` +
+      `<div class="tnode-resize" title="Resize"></div>`;
+    if (kind === 'image') return edit('Edit image') +
+      `<div class="tnode-rotate" title="Rotate"></div>` +
+      `<div class="tnode-resize" title="Resize"></div>`;
+    if (kind === 'table') return edit('Edit table') +
+      `<div class="tnode-edge e" data-edge="e" title="Wrap width"></div>` +
+      `<div class="tnode-edge s" data-edge="s" title="Wrap height"></div>` +
+      `<div class="tnode-resize" title="Scale table"></div>`;
+    return `<div class="block-actions">` +
+      `<button class="blk-btn" data-blk="edit" title="Edit">${ic('pencil')}</button>` +
+      `<button class="blk-btn" data-blk="open" title="Open inside">${ic('arrow-right')}</button>` +
+      `</div>`;
+  }
+  const CHROME_SEL = '.block-actions, .tnode-rotate, .tnode-resize, .tnode-edge';
+  let hoverChromeId = null;
+  function mountChrome(id) {
+    const el = state.els[id]; if (!el || el.querySelector('.block-actions, .tnode-resize, .tnode-edge, .tnode-rotate')) return;
+    const b = state.blocks.find(x => x.id === id); if (!b) return;
+    const html = chromeHtml(b); if (!html) return;
+    syncInv();
+    el.insertAdjacentHTML('beforeend', html);
+  }
+  function unmountChrome(id) {
+    if (id === hoverChromeId || state.selectedIds.has(id)) return;   // still wanted
+    const el = state.els[id]; if (!el) return;
+    el.querySelectorAll(CHROME_SEL).forEach(n => n.remove());
+  }
+  // a repaint rebuilds innerHTML, so put the chrome back if the block still wants it
+  function restoreChrome(id) {
+    if (state.selectedIds.has(id) || id === hoverChromeId) mountChrome(id);
+  }
+  // With a mouse, the handles follow the cursor the way they always have; a
+  // finger or a stylus never hovers, so nothing is mounted for them.
+  function bindChromeHover() {
+    world.addEventListener('pointerover', (e) => {
+      if (e.pointerType && e.pointerType !== 'mouse') return;
+      const el = e.target.closest ? e.target.closest('.block') : null;
+      const id = el ? el.dataset.id : null;
+      if (id === hoverChromeId) return;
+      const was = hoverChromeId; hoverChromeId = id;
+      if (was) unmountChrome(was);
+      if (id) mountChrome(id);
+    });
+    world.addEventListener('pointerleave', () => {
+      const was = hoverChromeId; hoverChromeId = null; if (was) unmountChrome(was);
+    });
   }
 
   function makeBlockEl(b) {
@@ -565,7 +682,9 @@
     else if (b.kind === 'table') paintTableNode(el, b);
     else { el.style.setProperty('--b-accent', b.color || PALETTE[0]); paintBlock(el, b); }
     el.classList.toggle('locked', !!b.locked);
-    state.els[b.id] = el;
+    state.els[b.id] = el;
+    trackSize(el);
+    restoreChrome(b.id);        // a rebuilt element keeps the chrome it had
     return el;
   }
 
@@ -588,10 +707,7 @@
     el.style.transform = b.rot ? `rotate(${b.rot}deg)` : '';
     if (!el.querySelector('.img-content')) {
       el.innerHTML =
-        `<img class="img-content" alt="" draggable="false" />` +
-        `<div class="block-actions"><button class="blk-btn" data-blk="edit" title="Edit image">${ic('pencil')}</button></div>` +
-        `<div class="tnode-rotate" title="Rotate"></div>` +
-        `<div class="tnode-resize" title="Resize"></div>`;
+        `<img class="img-content" alt="" draggable="false" />`;
     }
     const im = el.querySelector('.img-content');
     im.style.borderRadius = (b.round ? 12 : 0) + 'px';
@@ -638,10 +754,7 @@
       inner = `<rect x="${pad}" y="${pad}" width="${Math.max(1, w - 2 * pad)}" height="${Math.max(1, h - 2 * pad)}" rx="8" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
     }
     el.innerHTML =
-      `<svg class="shape-svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">${inner}</svg>` +
-      `<div class="block-actions"><button class="blk-btn" data-blk="edit" title="Edit shape">${ic('pencil')}</button></div>` +
-      `<div class="tnode-rotate" title="Rotate"></div>` +
-      `<div class="tnode-resize" title="Resize"></div>`;
+      `<svg class="shape-svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">${inner}</svg>`;
   }
 
   function paintBlock(el, b) {
@@ -663,10 +776,6 @@
     const tagHtml = tags.length ? `<div class="block-tags">${tags.map(t => `<button class="tag-chip" data-tag="${esc(t)}">#${esc(t)}</button>`).join('')}</div>` : '';
     const metaHtml = meta.length ? meta.join('') : (isList ? '' : '<span class="chip muted">empty</span>');
     el.innerHTML = `
-      <div class="block-actions">
-        <button class="blk-btn" data-blk="edit" title="Edit">${ic('pencil')}</button>
-        <button class="blk-btn" data-blk="open" title="Open inside">${ic('arrow-right')}</button>
-      </div>
       <div class="block-head">
         <div class="block-ico">${iconInner}</div>
         <div class="block-title">${esc(b.title || 'Untitled block')}</div>
@@ -701,11 +810,7 @@
     el.classList.toggle('glow', !!b.glow);
     el.style.setProperty('--glow-col', b.glowColor || 'var(--accent)');
     el.innerHTML =
-      `<div class="text-content"></div>` +
-      `<div class="block-actions"><button class="blk-btn" data-blk="edit" title="Edit text">${ic('pencil')}</button></div>` +
-      `<div class="tnode-rotate" title="Rotate"></div>` +
-      `<div class="tnode-edge e" data-edge="e" title="Wrap width"></div>` +
-      `<div class="tnode-resize" title="Resize text size"></div>`;
+      `<div class="text-content"></div>`;
     // Set styles via DOM props — the font stacks contain double quotes, which
     // would break a string-interpolated style="..." attribute.
     const tc = el.querySelector('.text-content');
@@ -753,6 +858,7 @@
     else if (b.kind === 'table') { paintTableNode(el, b); }
     else { paintBlock(el, b); el.style.setProperty('--b-accent', b.color || PALETTE[0]); }
     el.classList.toggle('locked', !!b.locked);
+    restoreChrome(id);
   }
 
   // freehand ink node (kind === 'ink'); pts are relative to the block's x,y
@@ -807,12 +913,7 @@
     el.style.height = b.h ? b.h + 'px' : '';
     el.classList.toggle('editing', editing);
     el.innerHTML =
-      ((b.title || editing) ? `<div class="table-title${b.title ? '' : ' empty'}">${esc(b.title || (editing ? 'Untitled table' : ''))}</div>` : '') +
-      t +
-      `<div class="block-actions"><button class="blk-btn" data-blk="edit" title="Edit table">${ic('pencil')}</button></div>` +
-      `<div class="tnode-edge e" data-edge="e" title="Wrap width"></div>` +
-      `<div class="tnode-edge s" data-edge="s" title="Wrap height"></div>` +
-      `<div class="tnode-resize" title="Scale table"></div>`;
+      ((b.title || editing) ? `<div class="table-title${b.title ? '' : ' empty'}">${esc(b.title || (editing ? 'Untitled table' : ''))}</div>` : '') + t;
     const fs = b.fontSize || 13;
     const tbl = el.querySelector('.data-table');
     tbl.style.fontSize = fs + 'px';
@@ -947,8 +1048,9 @@
   /* ---------------------------- edges ---------------------------------- */
   function blockRectOf(b) {
     const el = state.els[b.id];
-    const w = el ? el.offsetWidth : BLOCK_W;
-    const h = el ? el.offsetHeight : BLOCK_H_GUESS;
+    const s = elSize(b.id, el);
+    const w = (s && s.w) || BLOCK_W;
+    const h = (s && s.h) || BLOCK_H_GUESS;
     return { x: b.x, y: b.y, w, h, cx: b.x + w / 2, cy: b.y + h / 2 };
   }
   function blockRect(id) {
@@ -965,29 +1067,42 @@
     const t = Math.min(sx, sy);
     return { x: rect.cx + dx * t, y: rect.cy + dy * t };
   }
+  // Every measurement first, then one write. Reading a block's box between two
+  // appends made the browser lay the page out again for each connector.
   function drawEdges() {
     if (state.levelLayout === 'list') return;
     mmDirty = true; scheduleMinimap();
-    $$('g.edge-g', svg).forEach(n => n.remove());
+    const parts = [];
     for (const e of state.edges) {
       const a = blockRect(e.from), b = blockRect(e.to);
       if (!a || !b) continue;
       const p1 = borderPoint(a, b), p2 = borderPoint(b, a);
       const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
       const d = edgePathD(e.style, p1, p2);
-      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-      g.setAttribute('class', 'edge-g'); g.dataset.id = e.id;
       const startArrow = e.both ? ' marker-start="url(#arrow)"' : '';
-      g.innerHTML =
+      parts.push(
+        `<g class="edge-g" data-id="${esc(e.id)}">` +
         `<path class="hit" d="${d}"></path>` +
         `<path class="edge" d="${d}"${startArrow} marker-end="url(#arrow)"></path>` +
         (e.label ? '' : `<circle class="edge-dot" cx="${mx}" cy="${my}" r="2.4"></circle>`) +   // a point of light at the middle (decorative)
         (e.label
           ? `<text class="edge-label" x="${mx}" y="${my}" text-anchor="middle" dominant-baseline="middle">${esc(e.label)}</text>`
-          : '');
-      g.addEventListener('click', (ev) => { ev.stopPropagation(); openEdgeEditor(e); });
-      svg.appendChild(g);
+          : '') +
+        `</g>`);
     }
+    $$('g.edge-g', svg).forEach(n => n.remove());
+    if (parts.length) svg.insertAdjacentHTML('beforeend', parts.join(''));
+  }
+  // one listener for every connector, now and later
+  function bindEdgeClicks() {
+    svg.addEventListener('click', (ev) => {
+      const g = ev.target.closest ? ev.target.closest('g.edge-g') : null;
+      if (!g) return;
+      const e = state.edges.find(x => x.id === g.dataset.id);
+      if (!e) return;
+      ev.stopPropagation();
+      openEdgeEditor(e);
+    });
   }
 
   // Curved (default), straight, or right-angled elbow.
@@ -1601,6 +1716,7 @@
       for (const id of drop) {
         state.selectedIds.delete(id);
         const el = state.els[id]; if (el) el.remove();
+        untrackSize(id);
         delete state.els[id]; delete state.childCounts[id]; if (state.childPeek) delete state.childPeek[id];
         here.delete(id);
       }
@@ -1848,9 +1964,18 @@
           return;
         }
         const el = state.els[id]; if (!el) return;
-        const r = el.getBoundingClientRect();
-        minX = Math.min(minX, r.left); maxX = Math.max(maxX, r.right);
-        minY = Math.min(minY, r.top); maxY = Math.max(maxY, r.bottom);
+        // A turned block's box is wider than its size, so that one is measured;
+        // everything else comes from the size cache and forces no layout.
+        if (b.rot) {
+          const r = el.getBoundingClientRect();
+          minX = Math.min(minX, r.left); maxX = Math.max(maxX, r.right);
+          minY = Math.min(minY, r.top); maxY = Math.max(maxY, r.bottom);
+          return;
+        }
+        const sz = elSize(id, el) || { w: BLOCK_W, h: BLOCK_H_GUESS };
+        const l = (b.x || 0) * sc + state.view.tx + sr.left, t = (b.y || 0) * sc + state.view.ty + sr.top;
+        minX = Math.min(minX, l); maxX = Math.max(maxX, l + sz.w * sc);
+        minY = Math.min(minY, t); maxY = Math.max(maxY, t + sz.h * sc);
       });
     }
     if (!isFinite(minX)) { bar.hidden = true; selBarSize = null; return; }
@@ -1886,11 +2011,14 @@
       let x, y, w, h;
       if (b.kind === 'ink') {                        // strokes: from data, no layout read
         const ib = inkBox(b); x = ib.x; y = ib.y; w = ib.w; h = ib.h;
-      } else if (el) {
+      } else if (el && b.rot) {                      // turned: its box is wider than its size
         const r = el.getBoundingClientRect();
         x = (r.left - sr.left - state.view.tx) / sc;
         y = (r.top - sr.top - state.view.ty) / sc;
         w = r.width / sc; h = r.height / sc;
+      } else if (el) {
+        const sz = elSize(id, el) || { w: BLOCK_W, h: BLOCK_H_GUESS };
+        x = b.x || 0; y = b.y || 0; w = sz.w; h = sz.h;
       } else {
         const box = blockBox(b); x = box.x; y = box.y; w = box.w; h = box.h;
       }
@@ -2070,6 +2198,9 @@
     if (!selBarSize && sel.size) measureSelBar();       // while the tree is clean: one cheap layout
     for (const id of prevSel) if (!sel.has(id)) { const el = state.els[id]; if (el) el.classList.remove('selected'); }
     for (const id of sel) { const el = state.els[id]; if (el && !el.classList.contains('selected')) el.classList.add('selected'); }
+    // the chrome follows the selection, not the page
+    for (const id of prevSel) if (!sel.has(id)) unmountChrome(id);
+    for (const id of sel) if (!prevSel.has(id)) mountChrome(id);
     prevSel = new Set(sel);
     if (NG.Overlay) NG.Overlay.draw();
     if (state.levelLayout === 'list') $$('.list-row').forEach(n => n.classList.toggle('selected', sel.has(n.dataset.id)));
@@ -2083,8 +2214,9 @@
   const GUIDE_SNAP = 6;                       // screen px
   function blockBox(b) {
     const el = state.els[b.id];
-    const w = (b.w || (el && el.offsetWidth) || BLOCK_W);
-    const h = (b.h || (el && el.offsetHeight) || BLOCK_H_GUESS);
+    const s = b.w && b.h ? null : elSize(b.id, el);
+    const w = (b.w || (s && s.w) || BLOCK_W);
+    const h = (b.h || (s && s.h) || BLOCK_H_GUESS);
     return { x: b.x || 0, y: b.y || 0, w, h };
   }
   function alignAdjust(drag, dxW, dyW, byId) {
@@ -3479,7 +3611,7 @@
   // Called before anything that deletes or rewinds records, so a late write
   // can never bring a deleted block back or overwrite an undo.
   function flushPendingSaves() {
-    const w = [];
+    const w = [DB.flush()];
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; if (drawerBlock) w.push(persistBlock(drawerBlock)); }
     if (textSaveTimer) { clearTimeout(textSaveTimer); textSaveTimer = null; if (textBlock) w.push(persistBlock(textBlock)); }
     if (shapeSaveTimer) { clearTimeout(shapeSaveTimer); shapeSaveTimer = null; if (shapeBlock) w.push(persistBlock(shapeBlock)); }
@@ -4151,7 +4283,7 @@
       if (b.parentId !== state.level) continue;
       let cx, cy;
       if (b.kind === 'ink') { const ib = inkBox(b); cx = ib.x + ib.w / 2; cy = ib.y + ib.h / 2; }
-      else { const el = state.els[b.id]; if (!el) continue; cx = (b.x || 0) + el.offsetWidth / 2; cy = (b.y || 0) + el.offsetHeight / 2; }
+      else { const el = state.els[b.id]; if (!el) continue; const s = elSize(b.id, el) || {}; cx = (b.x || 0) + (s.w || BLOCK_W) / 2; cy = (b.y || 0) + (s.h || BLOCK_H_GUESS) / 2; }
       if (pointInPoly(cx, cy, poly)) hits.push(b.id);
     }
     const grown = withGroups(hits);
@@ -5886,6 +6018,7 @@
     state.blocks = state.blocks.filter(x => x.id !== b.id);
     const wasSel = state.selectedIds.delete(b.id);
     const el = state.els[b.id]; if (el) el.remove();
+    untrackSize(b.id);
     delete state.els[b.id]; delete state.childCounts[b.id]; if (state.childPeek) delete state.childPeek[b.id];
     if (wasSel) applySelectionClasses();
   }
@@ -6976,8 +7109,9 @@
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     const sizeOf = (b) => {
       const el = state.els[b.id];
-      let w = b.w || (el && el.offsetWidth) || 240;
-      let h = b.h || (el && el.offsetHeight) || 120;
+      const s = elSize(b.id, el) || {};
+      let w = b.w || s.w || 240;
+      let h = b.h || s.h || 120;
       if (b.kind === 'ink') { w = (b.w || 1) + (b.width || 3) * 2 + 4; h = (b.h || 1) + (b.width || 3) * 2 + 4; }
       if (!b.kind || b.kind === 'block') { w = b.w || 260; h = b.h || 128; }
       return [w, h];
@@ -9118,7 +9252,7 @@
     initTheme();
     document.getElementById('app').classList.add('home-mode');   // avoid canvas flash before landing loads
     $('#stage').hidden = true;
-    bindToolbar(); bindStage(); bindDrawerFields(); bindFileInputs();
+    bindToolbar(); bindStage(); bindChromeHover(); bindEdgeClicks(); bindDrawerFields(); bindFileInputs();
     bindSearch(); bindMenu(); bindConfirm(); bindKeys();
     bindAddMenu(); bindListView(); bindHome(); bindPrompt(); bindBrandMenu(); bindAutosave(); bindProps(); bindAbout(); bindContextMenu();
     bindTextEditor(); bindShapeEditor(); bindImageEditor(); bindCheckEditor(); bindInkEditor(); bindTableEditor(); bindImagePaste(); bindCmdk(); bindMinimap(); bindSelFrame();
@@ -9159,7 +9293,7 @@
       getGesture: gestureState,
       getTools: () => ({ penMode: state.penMode, penEraser: state.penEraser, selectTool: state.selectTool, eraserMode, lassoMode, penStyle, penColor, penSize, fingerDraw }),
       selectionWorldBox, applySelectionClasses, setSelection, clearSelection, selectBlock,
-      afterInkWrites, flushWrites: () => afterInkWrites(() => Promise.resolve()),
+      afterInkWrites, flushWrites: () => afterInkWrites(() => DB.flush()),
       blockScreenRect: (id) => { const el = state.els[id]; if (!el) return null; const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; },
       toast, markChanged,
     };

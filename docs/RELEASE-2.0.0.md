@@ -115,3 +115,26 @@ Each of the four pen styles wrote 120 lines, 13,080 samples per style.
 | Dragging 352 strokes as one | 0.2 ms per move |
 | Undo of that move | 210 ms, every stroke back in place |
 | Heap after 480 strokes | 16 MB |
+
+## 2.0.7 (site v121) - Ink Plane stage 2, first half
+
+Stage 2 is about the costs that grow with how much is on the page. Measured on a page holding 2200 objects (600 cards, 1600 strokes, 200 connectors).
+
+| What | Before | After |
+| --- | --- | --- |
+| One zoom step | 76 ms | 0.6 ms |
+| Commit of one stroke | 79 ms | 57 ms |
+| Opening the level | 289 ms | 289 ms, with 4400 fewer database queries |
+| Redrawing 200 connectors | 0.1 ms | 0.1 ms, and no longer one page layout per connector |
+| Drawing, panning, dragging | already flat | unchanged (0.1 ms per event) |
+
+What changed:
+
+- **A block's chrome is mounted only when you need it.** The edit buttons and the rotate, resize and edge handles are added to a block when you pick it up (or, with a mouse, hover it) and removed when you leave it. They carry the counter-scale that keeps them the same size at any zoom, so every one of them used to be restyled on every zoom step. This is the 76 ms to 0.6 ms above. While nothing is picked up, the counter-scale is not even written.
+- **Block sizes come from a ResizeObserver.** Reading an element's size right after moving it forces the browser to lay out the whole page. The selection bar, the selection frame, the connectors, the lasso and the mini-map now read a cache the browser fills after layout instead.
+- **Connectors are drawn in one write.** The old loop measured a block, appended a line, measured the next block, and so on, which made the browser lay the page out once per connector.
+- **Every change goes through one write queue**, committed as a single database transaction per frame instead of one transaction per record. Reads see queued writes, so nothing else changes; Ctrl+S, autosave, undo ordering and the tests wait on the queue as before.
+- **Opening a level is one query.** It used to ask the database twice per block (children and files) in a transaction each. It now counts them in one transaction without reading the records, and only list cards fetch their preview items.
+- The database moves to version 4, adding workspace-and-parent indexes. Existing data upgrades in place on first open.
+
+Still to come in stage 2: the database moves into a worker, and the autosave payload is built off the input thread.
