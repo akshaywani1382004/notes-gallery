@@ -459,7 +459,7 @@
     stage.style.backgroundPosition = `${tx}px ${ty}px`;
     positionSelBar();
     positionSelFrame();
-    if (planesOn) planesDrawForView(scale);
+    if (planesOn) requestPlaneRedraw(scale);
     if (NG.Overlay) NG.Overlay.draw();
     const pct = Math.round(scale * 100) + '%';
     $('#btn-zoom-reset').textContent = pct;
@@ -601,6 +601,21 @@
    * gaps while it happens are what read as blinking handwriting. So while the
    * scale is moving the planes re-blit what they have; a moment after it stops
    * they render the crisp tiles for where it landed.                        */
+  // applyView can run more than once inside a single screen frame - a mouse,
+  // trackpad or pen commonly reports movement faster than the screen redraws.
+  // The world transform itself is one CSS property the browser composites for
+  // free and stays immediate; only the plane repaint, the one part with real
+  // work behind it, is held to at most once per frame. Nothing visible is
+  // delayed by this: the screen only ever shows the state as of the last call
+  // before it paints, so extra calls before that were pure waste, not extra
+  // smoothness. This is what turned "redraws on every pointer report" into
+  // "redraws once per frame, like everything else on the page."
+  let planeViewRAF = 0, planeViewScale = 1;
+  function requestPlaneRedraw(scale) {
+    planeViewScale = scale;
+    if (planeViewRAF) return;
+    planeViewRAF = requestAnimationFrame(() => { planeViewRAF = 0; planesDrawForView(planeViewScale); });
+  }
   let planeScale = 0, planeSettle = null;
   function planesDrawForView(scale) {
     const zooming = Math.abs((scale || 1) - planeScale) > 1e-6;
@@ -794,7 +809,7 @@
     else if (b.kind === 'table') paintTableNode(el, b);
     else { el.style.setProperty('--b-accent', b.color || PALETTE[0]); paintBlock(el, b); }
     el.classList.toggle('locked', !!b.locked);
-    state.els[b.id] = el;
+    state.els[b.id] = el;
     trackSize(el);
     restoreChrome(b.id);        // a rebuilt element keeps the chrome it had
     return el;
@@ -1828,7 +1843,7 @@
       for (const id of drop) {
         state.selectedIds.delete(id);
         const el = state.els[id]; if (el) el.remove();
-        untrackSize(id);
+        untrackSize(id);
         delete state.els[id]; delete state.childCounts[id]; if (state.childPeek) delete state.childPeek[id];
         here.delete(id);
       }
@@ -6136,7 +6151,7 @@
     state.blocks = state.blocks.filter(x => x.id !== b.id);
     const wasSel = state.selectedIds.delete(b.id);
     const el = state.els[b.id]; if (el) el.remove();
-    untrackSize(b.id);
+    untrackSize(b.id);
     delete state.els[b.id]; delete state.childCounts[b.id]; if (state.childPeek) delete state.childPeek[b.id];
     if (wasSel) applySelectionClasses();
   }
@@ -9536,7 +9551,7 @@
         return b ? b.id : null;
       },
       blockScreenRect: (id) => { const el = state.els[id]; if (!el) return null; const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; },
-      toast, markChanged,
+      toast, markChanged,
       workspaceJson,                     // the finished file text, as a save writes it
     };
   }

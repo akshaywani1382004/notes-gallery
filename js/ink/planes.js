@@ -15,6 +15,15 @@
    the frame is filled from the nearest scale it has (a moment of softness)
    and the crisp tiles are rendered a few per frame behind it.
 
+   Finding what belongs in a tile. A page with thousands of strokes on it
+   cannot afford to ask "does this stroke touch this tile?" of every stroke,
+   for every tile, every time one letter is added - that cost grows with the
+   whole page, so writing gets slower the more you have already written. A
+   fixed-size world-space grid (independent of zoom) remembers which strokes
+   live in which patch of the page, kept up to date as strokes are added,
+   edited or removed; a tile only ever asks its own handful of nearby cells.
+   One new letter touches its own cell and nothing else.
+
    What is NOT painted here. A stroke that is selected, lifted for a drag or
    being scaled goes back to its DOM element for as long as that lasts, so
    the selection glow, the lift container and the scale grip keep working
@@ -32,9 +41,17 @@
   const TILE = 512;               // device px
   const CAP = 240;                // cached tiles before the oldest go
   const BUDGET = 8;               // fresh tiles rendered per frame
+  const GRID = 256;                // world units per spatial-index cell
 
   function boxesOverlap(a, b) {
     return !(a.x > b.x + b.w || a.y > b.y + b.h || a.x + a.w < b.x || a.y + a.h < b.y);
+  }
+  // Which grid cells a world-space box touches.
+  function cellRange(box) {
+    return {
+      x0: Math.floor(box.x / GRID), y0: Math.floor(box.y / GRID),
+      x1: Math.floor((box.x + box.w) / GRID), y1: Math.floor((box.y + box.h) / GRID),
+    };
   }
 
   // Where a stroke really lands. The record's own box is what the page laid
@@ -65,13 +82,18 @@
   };
 
   // Below the page first, then oldest first: the order the DOM painted in.
+  // Only ever applied to one tile's small handful of candidates, never the
+  // whole page - see renderTile.
   const paintOrder = (a, b) => ((a.z || 0) - (b.z || 0)) || ((a.createdAt || 0) - (b.createdAt || 0));
 
   const Planes = {
     enabled: false,
     over: null, under: null, octx: null, uctx: null,
     bag: null,
-    strokes: [],                  // paint order, over-plane and under-plane split at draw time
+    byId: new Map(),               // stroke id -> the record: O(1) add/update/remove, no list to scan
+    grid: new Map(),                // "cx,cy" world cell -> Set(strokeId) - the "memory" of who lives where
+    cellsOf: new Map(),             // stroke id -> the cell keys it is currently registered under
+    underCount: 0,                  // how many strokes sit behind the page, kept incrementally
     excluded: new Set(),          // ids the DOM is drawing right now (selected / lifted)
     tiles: new Map(),             // key -> {cv, S, i, j, plane, at}
     seen: new Map(),              // stroke id -> the box it was last painted into
@@ -79,6 +101,11 @@
     dirty: true,                  // the whole surface needs a repaint
     pendingFill: false,
     stats: { tileRenders: 0, blits: 0, lastDrawMs: 0, stale: 0 },
+
+    // A read-only view for diagnostics and tests: every stroke, as a plain
+    // array. Nothing on the paint path reads this - it always goes through
+    // byId and the grid, so building this list costs nothing while drawing.
+    get strokes() { return [...this.byId.values()]; },
 
     init(bag, over, under) {
       this.bag = bag; this.over = over; this.under = under;
@@ -88,42 +115,76 @@
     },
 
     /* ---- what to paint ------------------------------------------------- */
-    // Called whenever the set of strokes on the level changes.
+    _isUnder(b) { return (b.z || this.bag.INK_Z) < this.bag.INK_Z; },
+
+    // Register a stroke at the grid cells its current bounds touch, replacing
+    // wherever it was registered before. The one place that keeps `seen` (its
+    // last-known paint box) and the grid in lock step.
+    _place(b) {
+      const box = strokeBounds(this.bag, b);
+      const old = this.cellsOf.get(b.id);
+      if (old) for (const k of old) { const s = this.grid.get(k); if (s) { s.delete(b.id); if (!s.size) this.grid.delete(k); } }
+      const { x0, y0, x1, y1 } = cellRange(box);
+      const cells = [];
+      for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++) cells.push(cx + ',' + cy);
+      this.cellsOf.set(b.id, cells);
+      for (const k of cells) { let s = this.grid.get(k); if (!s) { s = new Set(); this.grid.set(k, s); } s.add(b.id); }
+      this.seen.set(b.id, box);
+      return box;
+    },
+    _unplace(id) {
+      const cells = this.cellsOf.get(id);
+      if (cells) for (const k of cells) { const s = this.grid.get(k); if (s) { s.delete(id); if (!s.size) this.grid.delete(k); } }
+      this.cellsOf.delete(id); this.seen.delete(id);
+    },
+
+    // Called whenever the set of strokes on the level changes (a level is
+    // opened, or navigated to). The one place a full pass over every stroke
+    // is expected - after this, one stroke changing only ever touches its
+    // own cells.
     setStrokes(list) {
-      this.strokes = list.slice().sort(paintOrder);
-      this.seen.clear();
+      this.byId.clear(); this.grid.clear(); this.cellsOf.clear(); this.seen.clear();
+      this.underCount = 0;
+      for (const b of list) {
+        this.byId.set(b.id, b);
+        if (this._isUnder(b)) this.underCount++;
+        this._place(b);
+      }
       this.clearTiles();
     },
     // A stroke just committed. Only the tiles under it are dropped - clearing
-    // the whole surface for every stroke is what made writing flicker.
+    // the whole surface for every stroke is what made writing flicker, and
+    // finding those tiles costs only what this one stroke touches, not the
+    // rest of the page.
     addStroke(b) {
       if (!b) return;
-      const i = this.strokes.findIndex(x => x.id === b.id);
-      if (i >= 0) this.strokes[i] = b; else this.strokes.push(b);
-      this.strokes.sort(paintOrder);
-      const box = strokeBounds(this.bag, b);
-      this.seen.set(b.id, box);
+      this.byId.set(b.id, b);
+      if (this._isUnder(b)) this.underCount++;
+      const box = this._place(b);
       this.invalidate(box);
     },
     // A stroke was rewritten (rubbed out in part, recoloured, moved). Both
     // where it was and where it is now have to be repainted.
     updateStroke(b) {
       if (!b) return;
-      const i = this.strokes.findIndex(x => x.id === b.id);
-      if (i >= 0) this.strokes[i] = b; else this.strokes.push(b), this.strokes.sort(paintOrder);
+      const prev = this.byId.get(b.id);
+      const wasUnder = prev ? this._isUnder(prev) : false;
       const was = this.seen.get(b.id);
-      const now = strokeBounds(this.bag, b);
-      this.seen.set(b.id, now);
+      this.byId.set(b.id, b);
+      const nowUnder = this._isUnder(b);
+      if (wasUnder !== nowUnder) this.underCount += nowUnder ? 1 : -1;
+      const now = this._place(b);
       this.invalidate(unionBox(was, now));
     },
-    // A stroke is gone. It must leave this list as well as the page, or the
+    // A stroke is gone. It must leave the index as well as the page, or the
     // next tile that gets rendered paints it straight back.
     removeStroke(id) {
       if (id == null) return;
-      const i = this.strokes.findIndex(x => x.id === id);
-      const was = this.seen.get(id) || (i >= 0 ? strokeBounds(this.bag, this.strokes[i]) : null);
-      if (i >= 0) this.strokes.splice(i, 1);
-      this.seen.delete(id);
+      const prev = this.byId.get(id);
+      if (prev && this._isUnder(prev)) this.underCount--;
+      const was = this.seen.get(id);
+      this.byId.delete(id);
+      this._unplace(id);
       this.excluded.delete(id);
       if (was) this.invalidate(was); else this.clearTiles();
     },
@@ -150,9 +211,8 @@
       for (const id of next) if (!this.excluded.has(id)) changed.push(id);
       for (const id of this.excluded) if (!next.has(id)) changed.push(id);
       this.excluded = next;
-      const byId = new Map(this.strokes.map(s => [s.id, s]));
       for (const id of changed) {
-        const s = byId.get(id);
+        const s = this.byId.get(id);
         if (s) this.invalidate(strokeBounds(this.bag, s)); else this.clearTiles();
       }
       return true;
@@ -167,22 +227,33 @@
       }
     },
 
+    // Everything the grid knows about that could fall in this tile: only the
+    // cells the tile's world box overlaps, never the whole document.
     renderTile(plane, S, i, j) {
       const wx = i * TILE / S, wy = j * TILE / S, ws = TILE / S;
       const box = { x: wx, y: wy, w: ws, h: ws };
       const bag = this.bag;
-      // what falls in this tile, before making a canvas for it
+      const { x0, y0, x1, y1 } = cellRange(box);
+      const already = new Set();
       const here = [];
-      for (const b of this.strokes) {
-        if (this.excluded.has(b.id)) continue;
-        const under = (b.z || bag.INK_Z) < bag.INK_Z;   // z 0 means "above the page" for ink, as the DOM had it
-        if ((plane === 'under') !== under) continue;
-        const sb = strokeBounds(bag, b);
-        this.seen.set(b.id, sb);                 // where this stroke paints, for a later invalidate
-        if (boxesOverlap(sb, box)) here.push(b);
+      for (let cy = y0; cy <= y1; cy++) {
+        for (let cx = x0; cx <= x1; cx++) {
+          const cell = this.grid.get(cx + ',' + cy);
+          if (!cell) continue;
+          for (const id of cell) {
+            if (already.has(id) || this.excluded.has(id)) continue;
+            already.add(id);
+            const b = this.byId.get(id); if (!b) continue;
+            const under = (b.z || bag.INK_Z) < bag.INK_Z;   // z 0 means "above the page" for ink, as the DOM had it
+            if ((plane === 'under') !== under) continue;
+            const sb = this.seen.get(id) || strokeBounds(bag, b);
+            if (boxesOverlap(sb, box)) here.push(b);
+          }
+        }
       }
       this.stats.tileRenders++;
       if (!here.length) return null;             // an empty tile costs nothing to keep
+      here.sort(paintOrder);                      // this tile's own handful, never the whole page
       const cv = document.createElement('canvas');
       cv.width = TILE; cv.height = TILE;
       const ctx = cv.getContext('2d');
@@ -247,8 +318,7 @@
       const i0 = Math.floor(-ox / step), i1 = Math.floor((W - ox) / step);
       const j0 = Math.floor(-oy / step), j1 = Math.floor((H - oy) / step);
       let budget = reuse ? 0 : BUDGET, missing = false;
-      const bagI = bag.INK_Z;
-      const hasUnder = this.strokes.some(b => (b.z || bagI) < bagI);
+      const hasUnder = this.underCount > 0;
       const planes = hasUnder ? [['under', this.uctx], ['over', this.octx]] : [['over', this.octx]];
       for (const [plane, ctx] of planes) {
         for (let j = j0; j <= j1; j++) {
@@ -292,7 +362,9 @@
       if (!this.over) return;
       this.octx.clearRect(0, 0, this.over.width, this.over.height);
       this.uctx.clearRect(0, 0, this.under.width, this.under.height);
-      this.strokes = []; this.seen.clear(); this.clearTiles();
+      this.byId.clear(); this.grid.clear(); this.cellsOf.clear(); this.seen.clear();
+      this.underCount = 0;
+      this.clearTiles();
     },
   };
 
