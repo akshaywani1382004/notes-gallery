@@ -459,7 +459,7 @@
     stage.style.backgroundPosition = `${tx}px ${ty}px`;
     positionSelBar();
     positionSelFrame();
-    if (planesOn) NG.Planes.draw();
+    if (planesOn) planesDrawForView(scale);
     if (NG.Overlay) NG.Overlay.draw();
     const pct = Math.round(scale * 100) + '%';
     $('#btn-zoom-reset').textContent = pct;
@@ -596,6 +596,43 @@
     NG.Planes.draw();
   }
   function planesInvalidate(box) { if (planesOn) { NG.Planes.invalidate(box); NG.Planes.draw(); } }
+  /* A zoom is a stream of scales, and each one is a different set of tiles.
+   * Rendering for a scale the next frame replaces is work thrown away, and the
+   * gaps while it happens are what read as blinking handwriting. So while the
+   * scale is moving the planes re-blit what they have; a moment after it stops
+   * they render the crisp tiles for where it landed.                        */
+  let planeScale = 0, planeSettle = null;
+  function planesDrawForView(scale) {
+    const zooming = Math.abs((scale || 1) - planeScale) > 1e-6;
+    planeScale = scale || 1;
+    if (zooming) {
+      NG.Planes.livePending = true;
+      clearTimeout(planeSettle);
+      planeSettle = setTimeout(() => {
+        planeSettle = null; NG.Planes.livePending = false;
+        NG.Planes.draw(false);                 // crisp, at the scale it settled on
+      }, 170);
+    }
+    NG.Planes.draw(zooming || !!pinch);
+  }
+  // One stroke changed. The plane measures a stroke from its points, so it is
+  // told which record moved rather than being handed the record's own box -
+  // points can paint outside it, and a box-shaped invalidate left the old ink
+  // on screen until the page was reloaded.
+  // One sweep of the eraser can take a dozen strokes apart, so the repaint is
+  // coalesced into the next frame. The tiles still hold the old ink until it
+  // lands, so nothing blinks in between.
+  let planeDrawQueued = false;
+  function planesQueueDraw() {
+    if (planeDrawQueued) return;
+    planeDrawQueued = true;
+    requestAnimationFrame(() => { planeDrawQueued = false; if (planesOn) NG.Planes.draw(false); });
+  }
+  // `now` for a stroke just finished: it must be on the plane in this frame,
+  // because the wet layer lets go of it in this frame.
+  function planesAdd(b, now) { if (planesOn) { NG.Planes.addStroke(b); if (now) NG.Planes.draw(false); else planesQueueDraw(); } }
+  function planesUpdate(b) { if (planesOn) { NG.Planes.updateStroke(b); planesQueueDraw(); } }
+  function planesRemove(id) { if (planesOn) { NG.Planes.removeStroke(id); planesQueueDraw(); } }
   // The topmost stroke under a screen point, by the same box rule the hidden
   // element would have answered with. Only needed while the planes paint.
   function inkHitAt(clientX, clientY) {
@@ -929,7 +966,7 @@
     else if (b.kind === 'shape') { paintShapeNode(el, b); }
     else if (b.kind === 'image') { paintImageNode(el, b); }
     else if (b.kind === 'check') { paintCheckNode(el, b); }
-    else if (b.kind === 'ink') { paintInkNode(el, b); planesInvalidate(inkBox(b)); }
+    else if (b.kind === 'ink') { paintInkNode(el, b); planesUpdate(b); }
     else if (b.kind === 'table') { paintTableNode(el, b); }
     else { paintBlock(el, b); el.style.setProperty('--b-accent', b.color || PALETTE[0]); }
     el.classList.toggle('locked', !!b.locked);
@@ -3939,7 +3976,10 @@
   // same as desktop right-click. Armed on pointerdown, cancelled by move/up.
   function armCellPress(e, id, r, c, isTitle) {
     if (e.pointerType !== 'touch') return;
-    lpFired = false; lpX = e.clientX; lpY = e.clientY;
+    // lpPid is what the lift and the drift check cancel on. Without it a quick
+    // tap on a cell left this timer running and the panel opened half a second
+    // later, on its own.
+    lpFired = false; lpX = e.clientX; lpY = e.clientY; lpPid = e.pointerId;
     clearTimeout(lpTimer);
     lpTimer = setTimeout(() => {
       lpTimer = null; lpFired = true;
@@ -6092,7 +6132,7 @@
     if (eraseBatch.added.has(b.id)) eraseBatch.added.delete(b.id);   // born and gone in one gesture
     else { const c = state.childCounts[b.id]; eraseBatch.removed.push({ ...b, __deps: !c || !!(c.blocks || c.files) }); }
     if (b.kind !== 'ink') closeEditorsFor(b.id);
-    if (b.kind === 'ink') planesInvalidate(inkBox(b));
+    if (b.kind === 'ink') planesRemove(b.id);
     state.blocks = state.blocks.filter(x => x.id !== b.id);
     const wasSel = state.selectedIds.delete(b.id);
     const el = state.els[b.id]; if (el) el.remove();
@@ -6167,7 +6207,7 @@
     state.blocks.push(nb);
     state.childCounts[nb.id] = { blocks: 0, files: 0 };
     world.appendChild(makeBlockEl(nb));
-    planesRefresh();
+    planesAdd(nb);
   }
   // whole-stroke eraser: whatever stroke is under the point goes
   function eraseStrokeAt(clientX, clientY) {
@@ -6560,7 +6600,7 @@
     state.blocks.push(b);
     state.childCounts[b.id] = { blocks: 0, files: 0 };
     world.appendChild(makeBlockEl(b));
-    planesRefresh();             // on the plane before the wet layer releases it
+    planesAdd(b, true);          // on the plane before the wet layer releases it
     const level = state.level, gen = history.gen;
     await afterInkWrites(async () => {
       await DB.saveBlock(b);
@@ -7013,15 +7053,71 @@
       }
       outFiles.push({ blockId: f.blockId, name: f.name, type: f.type, size: f.size, kind: f.kind, createdAt: f.createdAt, data });
     }
-    // Preserve every field (kind, text/shape/image props, src, etc.); only drop `ws`
-    // which is re-assigned on import.
-    const outBlocks = blocks.map(b => { const o = { ...b }; delete o.ws; return o; });
-    const outEdges = edges.map(e => edgeOut(e));
-    return {
-      app: 'NotesGallery', kind: 'workspace', version: 2, exportedAt: new Date().toISOString(),
-      workspace: { name: overrideName || (w && w.name) || 'Workspace', color: (w && w.color) || PALETTE[0], paper: (w && w.paper) || 'dots' },
-      blocks: outBlocks, edges: outEdges, files: outFiles,
-    };
+    // One builder for the file's shape, shared with the save worker
+    // (js/payload.js), so an export and an autosave can never disagree.
+    return NGPayload.build({ workspace: w, blocks, edges, files: outFiles }, overrideName, PALETTE[0]);
+  }
+
+  /* ------------------------- saving off the input thread ------------------ *
+   * Reading every record, turning attachments into data URLs and stringifying
+   * the result took 97 ms at 2000 strokes and 235 ms at 6000 - a freeze in
+   * the middle of writing, since autosave fires while the pen is down. The
+   * worker does that work on its own thread and hands back the finished text.
+   * The page still does the file write itself: the app shell's file API is not
+   * available to workers.                                                    */
+  let saveWorker = null, saveWorkerBroken = false, saveJobId = 0;
+  const saveJobs = new Map();
+  function getSaveWorker() {
+    if (saveWorkerBroken) return null;
+    if (saveWorker) return saveWorker;
+    try {
+      saveWorker = new Worker('js/save-worker.js?v=' + (NG.version || ''));
+      saveWorker.onmessage = (e) => {
+        const { id, json, error, bytes, blocks } = e.data || {};
+        const job = saveJobs.get(id); if (!job) return;
+        saveJobs.delete(id);
+        if (error) job.reject(new Error(error)); else job.resolve({ json, bytes, blocks });
+      };
+      saveWorker.onerror = () => {
+        saveWorkerBroken = true;
+        for (const [, job] of saveJobs) job.reject(new Error('the save worker stopped'));
+        saveJobs.clear();
+        try { saveWorker.terminate(); } catch (_) {}
+        saveWorker = null;
+      };
+    } catch (_) { saveWorkerBroken = true; saveWorker = null; }
+    return saveWorker;
+  }
+  // The finished file text for a workspace. Built on the worker when there is
+  // one, on this thread when there is not (a plain file:// open, say).
+  async function workspaceJson(wsId, overrideName) {
+    // A panel's edits are written on a short timer and a stroke is written
+    // after the pen lifts; the file has to contain both, or a save can be one
+    // sentence behind what is on screen.
+    if (wsId === state.ws) { await flushPendingSaves(); await inkWrites; }
+    await DB.flush();                              // the worker reads storage, so commit first
+    const w = getSaveWorker();
+    if (w) {
+      const wsRec = await DB.getWorkspace(wsId);
+      const id = ++saveJobId;
+      const t0 = performance.now();
+      try {
+        const res = await new Promise((resolve, reject) => {
+          saveJobs.set(id, { resolve, reject });
+          w.postMessage({ id, ws: wsId, name: overrideName, color: (wsRec && wsRec.color) || PALETTE[0] });
+          setTimeout(() => { if (saveJobs.has(id)) { saveJobs.delete(id); reject(new Error('the save worker did not answer')); } }, 30000);
+        });
+        if (NG.Diag) NG.Diag.metrics.savePayload = { where: 'worker', ms: Math.round(performance.now() - t0), bytes: res.bytes };
+        return res.json;
+      } catch (e) {
+        console.warn('save worker failed, building on the page instead:', e && e.message);
+        saveWorkerBroken = true;
+      }
+    }
+    const t1 = performance.now();
+    const json = JSON.stringify(await workspacePayload(wsId, overrideName));
+    if (NG.Diag) NG.Diag.metrics.savePayload = { where: 'page', ms: Math.round(performance.now() - t1), bytes: json.length };
+    return json;
   }
   const safeFileName = (name) => (String(name || 'workspace').replace(/[^\w-]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase()) || 'workspace';
 
@@ -7030,16 +7126,17 @@
     wsId = wsId || state.ws;
     if (!wsId) return;
     toast('Preparing export…');
-    const payload = await workspacePayload(wsId, overrideName);
-    const fname = `${safeFileName(overrideName || payload.workspace.name)}.notesgallery.json`;
+    const w = await DB.getWorkspace(wsId);
+    const json = await workspaceJson(wsId, overrideName);
+    const fname = `${safeFileName(overrideName || (w && w.name) || 'workspace')}.notesgallery.json`;
     if (SHELL) {                                     // app shell: native Save-As
       const p = await NGShell.saveDialog(fname);
       if (!p) return;
-      try { await NGShell.writeFile(p, JSON.stringify(payload)); toast('Workspace exported'); }
+      try { await NGShell.writeFile(p, json); toast('Workspace exported'); }
       catch (e) { console.error(e); toast('Could not write the file.'); }
       return;
     }
-    const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+    const blob = new Blob([json], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = fname;
@@ -7690,9 +7787,10 @@
     } catch (_) {}
     return false;
   }
-  async function writeToHandle(handle, payload) {
+  // `json` is the finished file text (built on the worker when there is one).
+  async function writeToHandle(handle, json) {
     const writable = await handle.createWritable();
-    await writable.write(new Blob([JSON.stringify(payload, null, 0)], { type: 'application/json' }));
+    await writable.write(new Blob([json], { type: 'application/json' }));
     await writable.close();
   }
 
@@ -7718,13 +7816,20 @@
       const parentId = (e.parentId === DB.ROOT || e.parentId == null) ? DB.ROOT : (idMap.get(e.parentId) || DB.ROOT);
       await DB.saveEdge(edgeIn({ id: uid(), ws: wsId, parentId, from, to, createdAt: e.createdAt || now }, e));
     }
+    let skipped = 0;
     for (const f of (data.files || [])) {
       const blockId = idMap.get(f.blockId);
       if (!blockId) continue;
-      const blob = f.data ? await dataUrlToBlob(f.data) : new Blob([]);
-      await DB.saveFile({ id: uid(), ws: wsId, blockId, name: f.name, type: f.type, size: f.size, kind: f.kind, blob, createdAt: f.createdAt || now });
+      // A file whose contents did not travel (a hand-edited export, a copy
+      // trimmed for size) is left out rather than stored as an empty blob
+      // that still claims a name and a size.
+      let blob = null;
+      if (f.data) { try { blob = await dataUrlToBlob(f.data); } catch (_) { blob = null; } }
+      if (!blob || !blob.size) { skipped++; continue; }
+      await DB.saveFile({ id: uid(), ws: wsId, blockId, name: f.name, type: f.type || blob.type, size: blob.size, kind: f.kind, blob, createdAt: f.createdAt || now });
     }
-    return { wsId, name };
+    await DB.flush();                          // the import is committed before anything opens it
+    return { wsId, name, skipped };
   }
   function validWorkspaceData(data) {
     return data && (data.app === 'NotesGallery' || data.app === 'BlockNotes') && Array.isArray(data.blocks);
@@ -7733,8 +7838,9 @@
   const isWorkspaceFile = (f) => /\.json$/i.test(f.name || '') || f.type === 'application/json';
   // After an import: say so, refresh Home, and from inside a workspace offer to
   // jump to the new one (what is open stays saved).
-  async function afterImport(wsId, name, linked) {
-    toast(`Imported “${name}”` + (linked ? ' (linked to file)' : ''));
+  async function afterImport(wsId, name, linked, skipped) {
+    toast(`Imported “${name}”` + (linked ? ' (linked to file)' : '')
+      + (skipped ? ` \u2014 ${skipped} attachment${skipped > 1 ? 's' : ''} had no contents` : ''));
     await renderHome();
     if (state.ws != null) {
       confirmDialog(`Imported “${esc(name)}”`, 'Open it now? What you are working on stays saved.', 'Open',
@@ -7750,8 +7856,8 @@
     try { data = JSON.parse(text); }
     catch (_) { toast('That file is not valid JSON.'); return; }
     if (!validWorkspaceData(data)) { toast('Not a Notes Gallery workspace file.'); return; }
-    const { wsId, name } = await createWorkspaceFromData(data);
-    await afterImport(wsId, name, false);
+    const { wsId, name, skipped } = await createWorkspaceFromData(data);
+    await afterImport(wsId, name, false, skipped);
   }
 
   // Import via the File System Access API and BIND the file so edits save back.
@@ -7766,9 +7872,9 @@
       try { data = JSON.parse(text); }
       catch (_) { toast('That file is not valid JSON.'); return; }
       if (!validWorkspaceData(data)) { toast('Not a Notes Gallery workspace file.'); return; }
-      const { wsId, name } = await createWorkspaceFromData(data);
+      const { wsId, name, skipped } = await createWorkspaceFromData(data);
       await DB.savePathRec(wsId, path);
-      await afterImport(wsId, name, true);
+      await afterImport(wsId, name, true, skipped);
       return;
     }
     if (!FS_OK) { $('#import-input').click(); return; }
@@ -7788,9 +7894,9 @@
     try { data = JSON.parse(text); }
     catch (_) { toast('That file is not valid JSON.'); return; }
     if (!validWorkspaceData(data)) { toast('Not a Notes Gallery workspace file.'); return; }
-    const { wsId, name } = await createWorkspaceFromData(data);
+    const { wsId, name, skipped } = await createWorkspaceFromData(data);
     await DB.saveHandleRec(wsId, handle);   // future saves write back to this file
-    await afterImport(wsId, name, true);
+    await afterImport(wsId, name, true, skipped);
   }
 
   /* ---- autosave / manual (Ctrl+S) save -------------------------------- */
@@ -7868,7 +7974,7 @@
     if (SHELL && rec && rec.path) {                 // app shell: write straight to the path
       try {
         const t0 = performance.now();
-        const json = JSON.stringify(await workspacePayload(wsId));
+        const json = await workspaceJson(wsId);
         const t1 = performance.now();
         await NGShell.writeFile(rec.path, json);
         if (NG.Diag) NG.Diag.metrics.save = { payloadMs: t1 - t0, writeMs: performance.now() - t1, bytes: json.length, at: performance.now() };
@@ -7898,9 +8004,9 @@
     }
     try {
       const t0 = performance.now();
-      const payload = await workspacePayload(wsId);
+      const json = await workspaceJson(wsId);
       const t1 = performance.now();
-      await writeToHandle(rec.handle, payload);
+      await writeToHandle(rec.handle, json);
       if (NG.Diag) NG.Diag.metrics.save = { payloadMs: t1 - t0, writeMs: performance.now() - t1, bytes: 0, at: performance.now() };
       if (state.ws === wsId) { state.dirty = false; setSaveState(); }
       saveFailShown = false;
@@ -7994,10 +8100,36 @@
   }
   function stopTyping() { clearTimeout(typeTimer); const el = $('#hero-tag'); if (el) el.classList.remove('typing'); }
 
+  // Everything still owed to this workspace's file, before we stop being in
+  // it. Leaving used to cancel the pending autosave without running it, so an
+  // edit made in the last second reached the records but never the file.
+  async function settleWorkspaceFile(wsId) {
+    if (wsId == null) return;
+    await flushPendingSaves();              // a panel edit still on its timer is committed either way
+    const owed = !!autoSaveTimer || !!saveRun || state.dirty || DB.pendingWrites() > 0;
+    clearTimeout(autoSaveTimer); autoSaveTimer = null; autosaveDue = 0;
+    if (!owed) return;
+    if (state.autosave) {
+      try {
+        await saveCurrentWorkspace(false);
+        while (saveRun) await saveRun;        // a save queued behind that one still has to run
+      } catch (_) {}
+      return;
+    }
+    // Manual saving: the records are safe, the file is not up to date. Say so
+    // instead of clearing the flag and looking saved.
+    await DB.flush();
+    try {
+      const rec = await DB.getHandleRec(wsId);
+      if (rec && (rec.path || rec.handle)) toast('Not saved to its file yet \u2014 press Ctrl+S in the workspace');
+    } catch (_) {}
+  }
+
   async function goHome() {
     const leaving = state.ws;                 // its card gets a fresh snapshot once the home is up
     dropLiveGestures(); lastInk = null;
     await inkWrites;                          // a stroke still being written is recorded before the history goes
+    await settleWorkspaceFile(leaving);       // and its file gets that last edit before we go
     saveNext = null;                          // a save queued for this workspace does not fire in the next
     state.ws = null; state.wsName = '';
     clearHistory();
@@ -8039,6 +8171,9 @@
     const leaving = state.ws !== id ? state.ws : null;   // switching pages: the old one's card is redrawn after the load
     dropLiveGestures(); lastInk = null;
     await inkWrites;                          // nothing from the old page lands in the new history
+    await settleWorkspaceFile(leaving);       // the page being left gets its file written
+    saveNext = null;
+    clearTimeout(autoSaveTimer); autoSaveTimer = null; autosaveDue = 0;
     fileDataCache.clear(); fileDataBytes = 0; _mmImgCache.clear();
     state.ws = id; state.wsName = w.name;
     applyPaper(w.paper);
@@ -8511,6 +8646,15 @@
       });
     }
     else if (rec && rec.handle) loc.innerHTML = esc(rec.handle.name) + ' <span class="muted">(the folder is hidden by the browser)</span>';
+    else if (FS_OK) {
+      // On the web a workspace made in the browser could never be given a file
+      // afterwards - only exported. Offer the same choice the app shell has.
+      loc.innerHTML = `<a class="loc-link">Choose a file location…</a> <span class="muted">(saves this workspace to a file)</span>`;
+      loc.querySelector('.loc-link').addEventListener('click', async () => {
+        const h = await linkWorkspaceFile(id);
+        if (h) openProperties(id);
+      });
+    }
     else loc.innerHTML = '<span class="muted">Stored in this browser — not linked to a file</span>';
     $('#props').hidden = false;
     setTimeout(() => { $('#props-name').focus(); $('#props-name').select(); }, 50);
@@ -8803,7 +8947,9 @@
         ? `<a class="loc-link" id="about-loc-link">Choose a file location…</a> <span class="muted">(saves this workspace to a file)</span>`
         : (rec && rec.handle)
           ? esc(rec.handle.name) + ' <span class="muted">(folder hidden by the browser)</span>'
-          : '<span class="muted">Stored in this browser — no linked file</span>';
+          : FS_OK
+            ? `<a class="loc-link" id="about-loc-link">Choose a file location…</a> <span class="muted">(saves this workspace to a file)</span>`
+            : '<span class="muted">Stored in this browser — no linked file</span>';
     const created = w && w.createdAt ? new Date(w.createdAt).toLocaleString() : '—';
     let storage = 'not reported by this browser';
     try {
@@ -8828,6 +8974,7 @@
     const link = p.querySelector('#about-loc-link');
     if (link && rec && rec.path) link.addEventListener('click', () => NGShell.reveal(rec.path));
     else if (link && SHELL) link.addEventListener('click', async () => { const p2 = await relinkWorkspace(state.ws); if (p2) fillAboutPanel(); });
+    else if (link) link.addEventListener('click', async () => { const h = await linkWorkspaceFile(state.ws); if (h) fillAboutPanel(); });
   }
 
   // App shell: bind (or re-bind) a workspace to a real file via the native dialog.
@@ -8847,7 +8994,7 @@
     }
     await DB.saveHandleRec(id, handle);
     try {
-      await writeToHandle(handle, await workspacePayload(id));
+      await writeToHandle(handle, await workspaceJson(id));
       toast('Workspace linked to file');
       state.dirty = false;
     } catch (e) { reportSaveFailure(e, true, handle.name || ''); }
@@ -8860,7 +9007,7 @@
     const path = await NGShell.saveDialog(safeFileName((w && w.name) || 'workspace') + '.notesgallery.json');
     if (!path) return null;
     await DB.savePathRec(id, path);
-    try { await NGShell.writeFile(path, JSON.stringify(await workspacePayload(id))); toast('Workspace linked to file'); }
+    try { await NGShell.writeFile(path, await workspaceJson(id)); toast('Workspace linked to file'); }
     catch (e) { reportSaveFailure(e, true, path); }
     if (state.ws === id) setSaveState();
     return path;
@@ -8905,6 +9052,7 @@
         else if (state.penEraser) setEraser(false);
         else if (state.selectTool) setSelectMode(false);      // put the lasso away
         else if (state.linkMode) setLinkMode(false);
+        else if (state.readOnly) setReadMode(false);          // read mode is a tool too
         else if (!$('#text-drawer').hidden) closeTextEditor();
         else if (!$('#shape-drawer').hidden) closeShapeEditor();
         else if (!$('#image-drawer').hidden) closeImageEditor();
@@ -9254,9 +9402,12 @@
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) return;
       resetGestures();
-      // the app is going away: a pending autosave is written now, not later
+      // The app is going away: commit the records first (a queue waiting on an
+      // animation frame would never run while hidden), then write the file.
+      DB.flush();
       if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null; autosaveDue = 0; saveCurrentWorkspace(false); }
     });
+    window.addEventListener('pagehide', () => { DB.flush(); });
 
     // Phone bottom sheets: a drag grip at the top of every editor panel lets the
     // user stretch the sheet taller or shorter. Height is shared across panels.
@@ -9312,8 +9463,13 @@
       if (files && files.length) { e.preventDefault(); stage.classList.remove('drop-active'); dropFiles(files, e.clientX, e.clientY); }
     });
     window.addEventListener('beforeunload', (e) => {
+      DB.flush();                                  // never leave records in the queue
       objectUrls.forEach(u => URL.revokeObjectURL(u));
-      if (state.ws != null && !state.autosave && state.dirty) { e.preventDefault(); e.returnValue = ''; }
+      // Hold the close while anything is unwritten: unsaved by hand, or an
+      // autosave that has not reached the file yet.
+      const unwritten = state.ws != null
+        && ((!state.autosave && state.dirty) || (state.autosave && (autoSaveTimer || saveRun)));
+      if (unwritten) { e.preventDefault(); e.returnValue = ''; }
     });
   }
 
@@ -9380,7 +9536,8 @@
         return b ? b.id : null;
       },
       blockScreenRect: (id) => { const el = state.els[id]; if (!el) return null; const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; },
-      toast, markChanged,
+      toast, markChanged,
+      workspaceJson,                     // the finished file text, as a save writes it
     };
   }
   function gestureState() {

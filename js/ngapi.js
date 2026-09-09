@@ -123,6 +123,10 @@
       return (blk && blk.dataset.id) || null;
     },
 
+    // The text a save would write, built the same way (worker when there is
+    // one), so a test can time a save without going through the dialogs.
+    saveJson: (ws) => { if (!attached) notAttached(); return attached.workspaceJson(ws); },
+
     injectSamples,
     recordSamples: (seconds) => needDiag().record(seconds),
     traces: () => needDiag().traces(),
@@ -132,7 +136,7 @@
   // Bag-dependent names are present from the start (a harness can feature-
   // detect the surface) but refuse to run until the app has attached.
   for (const name of ['state', 'blocks', 'block', 'inks', 'selection', 'selectionMode', 'worldToScreen', 'screenToWorld',
-    'inkBounds', 'inkScreenRect', 'blockScreenRect', 'selectionBox', 'strokePathD', 'strokeStyle', 'renderStroke',
+    'inkBounds', 'strokeSpec', 'inkScreenRect', 'blockScreenRect', 'selectionBox', 'strokePathD', 'strokeStyle', 'renderStroke',
     'liveCanvas', 'live', 'readLivePixels', 'readInkPixels', 'flush', 'saved']) api[name] = notAttached;
 
   globalThis.__ng = api;
@@ -228,6 +232,10 @@
       screenToWorld: (sx, sy) => clone(bag.screenToWorld(sx, sy)),
 
       inkBounds: (id) => clone(bag.inkBox(findInk(id))),
+      // What the renderer is asked to draw for this stroke: its world points
+      // and its style. A box can straddle the screen while the line does not,
+      // so a test that needs to know where the ink really is asks for these.
+      strokeSpec: (id) => clone(recordSpec(findInk(id))),
       // The element box in CLIENT coordinates without a layout read: the
       // record's box through the view transform, offset by the stage.
       inkScreenRect: (id) => {

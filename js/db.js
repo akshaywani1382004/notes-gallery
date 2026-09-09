@@ -66,19 +66,24 @@ const DB = (() => {
           const fs = tx.objectStore('files');
           if (!fs.indexNames.contains('ws')) fs.createIndex('ws', 'ws', { unique: false });
 
-          // Migrate any existing single-workspace data into a default workspace
-          // so upgrading users keep everything.
-          const defId = 'ws-default';
-          tx.objectStore('workspaces').put({ id: defId, name: 'My Workspace', color: '#2b7fff', createdAt: 0, updatedAt: 0 });
-          ['blocks', 'edges', 'files'].forEach((name) => {
-            tx.objectStore(name).openCursor().onsuccess = (ev) => {
-              const cur = ev.target.result;
-              if (!cur) return;
-              const v = cur.value;
-              if (v.ws == null) { v.ws = defId; cur.update(v); }
-              cur.continue();
-            };
-          });
+          // Migrate the single-workspace data an older build left behind into a
+          // default workspace, so an upgrading user keeps everything.
+          // Only for a database that already existed: on a fresh install
+          // oldVersion is 0, and seeding here gave every new user a stray
+          // empty workspace called "My Workspace" and hid the empty screen.
+          if (oldV >= 1) {
+            const defId = 'ws-default';
+            tx.objectStore('workspaces').put({ id: defId, name: 'My Workspace', color: '#2b7fff', createdAt: 0, updatedAt: 0 });
+            ['blocks', 'edges', 'files'].forEach((name) => {
+              tx.objectStore(name).openCursor().onsuccess = (ev) => {
+                const cur = ev.target.result;
+                if (!cur) return;
+                const v = cur.value;
+                if (v.ws == null) { v.ws = defId; cur.update(v); }
+                cur.continue();
+              };
+            });
+          }
         }
 
         if (oldV < 3) {
@@ -152,6 +157,16 @@ const DB = (() => {
     if (!pendingCount()) return Promise.resolve();
     const batch = new Map(queued);
     queued.clear();
+    // A commit that fails must not take the changes with it: put back
+    // everything the app has not written again since, so the next flush (or
+    // the next read, which flushes) tries once more.
+    const restore = () => {
+      for (const [store, m] of batch) {
+        let cur = queued.get(store);
+        if (!cur) { cur = new Map(); queued.set(store, cur); }
+        for (const [key, entry] of m) if (!cur.has(key)) cur.set(key, entry);
+      }
+    };
     flushing = (async () => {
       const dbi = await open();
       const stores = [...batch.keys()].filter(s => dbi.objectStoreNames.contains(s));
@@ -167,13 +182,23 @@ const DB = (() => {
         tx.oncomplete = () => resolve();
         tx.onerror = tx.onabort = () => reject(tx.error || new Error('write failed'));
       });
-    })().finally(() => { flushing = null; });
+    })().catch((err) => { restore(); throw err; }).finally(() => { flushing = null; });
     const done = flushing;
     done.then(() => { const w = flushWaiters; flushWaiters = []; w.forEach(fn => fn()); }, () => {});
     return done.then(() => (pendingCount() ? flush() : undefined));
   }
   // A read must see what is queued: commit first, then read.
   function settled() { return pendingCount() || flushing ? flush() : Promise.resolve(); }
+
+  // A flush waiting on an animation frame never runs once the tab is hidden,
+  // because frames stop there - and a tab closed in that state took the
+  // queued records with it. Commit as soon as the page goes away.
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    const commitNow = () => { if (pendingCount()) flush().catch(() => {}); };
+    document.addEventListener('visibilitychange', () => { if (document.hidden) commitNow(); });
+    window.addEventListener('pagehide', commitNow);
+    window.addEventListener('freeze', commitNow);
+  }
 
   function put(store, value) {
     if (QUEUE_STORES.includes(store)) { queueOp(store, keyOf(store, value), 'put', value); return Promise.resolve(value); }
