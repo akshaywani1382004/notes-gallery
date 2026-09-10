@@ -465,6 +465,7 @@
     const pct = Math.round(scale * 100) + '%';
     $('#btn-zoom-reset').textContent = pct;
     scheduleMinimap();
+    scheduleVirtApply();
   }
   let invPending = false;
   function flushInv() {
@@ -552,7 +553,141 @@
     updateNavButtons();
   }
 
-  /* ---------------------------- render blocks -------------------------- */
+  /* ---------------------------- render blocks -------------------------- *
+   * Every block used to get a real DOM element the moment a level opened,
+   * whether or not it was anywhere near what you could actually see - and
+   * every one of those elements sat under the browser's continuous per-frame
+   * size-watch (ResizeObserver) for as long as the page stayed open. That
+   * cost scaled with how much the PAGE held, not with how much of it you
+   * were looking at. Below: only build what is actually near the viewport
+   * (plus whatever is selected, mid-drag, or open in an editor - see
+   * virtPinnedIds), and keep the rest as plain data with no DOM box at all
+   * until it is scrolled near or otherwise needed. The mini-map's spatial
+   * index (mmGrid, generalised to every block kind earlier tonight) is what
+   * answers "what's near the viewport" - one query, not a scan.
+   *
+   * A block that already has an element never has it destroyed for merely
+   * leaving view - it is hidden (display:none) and kept, because toggling is
+   * far cheaper than rebuilding for content you pan back and forth over.
+   * Only ink is treated differently here: it already has a working, shipped
+   * rule (css/styles.css) that hides its DOM copy unless selected/dragging/
+   * lifted, regardless of viewport - the canvas planes show the real pixels
+   * either way, so an unselected stroke never needs to be *visible* just for
+   * being on screen, only *built* the first time it is needed. So ink is
+   * mounted here only through the "pinned" path below, never merely for
+   * being near the viewport, and this code never touches its display style
+   * directly (that CSS rule owns it - an inline override here would outlive
+   * a later re-selection and fight it). */
+  const VIEW_MARGIN = 500;             // world units of slack before mount/unmount, so panning never pops content in right at the edge
+  let virtRAF = 0;
+
+  function viewportWorldRect(marginWorld) {
+    const r = stageRect();
+    const s = state.view.scale || 1;
+    const m = (marginWorld == null ? VIEW_MARGIN : marginWorld) / s;
+    const x0 = (-state.view.tx) / s - m, y0 = (-state.view.ty) / s - m;
+    return { x: x0, y: y0, w: r.width / s + 2 * m, h: r.height / s + 2 * m };
+  }
+  // Ids that must have a real element regardless of where they are: picked
+  // up (selected), moving (drag/lift), or open in a side panel right now.
+  function virtPinnedIds() {
+    const want = new Set(state.selectedIds);
+    if (dragging) for (const id of dragging.ids) want.add(id);
+    if (NG.Lift && NG.Lift.active) for (const it of NG.Lift.active.items) want.add(it.id);
+    if (textBlock) want.add(textBlock.id);
+    if (shapeBlock) want.add(shapeBlock.id);
+    if (imageBlock) want.add(imageBlock.id);
+    if (checkBlock) want.add(checkBlock.id);
+    if (tableBlock) want.add(tableBlock.id);
+    if (editTableId) want.add(editTableId);
+    if (drawerBlock) want.add(drawerBlock.id);
+    if (gizmo) want.add(gizmo.id);
+    if (colResize) want.add(colResize.id);
+    if (rowResize) want.add(rowResize.id);
+    return want;
+  }
+  // Below this on-screen size (css px, either dimension), a block is not
+  // worth a DOM element even if it is technically inside the viewport -
+  // "fit to view" on a big page zooms out until EVERYTHING is inside the
+  // viewport, by definition, which would otherwise mean the very moment a
+  // huge page tries hardest to show you an overview is also the moment this
+  // would mount every single block anyway. A block below this size could not
+  // be told apart from its neighbours regardless, so there is nothing lost
+  // by leaving it as plain data until you zoom in far enough to actually
+  // see it as its own thing.
+  const VIRT_MIN_PX = 3;
+  function virtComputeWanted() {
+    const want = virtPinnedIds();
+    const rect = viewportWorldRect();
+    const { x0, y0, x1, y1 } = mmCellRange(rect);
+    const scale = state.view.scale || 1;
+    for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++) {
+      const cell = mmGrid.get(cx + ',' + cy); if (!cell) continue;
+      for (const id of cell) {
+        if (want.has(id)) continue;
+        const b = state.byId.get(id);
+        if (!b) continue;
+        // Ink still needs to be BUILT near the viewport, same as everything
+        // else (that's what avoids constructing every stroke on a page the
+        // moment it loads) - what it does not need is to be made VISIBLE for
+        // that alone, since the canvas planes already paint it regardless.
+        // Its own CSS rule keeps a built-but-unselected stroke hidden by
+        // default, and virtUnmountOne knows to leave that rule alone rather
+        // than fight it - so including ink here is safe: it gets a DOM
+        // element when near the viewport, that element just starts (and
+        // stays, until selected) invisible, exactly as it already was. The
+        // size threshold applies to ink too - a fit-to-view of a dense
+        // handwritten page is exactly the case that most needs it, since
+        // handwriting is usually the majority of a real page's blocks.
+        const br = mmSeen.get(id);
+        if (br && br.w * scale < VIRT_MIN_PX && br.h * scale < VIRT_MIN_PX) continue;
+        want.add(id);
+      }
+    }
+    return want;
+  }
+  function virtMountOne(id) {
+    let el = state.els[id];
+    if (el) { if (el.style.display === 'none') el.style.display = ''; return; }
+    const b = state.byId.get(id); if (!b) return;
+    el = makeBlockEl(b);
+    world.appendChild(el);
+  }
+  function virtUnmountOne(id) {
+    const el = state.els[id]; if (!el) return;
+    const b = state.byId.get(id);
+    if (b && b.kind === 'ink') return;   // its own CSS rule owns visibility - never set an inline style here
+    el.style.display = 'none';
+  }
+  // state.els's own keys are the source of truth for "has a real element
+  // right now" - not a second bookkeeping Set that could drift from it (a
+  // direct create - paste, import, undo - always appends straight into
+  // state.els, same as before tonight; tracking a parallel Set in step would
+  // mean remembering to update it at every such site instead of just here).
+  // The size of that iteration is bounded by what has actually been mounted
+  // - roughly "near the viewport, ever" - not by how much the page holds.
+  function virtApply() {
+    if (!state.ws || state.levelLayout !== 'canvas') return;
+    const want = virtComputeWanted();
+    for (const id in state.els) if (!want.has(id)) virtUnmountOne(id);
+    for (const id of want) virtMountOne(id);
+  }
+  function scheduleVirtApply() {
+    if (virtRAF) return;
+    virtRAF = requestAnimationFrame(() => { virtRAF = 0; virtApply(); });
+  }
+  // A block id that might not currently have an element (off-view) but is
+  // about to be interacted with programmatically (a jump, a keyboard action,
+  // undo bringing it back) - build/show it now instead of waiting for the
+  // next scheduled pass, so the caller can rely on state.els[id] existing
+  // right after this returns, the same guarantee the DOM used to give for
+  // free. Safe to call for ink too: virtMountOne already knows to leave an
+  // ink element's display alone (its own CSS rule owns that).
+  function ensureMounted(id) {
+    virtMountOne(id);
+    return state.els[id] || null;
+  }
+
   function renderBlocks() {
     // wipe existing block nodes (keep the svg)
     $$('.block', world).forEach(n => n.remove());
@@ -560,7 +695,8 @@
     prevSel = new Set();
     untrackAllSizes();
     mmDirty = true; mmDirtyAll = true; mmContent = null;
-    for (const b of state.blocks) world.appendChild(makeBlockEl(b));
+    mmResetIndex();                    // the spatial index must be ready before the first mount pass reads it
+    virtApply();                       // only what's in the initial view (+ pinned) gets built now
     planesRefresh();
   }
 
@@ -824,6 +960,14 @@
     else if (b.kind === 'table') paintTableNode(el, b);
     else { el.style.setProperty('--b-accent', b.color || PALETTE[0]); paintBlock(el, b); }
     el.classList.toggle('locked', !!b.locked);
+    // A (re)built element must come in already showing whatever sticky
+    // per-block UI state is true right now - the same reasoning restoreChrome
+    // below already existed for. Selection used to only ever need this once,
+    // on the block it was first applied to; a block can now also gain its
+    // element well after being selected (scrolled into view while already
+    // part of a selection made elsewhere), so it has to be checked here too,
+    // not only at the moment applySelectionClasses toggles it.
+    el.classList.toggle('selected', state.selectedIds.has(b.id));
     state.els[b.id] = el;
     trackSize(el);
     restoreChrome(b.id);        // a rebuilt element keeps the chrome it had
@@ -1189,6 +1333,13 @@
 
   /* ---------------------------- edges ---------------------------------- */
   function blockRectOf(b) {
+    // Stored dimensions first (every kind but auto-sized text always has
+    // them - see the text-size cache-back below), a live measurement second,
+    // a guess last. This matters once a block can be off-screen and
+    // unmounted: there is no element to measure then, so anything that only
+    // trusted the DOM (as this used to) would silently use the wrong size
+    // for exactly the blocks not currently in front of you.
+    if (b.w && b.h) return { x: b.x, y: b.y, w: b.w, h: b.h, cx: b.x + b.w / 2, cy: b.y + b.h / 2 };
     const el = state.els[b.id];
     const s = elSize(b.id, el);
     const w = (s && s.w) || BLOCK_W;
@@ -1892,8 +2043,22 @@
       // cards are recounted below; a leaf stays unknown and the eraser takes
       // the careful path for it (see removeInkBlock)
       const prev = state.els[b.id];
-      const el = makeBlockEl(b);                          // sets left/top/z and state.els
-      if (prev && prev.parentNode) prev.replaceWith(el); else world.appendChild(el);
+      // Ink is never mounted merely for being on screen (virtComputeWanted
+      // skips it on purpose - the canvas planes already show it, and its own
+      // CSS rule needs a real element to apply .selected/.dragging to, not
+      // a viewport check). So unlike every other kind, an ink block that
+      // was not already mounted would otherwise never get built at all -
+      // still build it here, same as always.
+      if (prev || b.kind === 'ink') {
+        const el = makeBlockEl(b);                        // sets left/top/z and state.els
+        if (prev && prev.parentNode) prev.replaceWith(el); else world.appendChild(el);
+      }
+      // else: leave it unbuilt for now. Every caller of applyRecsToView
+      // already runs recordChange first (mmGrid already knows this block's
+      // real position) and this function's own applySelectionClasses below
+      // schedules a virtualisation pass - that pass, not this loop, decides
+      // whether an off-screen upsert (undo bringing back hundreds of blocks
+      // scattered across a page, say) is worth a DOM element right now.
       here.add(b.id);
       if (!LEAF.includes(b.kind)) parents.add(b.id);
     }
@@ -2367,6 +2532,7 @@
     syncSelectionButtons();
     positionSelBar();
     positionSelFrame();
+    scheduleVirtApply();   // a selection can pick up off-screen blocks (Select All) - they need building too, not just the class
   }
   /* -------------------------- alignment guides -------------------------- *
    * While dragging, if an edge or centre comes within a few pixels of the
@@ -6889,21 +7055,40 @@
   }
   // An edit with a known before/after (almost everything that goes through
   // recordChange) updates just the blocks that actually changed. Anything
-  // bigger than a handful, or an edit with no before/after to read, falls
-  // back to a full redraw next time the mini-map actually repaints.
+  // bigger than a handful, or an edit with no before/after to read, still
+  // keeps the index itself exact (see below) but falls back to a full
+  // redraw next time the mini-map actually repaints, rather than patching.
+  //
+  // The spatial index this maintains (mmGrid/mmPlace/mmUnplace) is no longer
+  // only the mini-map's - the on-screen virtualisation below queries it too,
+  // to know what is actually near the viewport. A block missing from a stale
+  // index there is not a slightly-off decorative picture (the mini-map's
+  // worst case) - it is content that silently never gets built. So unlike
+  // before, the index itself is now kept exact on every call, regardless of
+  // edit size; only the mini-map's own "full redraw vs. patch" choice still
+  // uses the size threshold, since that is a pure drawing-cost decision.
   function mmMarkDirty(before, after) {
     mmDirty = true;
-    if (mmDirtyAll) return;                          // already committed to a full redraw this round
     const afterBlocks = (after && after.blocks) || null;
     const beforeBlocks = (before && before.blocks) || null;
-    if (!afterBlocks && !beforeBlocks) { mmDirtyAll = true; return; }
+    if (!afterBlocks && !beforeBlocks) {
+      // no diff to read: only a full rescan keeps the index correct - rare
+      // (undo/redo and a few bulk paths), so the cost is fine here.
+      mmResetIndex();
+      mmDirtyAll = true;
+      return;
+    }
+    const afterIds = new Set((afterBlocks || []).map(b => b.id));
+    for (const b of (afterBlocks || [])) mmPlace(b);
+    for (const b of (beforeBlocks || [])) if (!afterIds.has(b.id)) mmUnplace(b.id);
+
+    if (mmDirtyAll) return;                          // already committed to a full redraw this round
     if ((afterBlocks ? afterBlocks.length : 0) + (beforeBlocks ? beforeBlocks.length : 0) > MM_PATCH_LIMIT) {
       mmDirtyAll = true; return;
     }
     if (!mmDirtyIds) mmDirtyIds = new Set();
-    const afterIds = new Set((afterBlocks || []).map(b => b.id));
-    for (const b of (afterBlocks || [])) { mmPlace(b); mmDirtyIds.add(b.id); }
-    for (const b of (beforeBlocks || [])) { if (!afterIds.has(b.id)) { mmUnplace(b.id); mmDirtyIds.add(b.id); } }
+    for (const b of (afterBlocks || [])) mmDirtyIds.add(b.id);
+    for (const b of (beforeBlocks || [])) if (!afterIds.has(b.id)) mmDirtyIds.add(b.id);
   }
   function mmCurrentColors() {
     const st = getComputedStyle(document.documentElement);
@@ -7227,13 +7412,19 @@
         if (row) { row.scrollIntoView({ block: 'center', behavior: 'smooth' }); openEditor(b.id); }
         return;
       }
-      const el = state.els[b.id];
-      if (el) {
+      // This used to gate on state.els[b.id] existing - true for free when
+      // every block on a level got an element the moment it loaded. Now a
+      // block you are jumping TO is exactly the one most likely to still be
+      // off-view (that is the whole reason to jump), so the check has to be
+      // "does the data exist" instead, and the element itself has to be
+      // asked for explicitly before openEditor needs a real one to focus.
+      if (state.byId.get(b.id)) {
         const r = stage.getBoundingClientRect();
         const rect = blockRect(b.id);
         state.view.tx = r.width / 2 - (rect.cx) * state.view.scale;
         state.view.ty = r.height / 2 - (rect.cy) * state.view.scale;
         applyView(); drawEdges();
+        ensureMounted(b.id);
         openEditor(b.id);
       }
     }, 40);
@@ -8272,6 +8463,7 @@
     if (!previewFlagged.has(state.ws)) flagPreviewStale(state.ws);   // the card's snapshot is behind the page now
     mmMarkDirty(before, after); scheduleMinimap();
     scheduleOutline();
+    scheduleVirtApply();
     if (state.autosave) {
       clearTimeout(autoSaveTimer);
       if (!autosaveDue) autosaveDue = Date.now() + 10000;
