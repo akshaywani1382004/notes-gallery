@@ -8444,15 +8444,19 @@
       catch (_) { toast('That file is not valid JSON.'); return; }
       if (!validWorkspaceData(data)) { toast('Not a Notes Gallery workspace file.'); return; }
       const { wsId, name, skipped } = await createWorkspaceFromData(data);
-      // Re-home the imported content as a workspace folder right next to the
-      // file it came from, instead of linking straight to that single file -
+      // Re-home the imported content as a workspace folder under the app's
+      // own storage, instead of linking straight to the file it came from -
       // this workspace is now stored the same way any other one made in this
-      // app is. The link is written and flushed before anything else touches
-      // this workspace, so it can never come up "imported but not linked".
-      const dir = NGShell.dirname(path);
-      const folder = NGShell.pathJoin(dir, safeFileName(name) + '-' + wsId.slice(0, 8) + WS_FOLDER_SUFFIX);
-      let linked = false;
+      // app is. `path` (from the file-open dialog) is only where the content
+      // was read from - on Android it can be an opaque SAF content:// URI,
+      // not something a sibling folder can be derived from, so it plays no
+      // part in where the folder goes (see NGShell.appWorkspacesDir). The
+      // link is written and flushed before anything else touches this
+      // workspace, so it can never come up "imported but not linked".
+      let linked = false, folder = null;
       try {
+        const base = await NGShell.appWorkspacesDir();
+        folder = NGShell.pathJoin(base, safeFileName(name) + '-' + wsId.slice(0, 8) + WS_FOLDER_SUFFIX);
         const w = await DB.getWorkspace(wsId);
         await wsFs.init(folder, { name: (w && w.name) || name, color: (w && w.color) || PALETTE[0], paper: (w && w.paper) || 'dots', version: 1 });
         await DB.saveFolderRec(wsId, folder);
@@ -9150,16 +9154,21 @@
       const id = uid();
       let handle = null, path = null, folder = null;
       if (SHELL) {
-        // A folder-picker dialog (dialog.open({directory:true})) is not
-        // implemented on Android - the save-file dialog is, and it is what
-        // every other SHELL file/folder choice here already uses, so reuse
-        // it: the user picks a location and a name for a placeholder file,
-        // and the workspace folder is created right next to it.
-        const chosenPath = await NGShell.saveDialog(safeFileName(name) + WS_FOLDER_SUFFIX);
-        if (chosenPath == null) return;                  // user cancelled the native dialog
-        // The id suffix keeps two workspaces named the same from ever fighting
-        // over one folder - no existence check needed, this is always unique.
-        folder = NGShell.pathJoin(NGShell.dirname(chosenPath), safeFileName(name) + '-' + id.slice(0, 8) + WS_FOLDER_SUFFIX);
+        // The folder lives under the app's own managed storage, not a
+        // location the user picks through a dialog - a directory-picker
+        // dialog is not implemented on Android at all, and a path taken
+        // from the file dialogs is not something sibling folders can be
+        // derived from there either (see NGShell.appWorkspacesDir). No
+        // dialog, no cancellation, and it works the same way every time.
+        try {
+          const base = await NGShell.appWorkspacesDir();
+          // The id suffix keeps two workspaces named the same from ever
+          // fighting over one folder - no existence check needed.
+          folder = NGShell.pathJoin(base, safeFileName(name) + '-' + id.slice(0, 8) + WS_FOLDER_SUFFIX);
+        } catch (e) {
+          console.warn('could not resolve the app workspaces directory:', e);
+          toast('Could not create the workspace folder — created in-app for now.');
+        }
       } else if (FS_OK) {
         try {
           handle = await window.showSaveFilePicker({
@@ -9264,7 +9273,7 @@
       loc.querySelector('.loc-link').addEventListener('click', () => NGShell.reveal(rec.path));
     } else if (SHELL) {
       // app shell: not linked yet → offer to link now
-      loc.innerHTML = `<a class="loc-link">Choose a folder…</a> <span class="muted">(saves this workspace to a folder)</span>`;
+      loc.innerHTML = `<a class="loc-link">Save to a folder</a> <span class="muted">(this workspace exists only in the app right now)</span>`;
       loc.querySelector('.loc-link').addEventListener('click', async () => {
         const p = await relinkWorkspace(id);
         if (p) openProperties(id);
@@ -9572,7 +9581,7 @@
       : (rec && rec.path)
         ? `<a class="loc-link" id="about-loc-link" title="Show in folder">${esc(rec.path)}</a>`
         : SHELL
-          ? `<a class="loc-link" id="about-loc-link">Choose a folder…</a> <span class="muted">(saves this workspace to a folder)</span>`
+          ? `<a class="loc-link" id="about-loc-link">Save to a folder</a> <span class="muted">(this workspace exists only in the app right now)</span>`
           : (rec && rec.handle)
             ? esc(rec.handle.name) + ' <span class="muted">(folder hidden by the browser)</span>'
             : FS_OK
@@ -9634,18 +9643,18 @@
   async function relinkWorkspace(id) {
     const w = await DB.getWorkspace(id);
     const name = (w && w.name) || 'workspace';
-    // See newWorkspaceFlow: a folder-picker dialog is not implemented on
-    // Android, so reuse the save-file dialog to learn a location instead.
-    const chosenPath = await NGShell.saveDialog(safeFileName(name) + WS_FOLDER_SUFFIX);
-    if (!chosenPath) return null;
-    const folder = NGShell.pathJoin(NGShell.dirname(chosenPath), safeFileName(name) + '-' + id.slice(0, 8) + WS_FOLDER_SUFFIX);
+    // See newWorkspaceFlow: the folder lives under the app's own managed
+    // storage, resolved the same deterministic way every time - nothing to
+    // pick, nothing that can come back an unusable SAF reference on Android.
+    let folder = null;
     try {
+      folder = NGShell.pathJoin(await NGShell.appWorkspacesDir(), safeFileName(name) + '-' + id.slice(0, 8) + WS_FOLDER_SUFFIX);
       await wsFs.init(folder, { name, color: (w && w.color) || PALETTE[0], paper: (w && w.paper) || 'dots', version: 1 });
       await DB.saveFolderRec(id, folder);
       await DB.flush();
       await saveWorkspaceFolderDelta(id, folder);           // write everything in right away
       toast('Workspace linked to folder');
-    } catch (e) { reportSaveFailure(e, true, folder); return null; }
+    } catch (e) { reportSaveFailure(e, true, folder || ''); return null; }
     if (state.ws === id) { state.dirty = false; setSaveState(); }
     return folder;
   }

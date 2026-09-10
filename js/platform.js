@@ -90,6 +90,24 @@
       return new TextDecoder().decode(bytes);
     },
 
+    // Where this app keeps its own workspace folders - resolved by Tauri
+    // itself, not chosen through a dialog. A directory-picker dialog
+    // (dialog.open({directory:true})) is not implemented on Android, and a
+    // path taken from the file-open/save dialogs is not a filesystem path
+    // to build sibling folders under either - on Android it can be an opaque
+    // SAF content:// reference, so slicing it apart to derive "next to this
+    // file" broke silently there (the folder never got created; the
+    // workspace only existed in the browser's storage). appDataDir() is
+    // always a real, private, writable path - on Android specifically it is
+    // the app's own `/data/user/0/<package>` sandbox, plain mkdir/writeFile
+    // and all.
+    async appWorkspacesDir() {
+      const base = (T.path && T.path.appDataDir) ? await T.path.appDataDir()
+        : await inv('plugin:path|resolve_directory', { directory: 14 });  // BaseDirectory.AppData
+      return (T.path && T.path.join) ? T.path.join(base, 'workspaces')
+        : inv('plugin:path|join', { paths: [base, 'workspaces'] });
+    },
+
     // ---- directory primitives, for a workspace stored as a folder of small
     // files (one per block) instead of one big JSON - see js/workspacefs.js.
     // Same dual pattern as everything else here: the JS-wrapped plugin call
@@ -203,15 +221,6 @@
 
     basename(path) { return String(path).split(/[\\/]/).pop(); },
 
-    // Directory a path lives in, using whichever slash it already uses -
-    // Windows paths carry backslashes, Android/Tauri content paths forward
-    // slashes, and a path never mixes the two on one platform.
-    dirname(path) {
-      const s = String(path);
-      const sep = s.includes('\\') ? '\\' : '/';
-      const i = s.lastIndexOf(sep);
-      return i < 0 ? '' : s.slice(0, i);
-    },
     pathJoin(...parts) {
       const sep = String(parts[0] || '').includes('\\') ? '\\' : '/';
       return parts.filter(Boolean).join(sep);
