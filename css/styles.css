@@ -309,14 +309,21 @@ input, textarea { font-size: 15px; }
 .ink-plane { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
 #ink-under { z-index: 0; }
 #ink-over  { z-index: 2; }
-/* While the planes are painting the ink, the stroke elements stay in the page
+/* While the planes are painting the ink, the stroke elements stay in the DOM
    for hit-testing and export but are not painted - that raster is the whole
    cost of a full page. A stroke picked up or being dragged paints itself
-   again, so the glow, the lift container and the scale grip are unchanged. */
-#world.ink-planes .block-ink { visibility: hidden; }
+   again, so the glow, the lift container and the scale grip are unchanged.
+   display:none (not visibility:hidden) so an unselected stroke also drops out
+   of layout entirely: at thousands of strokes, a size-watcher (ResizeObserver)
+   still has to re-check every visibility:hidden box every frame to see if it
+   changed size, even though nothing is drawn - display:none is the one thing
+   that excuses an element from that check. Geometry for a re-shown stroke
+   comes back from its own inline left/top/width/height, already set by
+   paintInkNode/makeBlockEl, so nothing needs remeasuring when it reappears. */
+#world.ink-planes .block-ink { display: none; }
 #world.ink-planes .block-ink.selected,
 #world.ink-planes #lift .block-ink,
-#world.ink-planes .block-ink.dragging { visibility: visible; }
+#world.ink-planes .block-ink.dragging { display: block; }
 
 /* selection outlines for large selections, float bitmaps, lock badges */
 .ink-ui { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 4; pointer-events: none; }
