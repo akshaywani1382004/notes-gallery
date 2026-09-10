@@ -238,7 +238,8 @@ const DB = (() => {
   /* ---- file handles (File System Access API) --------------------------- */
   const getHandleRec  = (ws) => get('handles', ws);
   const saveHandleRec = (ws, handle) => put('handles', { ws, handle });
-  const savePathRec   = (ws, path)   => put('handles', { ws, path });   // app shell: plain file path
+  const savePathRec   = (ws, path)   => put('handles', { ws, path });   // app shell: plain file path (legacy single-file link)
+  const saveFolderRec = (ws, folder) => put('handles', { ws, folder }); // app shell: workspace-as-folder link (js/workspacefs.js)
   const delHandle     = (ws) => del('handles', ws);
 
   /* ---- blocks / edges / files ----------------------------------------- */
@@ -336,7 +337,7 @@ const DB = (() => {
   return {
     ROOT, open, getAll, get, put, del, flush, pendingWrites: pendingCount,
     listWorkspaces, getWorkspace, saveWorkspace, allByWs, countByWs, deleteWorkspaceDeep,
-    getHandleRec, saveHandleRec, savePathRec, delHandle,
+    getHandleRec, saveHandleRec, savePathRec, saveFolderRec, delHandle,
     childBlocks, levelEdges, blockFiles, levelStats,
     getBlock, saveBlock, saveEdge, saveFile, getFile, delFile, delEdge,
     getMeta, setMeta, deleteBlockDeep, buildPath,

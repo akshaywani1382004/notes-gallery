@@ -66,6 +66,16 @@
       return Array.isArray(r) ? r[0] : r;
     },
 
+    // native folder-picker → full path (or null on cancel). Used for the
+    // folder-of-files workspace format (js/workspacefs.js): choosing where a
+    // new workspace's folder should live, or opening one that already exists.
+    async openFolderDialog() {
+      let r;
+      if (T.dialog && T.dialog.open) r = await T.dialog.open({ multiple: false, directory: true });
+      else r = await inv('plugin:dialog|open', { options: { multiple: false, directory: true } });
+      return Array.isArray(r) ? r[0] : r;
+    },
+
     // Text or binary: a Uint8Array (a PDF, say) must not go through the text
     // writer, which would re-encode the bytes and corrupt the file.
     async writeFile(path, data) {
@@ -88,6 +98,41 @@
         : (r && r.buffer instanceof ArrayBuffer) ? new Uint8Array(r.buffer, r.byteOffset || 0, r.byteLength)
         : Uint8Array.from(r || []);
       return new TextDecoder().decode(bytes);
+    },
+
+    // ---- directory primitives, for a workspace stored as a folder of small
+    // files (one per block) instead of one big JSON - see js/workspacefs.js.
+    // Same dual pattern as everything else here: the JS-wrapped plugin call
+    // when present, the raw IPC command name otherwise.
+    async mkdir(path) {
+      if (T.fs && T.fs.mkdir) return T.fs.mkdir(path, { recursive: true });
+      return inv('plugin:fs|mkdir', { path, options: { recursive: true } });
+    },
+
+    // [{name, isDirectory, isFile}, ...] - empty array if the directory does
+    // not exist (callers use this to tell "nothing saved yet" from "broken").
+    async readDir(path) {
+      try {
+        const r = (T.fs && T.fs.readDir) ? await T.fs.readDir(path) : await inv('plugin:fs|read_dir', { path });
+        return r || [];
+      } catch (_) { return []; }
+    },
+
+    // Deleting something already gone is not an error here - a block whose
+    // file never made it to disk (a crash mid-save, say) must not block a
+    // later delete of that same block.
+    async removeFile(path) {
+      try {
+        if (T.fs && T.fs.remove) return await T.fs.remove(path);
+        return await inv('plugin:fs|remove', { path });
+      } catch (_) {}
+    },
+
+    async exists(path) {
+      try {
+        if (T.fs && T.fs.exists) return await T.fs.exists(path);
+        return await inv('plugin:fs|exists', { path });
+      } catch (_) { return false; }
     },
 
     // open Windows Explorer / Finder with the file selected
@@ -167,6 +212,20 @@
     },
 
     basename(path) { return String(path).split(/[\\/]/).pop(); },
+
+    // Directory a path lives in, using whichever slash it already uses -
+    // Windows paths carry backslashes, Android/Tauri content paths forward
+    // slashes, and a path never mixes the two on one platform.
+    dirname(path) {
+      const s = String(path);
+      const sep = s.includes('\\') ? '\\' : '/';
+      const i = s.lastIndexOf(sep);
+      return i < 0 ? '' : s.slice(0, i);
+    },
+    pathJoin(...parts) {
+      const sep = String(parts[0] || '').includes('\\') ? '\\' : '/';
+      return parts.filter(Boolean).join(sep);
+    },
 
     // ---- Android ink host (MainActivity.kt NgHost, injected as window.NGHost
     // before the first page load). Only the Android app has it: on Windows and
