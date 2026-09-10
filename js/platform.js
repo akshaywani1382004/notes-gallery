@@ -66,16 +66,6 @@
       return Array.isArray(r) ? r[0] : r;
     },
 
-    // native folder-picker → full path (or null on cancel). Used for the
-    // folder-of-files workspace format (js/workspacefs.js): choosing where a
-    // new workspace's folder should live, or opening one that already exists.
-    async openFolderDialog() {
-      let r;
-      if (T.dialog && T.dialog.open) r = await T.dialog.open({ multiple: false, directory: true });
-      else r = await inv('plugin:dialog|open', { options: { multiple: false, directory: true } });
-      return Array.isArray(r) ? r[0] : r;
-    },
-
     // Text or binary: a Uint8Array (a PDF, say) must not go through the text
     // writer, which would re-encode the bytes and corrupt the file.
     async writeFile(path, data) {

@@ -364,7 +364,7 @@
   function fingerHint() {
     if (fingerHinted || !(state.penMode || state.penEraser || state.selectTool)) return;
     fingerHinted = true;
-    toast('Stylus only — tap the hand in the draw panel to let fingers draw too');
+    toast('Stylus only — tap the hand button in the toolbar to let fingers draw too');
   }
 
   function isPalm(e) {
@@ -383,13 +383,25 @@
     }
     return true;                                              // mouse / trackpad
   }
+  // Two buttons show and toggle the same state: #pen-touch (inside the draw
+  // panel, only visible with the pen tool open) and #btn-finger (always on
+  // the main toolbar, so turning fingers on doesn't require opening the pen
+  // tool first).
   function updatePenTouchBtn() {
-    const b = $('#pen-touch'); if (!b) return;
     const on = fingerDraw === 'on';
-    b.classList.toggle('active', on);
-    b.innerHTML = ic(on ? 'hand' : 'hand-off');
-    b.title = on ? 'Finger drawing: on — fingers draw as well as the stylus'
-                 : 'Finger drawing: off — stylus only, fingers move the page';
+    for (const id of ['#pen-touch', '#btn-finger']) {
+      const b = $(id); if (!b) continue;
+      b.classList.toggle('active', on);
+      b.innerHTML = ic(on ? 'hand' : 'hand-off');
+      b.title = on ? 'Finger drawing: on — fingers draw as well as the stylus'
+                   : 'Finger drawing: off — stylus only, fingers move the page';
+    }
+  }
+  function toggleFingerDraw() {
+    fingerDraw = fingerDraw === 'on' ? 'off' : 'on';
+    try { localStorage.setItem('ng-finger-draw', fingerDraw); } catch (_) {}
+    updatePenTouchBtn();
+    toast(fingerDraw === 'on' ? 'Finger drawing on' : 'Finger drawing off — stylus only');
   }
 
   // The path data for a stroke, in whichever form its style needs.
@@ -488,8 +500,11 @@
   });
   function zoomAt(sx, sy, factor) {
     const before = screenToWorld(sx, sy);
-    // No practical zoom limit: from a whole wall of notes down to one letter.
-    state.view.scale = clamp(state.view.scale * factor, 0.02, 64);
+    // Below 30% a huge workspace's rendering and panning gets visibly heavy
+    // (every block's DOM element still has to exist somewhere on the page to
+    // show as a dot), so the floor stops there rather than letting the view
+    // shrink all the way down to a barely-legible speck.
+    state.view.scale = clamp(state.view.scale * factor, 0.3, 64);
     // keep the world point under the cursor fixed
     state.view.tx = sx - before.x * state.view.scale;
     state.view.ty = sy - before.y * state.view.scale;
@@ -6930,7 +6945,7 @@
     }
     const pad = 70;
     const w = maxX - minX + pad * 2, h = maxY - minY + pad * 2;
-    const scale = clamp(Math.min(r.width / w, r.height / h), 0.02, 8);
+    const scale = clamp(Math.min(r.width / w, r.height / h), 0.3, 8);
     state.view.scale = scale;
     state.view.tx = (r.width - (maxX + minX) * scale) / 2;
     state.view.ty = (r.height - (maxY + minY) * scale) / 2;
@@ -9135,11 +9150,16 @@
       const id = uid();
       let handle = null, path = null, folder = null;
       if (SHELL) {
-        const parent = await NGShell.openFolderDialog();
-        if (parent == null) return;                     // user cancelled the native dialog
+        // A folder-picker dialog (dialog.open({directory:true})) is not
+        // implemented on Android - the save-file dialog is, and it is what
+        // every other SHELL file/folder choice here already uses, so reuse
+        // it: the user picks a location and a name for a placeholder file,
+        // and the workspace folder is created right next to it.
+        const chosenPath = await NGShell.saveDialog(safeFileName(name) + WS_FOLDER_SUFFIX);
+        if (chosenPath == null) return;                  // user cancelled the native dialog
         // The id suffix keeps two workspaces named the same from ever fighting
         // over one folder - no existence check needed, this is always unique.
-        folder = NGShell.pathJoin(parent, safeFileName(name) + '-' + id.slice(0, 8) + WS_FOLDER_SUFFIX);
+        folder = NGShell.pathJoin(NGShell.dirname(chosenPath), safeFileName(name) + '-' + id.slice(0, 8) + WS_FOLDER_SUFFIX);
       } else if (FS_OK) {
         try {
           handle = await window.showSaveFilePicker({
@@ -9614,9 +9634,11 @@
   async function relinkWorkspace(id) {
     const w = await DB.getWorkspace(id);
     const name = (w && w.name) || 'workspace';
-    const parent = await NGShell.openFolderDialog();
-    if (!parent) return null;
-    const folder = NGShell.pathJoin(parent, safeFileName(name) + '-' + id.slice(0, 8) + WS_FOLDER_SUFFIX);
+    // See newWorkspaceFlow: a folder-picker dialog is not implemented on
+    // Android, so reuse the save-file dialog to learn a location instead.
+    const chosenPath = await NGShell.saveDialog(safeFileName(name) + WS_FOLDER_SUFFIX);
+    if (!chosenPath) return null;
+    const folder = NGShell.pathJoin(NGShell.dirname(chosenPath), safeFileName(name) + '-' + id.slice(0, 8) + WS_FOLDER_SUFFIX);
     try {
       await wsFs.init(folder, { name, color: (w && w.color) || PALETTE[0], paper: (w && w.paper) || 'dots', version: 1 });
       await DB.saveFolderRec(id, folder);
@@ -9864,6 +9886,7 @@
     $('#tag-filter-clear').addEventListener('click', () => setTagFilter(state.tagFilter));
     $('#btn-pen').addEventListener('click', penButton);
     $('#pen-exit').addEventListener('click', () => setPenMode(false));
+    updatePenTouchBtn();       // #btn-finger lives on the main toolbar - set its state up front
     // - / + beside the slider: one step per tap, and it keeps going while held
     const stepPenSize = (d) => {
       const forEraser = state.penEraser && eraserMode === 'normal';
@@ -9904,12 +9927,8 @@
       else setEraser(!state.penEraser, false, 'all');
     });
     // finger drawing: auto (default) -> always on -> off (stylus only)
-    $('#pen-touch').addEventListener('click', () => {
-      fingerDraw = fingerDraw === 'on' ? 'off' : 'on';
-      try { localStorage.setItem('ng-finger-draw', fingerDraw); } catch (_) {}
-      updatePenTouchBtn();
-      toast(fingerDraw === 'on' ? 'Finger drawing on' : 'Finger drawing off — stylus only');
-    });
+    $('#pen-touch').addEventListener('click', toggleFingerDraw);
+    $('#btn-finger').addEventListener('click', toggleFingerDraw);
     $('#pen-snap').addEventListener('click', () => {
       shapeSnap = !shapeSnap;
       try { localStorage.setItem('ng-shape-snap', shapeSnap ? '1' : '0'); } catch (_) {}
