@@ -416,6 +416,7 @@
     levelLayout: 'canvas',   // 'canvas' | 'list' — how this level shows children
     path: [{ id: DB.ROOT, title: 'Home' }],
     blocks: [],              // blocks at current level
+    byId: new Map(),         // blockId -> block record (kept in sync with `blocks` at every mutation)
     edges: [],               // edges at current level
     childCounts: {},         // blockId -> {blocks, files}
     childPeek: {},           // blockId -> [{title,color}] first few children (for list previews)
@@ -506,6 +507,7 @@
     state.levelBlock = levelId === DB.ROOT ? null : await DB.getBlock(levelId);
     state.levelLayout = (state.levelBlock && state.levelBlock.layout === 'list') ? 'list' : 'canvas';
     state.blocks = await DB.childBlocks(levelId, state.ws);
+    state.byId = new Map(state.blocks.map(b => [b.id, b]));
     state.edges = await DB.levelEdges(levelId, state.ws);
     state.path = await DB.buildPath(levelId === DB.ROOT ? null : levelId);
     state.selectedIds.clear();
@@ -686,7 +688,7 @@
   // see the card (the stroke's element is not painted while the planes are).
   function topBlockAt(clientX, clientY, domEl) {
     const ink = inkHitAt(clientX, clientY);
-    const dom = domEl && domEl.dataset ? state.blocks.find(x => x.id === domEl.dataset.id) : null;
+    const dom = domEl && domEl.dataset ? state.byId.get(domEl.dataset.id) : null;
     if (!ink) return dom || null;
     if (!dom) return ink;
     const zi = ink.z || INK_Z, zd = dom.z || 0;
@@ -767,7 +769,7 @@
   let hoverChromeId = null;
   function mountChrome(id) {
     const el = state.els[id]; if (!el || el.querySelector('.block-actions, .tnode-resize, .tnode-edge, .tnode-rotate')) return;
-    const b = state.blocks.find(x => x.id === id); if (!b) return;
+    const b = state.byId.get(id); if (!b) return;
     const html = chromeHtml(b); if (!html) return;
     syncInv();
     el.insertAdjacentHTML('beforeend', html);
@@ -988,7 +990,7 @@
 
   function refreshBlockCard(id) {
     const el = state.els[id];
-    const b = state.blocks.find(x => x.id === id);
+    const b = state.byId.get(id);
     if (!el || !b) return;
     if (b.kind === 'text') { paintTextNode(el, b); }
     else if (b.kind === 'shape') { paintShapeNode(el, b); }
@@ -1101,7 +1103,7 @@
   function refreshItem(id) {
     if (state.levelLayout === 'list') {
       const row = $(`.list-row[data-id="${id}"]`);
-      const b = state.blocks.find(x => x.id === id);
+      const b = state.byId.get(id);
       if (row && b) {
         const wrap = document.createElement('div');
         wrap.innerHTML = listRowHtml(b);
@@ -1194,7 +1196,7 @@
     return { x: b.x, y: b.y, w, h, cx: b.x + w / 2, cy: b.y + h / 2 };
   }
   function blockRect(id) {
-    const b = state.blocks.find(x => x.id === id);
+    const b = state.byId.get(id);
     return b ? blockRectOf(b) : null;
   }
   // where the line from `other` should touch the border of `rect`
@@ -1391,6 +1393,7 @@
     }
     await DB.saveBlock(b);
     state.blocks.push(b);
+    state.byId.set(b.id, b);
     state.childCounts[b.id] = { blocks: 0, files: 0 };
     recordChange(emptySet(), { blocks: [b], edges: [], files: [] });
     if (state.levelLayout === 'list') {
@@ -1470,6 +1473,7 @@
     };
     await DB.saveBlock(b);
     state.blocks.push(b);
+    state.byId.set(b.id, b);
     state.childCounts[b.id] = { blocks: 0, files: 0 };
     world.appendChild(makeBlockEl(b));
     recordChange(emptySet(), { blocks: [b], edges: [], files: [] });
@@ -1493,6 +1497,7 @@
     };
     await DB.saveBlock(b);
     state.blocks.push(b);
+    state.byId.set(b.id, b);
     state.childCounts[b.id] = { blocks: 0, files: 0 };
     recordChange(emptySet(), { blocks: [b], edges: [], files: [] });
     world.appendChild(makeBlockEl(b));
@@ -1598,6 +1603,7 @@
       })());
     }
     state.blocks.push(list);
+    state.byId.set(list.id, list);
     state.childCounts[listId] = { blocks: made.length - 1, files: 0 };
     state.childPeek[listId] = made.slice(1, 5).map(k => ({ title: k.title, color: k.color }));
     world.appendChild(makeBlockEl(list));
@@ -1736,6 +1742,7 @@
     }
     await DB.saveBlock(b);
     state.blocks.push(b);
+    state.byId.set(b.id, b);
     state.childCounts[b.id] = { blocks: 0, files: 0 };
     world.appendChild(makeBlockEl(b));
     recordChange(emptySet(), { blocks: [b], edges: [], files: [] });
@@ -1864,6 +1871,7 @@
     if (drop.size) {
       state.blocks = state.blocks.filter(b => !drop.has(b.id));
       for (const id of drop) {
+        state.byId.delete(id);
         state.selectedIds.delete(id);
         const el = state.els[id]; if (el) el.remove();
         untrackSize(id);
@@ -1879,6 +1887,7 @@
       if (!b) continue;
       const i = state.blocks.findIndex(x => x.id === b.id);
       if (i >= 0) state.blocks[i] = b; else state.blocks.push(b);
+      state.byId.set(b.id, b);
       // a block that was not on the page has unknown counts until recounted:
       // cards are recounted below; a leaf stays unknown and the eraser takes
       // the careful path for it (see removeInkBlock)
@@ -1916,8 +1925,8 @@
       for (const k of kids) await collect(k.id);
     };
     for (const id of ids) await collect(id);
-    const allEdges = await DB.getAll('edges');
-    const edges = allEdges.filter(e => set.has(e.from) || set.has(e.to));
+    const wsEdges = await DB.allByWs('edges', state.ws);
+    const edges = wsEdges.filter(e => set.has(e.from) || set.has(e.to));
     return { blocks, edges, files };
   }
 
@@ -1982,7 +1991,7 @@
   // Lock / unlock the given blocks (prevents move/resize/rotate). Undoable.
   async function toggleLock(ids) {
     if (!ids || !ids.length) return;
-    const blocks = ids.map(id => state.blocks.find(b => b.id === id)).filter(Boolean);
+    const blocks = ids.map(id => state.byId.get(id)).filter(Boolean);
     if (!blocks.length) return;
     const makeLocked = !blocks.every(b => b.locked);   // if any unlocked → lock all
     const before = { blocks: blocks.map(b => ({ ...b })), edges: [], files: [] };
@@ -1994,15 +2003,15 @@
   /* ---------------------------- arrow-key nudge ------------------------ */
   let nudge = null;   // { before:Map<id,{x,y}>, timer }
   function nudgeSelection(dx, dy) {
-    const ids = [...state.selectedIds].filter(id => { const b = state.blocks.find(x => x.id === id); return b && !b.locked; });
+    const ids = [...state.selectedIds].filter(id => { const b = state.byId.get(id); return b && !b.locked; });
     if (!ids.length) return;
     if (!nudge) {
       const before = new Map();
-      ids.forEach(id => { const b = state.blocks.find(x => x.id === id); if (b) before.set(id, { x: b.x, y: b.y }); });
+      ids.forEach(id => { const b = state.byId.get(id); if (b) before.set(id, { x: b.x, y: b.y }); });
       nudge = { before, timer: null };
     }
     for (const id of ids) {
-      const b = state.blocks.find(x => x.id === id); if (!b) continue;
+      const b = state.byId.get(id); if (!b) continue;
       b.x += dx; b.y += dy;
       const el = state.els[id]; if (el) { el.style.left = b.x + 'px'; el.style.top = b.y + 'px'; }
     }
@@ -2015,7 +2024,7 @@
     if (!nudge) return;
     const before = { blocks: [], edges: [], files: [] }, after = { blocks: [], edges: [], files: [] };
     for (const [id, pos] of nudge.before) {
-      const b = state.blocks.find(x => x.id === id); if (!b) continue;
+      const b = state.byId.get(id); if (!b) continue;
       if (b.x === pos.x && b.y === pos.y) continue;
       before.blocks.push({ ...b, x: pos.x, y: pos.y });
       after.blocks.push({ ...b });
@@ -2027,7 +2036,7 @@
 
   function deleteBlock(id) {
     if (state.readOnly) { toast('Read mode is on.'); return; }
-    const b = state.blocks.find(x => x.id === id);
+    const b = state.byId.get(id);
     if (!b) return;
     const label = b.kind === 'text'
       ? (b.text ? `“${b.text.slice(0, 24)}”` : 'this text')
@@ -2060,7 +2069,7 @@
   // Only trusted while the gesture that captured it is still live; at any
   // other time the elements are measured afresh, so a box can never go stale.
   const liveFrameBox = () => (selFrameBox && (dragging || panning || pinch || selScale || wheelFrameTimer)) ? selFrameBox : null;
-  const selectionHasInk = () => [...state.selectedIds].some(id => { const b = state.blocks.find(x => x.id === id); return b && b.kind === 'ink'; });
+  const selectionHasInk = () => [...state.selectedIds].some(id => { const b = state.byId.get(id); return b && b.kind === 'ink'; });
 
   // The stage rectangle, measured at most once per animation frame. Reading
   // it after a style write forces layout; gesture code reads it every move.
@@ -2091,8 +2100,7 @@
     // align/distribute need two; with one item only the style tools apply
     bar.querySelectorAll('[data-align]').forEach(b => { b.disabled = ids.length < 2; });
     bar.querySelector('[data-sel="group"]').disabled = ids.length < 2;
-    const byId = new Map(state.blocks.map(b => [b.id, b]));
-    bar.querySelector('[data-sel="ungroup"]').disabled = !ids.some(id => { const b = byId.get(id); return b && b.group; });
+    bar.querySelector('[data-sel="ungroup"]').disabled = !ids.some(id => { const b = state.byId.get(id); return b && b.group; });
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     const sr = stageRect();
     const fb = liveFrameBox();
@@ -2106,7 +2114,7 @@
     } else {
       const sc = state.view.scale || 1;
       ids.forEach(id => {
-        const b = byId.get(id);
+        const b = state.byId.get(id);
         if (b && b.kind === 'ink') {                 // strokes: from data, no layout read
           const ib = inkBox(b);
           const l = ib.x * sc + state.view.tx + sr.left, t = ib.y * sc + state.view.ty + sr.top;
@@ -2203,7 +2211,7 @@
   function beginSelScale(e) {
     const box = selectionWorldBox(); if (!box) return;
     const items = [...state.selectedIds]
-      .map(id => state.blocks.find(x => x.id === id))
+      .map(id => state.byId.get(id))
       .filter(b => b && !b.locked);
     if (!items.length) return;
     selScale = {
@@ -2372,7 +2380,7 @@
     return { x: b.x || 0, y: b.y || 0, w, h };
   }
   function alignAdjust(drag, dxW, dyW, byId) {
-    const moving = drag.ids.map(id => byId ? byId.get(id) : state.blocks.find(b => b.id === id)).filter(Boolean);
+    const moving = drag.ids.map(id => byId ? byId.get(id) : state.byId.get(id)).filter(Boolean);
     if (!moving.length) return { dx: 0, dy: 0 };
     // Handwriting is placed by hand, not by rules — no guide snapping for it.
     if (moving.every(b => b.kind === 'ink')) { clearGuides(); return { dx: 0, dy: 0 }; }
@@ -2385,20 +2393,28 @@
       mx = Math.min(mx, x); my = Math.min(my, y);
       mX = Math.max(mX, x + bb.w); mY = Math.max(mY, y + bb.h);
     });
-    const movingIds = new Set(drag.ids);
-    const others = state.blocks.filter(b => b.parentId === state.level && !movingIds.has(b.id));
+    // The candidate list (everything else on the level) and each candidate's
+    // three v/h guide lines never change mid-drag — only the moving group's
+    // position does. Rebuilding this by filtering and re-measuring the whole
+    // level on every pointermove was the actual cost here (the id lookup
+    // above was already O(1) via `byId`); cache it once per drag instead.
+    if (!drag._alignCand) {
+      const movingIds = new Set(drag.ids);
+      const others = state.blocks.filter(b => b.parentId === state.level && !movingIds.has(b.id));
+      drag._alignCand = others.map(o => {
+        const ob = blockBox(o);
+        return { ov: [ob.x, ob.x + ob.w / 2, ob.x + ob.w], oh: [ob.y, ob.y + ob.h / 2, ob.y + ob.h] };
+      });
+    }
     const tol = GUIDE_SNAP / state.view.scale;
     const mine = { v: [mx, (mx + mX) / 2, mX], h: [my, (my + mY) / 2, mY] };
     let best = { dx: null, dy: null, gx: [], gy: [] };
-    for (const o of others) {
-      const ob = blockBox(o);
-      const ov = [ob.x, ob.x + ob.w / 2, ob.x + ob.w];
-      const oh = [ob.y, ob.y + ob.h / 2, ob.y + ob.h];
-      for (const m of mine.v) for (const t of ov) {
+    for (const cand of drag._alignCand) {
+      for (const m of mine.v) for (const t of cand.ov) {
         const d = t - m;
         if (Math.abs(d) <= tol && (best.dx === null || Math.abs(d) < Math.abs(best.dx))) { best.dx = d; best.gx = [t]; }
       }
-      for (const m of mine.h) for (const t of oh) {
+      for (const m of mine.h) for (const t of cand.oh) {
         const d = t - m;
         if (Math.abs(d) <= tol && (best.dy === null || Math.abs(d) < Math.abs(best.dy))) { best.dy = d; best.gy = [t]; }
       }
@@ -2436,7 +2452,7 @@
   async function alignSelection(how) {
     const ids = [...state.selectedIds];
     if (ids.length < 2) { toast('Select two or more blocks first.'); return; }
-    const items = ids.map(id => state.blocks.find(b => b.id === id)).filter(b => b && !b.locked);
+    const items = ids.map(id => state.byId.get(id)).filter(b => b && !b.locked);
     if (items.length < 2) return;
     const undoBefore = { blocks: items.map(b => ({ ...b })), edges: [], files: [] };
     const boxes = items.map(b => ({ b, ...blockBox(b) }));
@@ -2478,7 +2494,7 @@
 
   // Tab: a new block beside this one, ready to name.
   async function addSibling(id) {
-    const b = state.blocks.find(x => x.id === id); if (!b) return;
+    const b = state.byId.get(id); if (!b) return;
     const box = blockBox(b);
     // createBlock centres the new block on the point it is given
     await createBlock('block', { x: box.x + box.w + 40 + BLOCK_W / 2, y: box.y + 30 });
@@ -2571,7 +2587,7 @@
   let styleClip = null;
   function copyStyle() {
     const id = [...state.selectedIds][0];
-    const b = id && state.blocks.find(x => x.id === id);
+    const b = id && state.byId.get(id);
     if (!b) { toast('Select a block to copy its look.'); return; }
     styleClip = {};
     STYLE_FIELDS.forEach(f => { if (b[f] !== undefined) styleClip[f] = b[f]; });
@@ -2583,7 +2599,7 @@
     if (!styleClip) { toast('Copy a look first (Ctrl+Alt+C).'); return; }
     const ids = [...state.selectedIds];
     if (!ids.length) { toast('Select what to paint.'); return; }
-    const items = ids.map(id => state.blocks.find(x => x.id === id)).filter(Boolean);
+    const items = ids.map(id => state.byId.get(id)).filter(Boolean);
     const undoBefore = { blocks: items.map(b => ({ ...b })), edges: [], files: [] };
     let done = 0;
     const from = styleClip.__kind || 'block';
@@ -2610,7 +2626,7 @@
    * written in the same burst are grouped automatically, so a handwritten
    * paragraph behaves like one note instead of forty separate marks.       */
   function groupMembers(id) {
-    const b = state.blocks.find(x => x.id === id);
+    const b = state.byId.get(id);
     if (!b || !b.group) return [id];
     return state.blocks.filter(x => x.group === b.group).map(x => x.id);
   }
@@ -2636,7 +2652,7 @@
   async function groupSelection() {
     const ids = [...state.selectedIds];
     if (ids.length < 2) { toast('Select two or more things to group.'); return; }
-    const items = ids.map(id => state.blocks.find(x => x.id === id)).filter(Boolean);
+    const items = ids.map(id => state.byId.get(id)).filter(Boolean);
     const undoBefore = { blocks: items.map(b => ({ ...b })), edges: [], files: [] };
     const gid = uid();
     for (const b of items) {
@@ -2649,7 +2665,7 @@
   }
   async function ungroupSelection() {
     const ids = withGroups([...state.selectedIds]);
-    const items = ids.map(id => state.blocks.find(x => x.id === id)).filter(b => b && b.group);
+    const items = ids.map(id => state.byId.get(id)).filter(b => b && b.group);
     if (!items.length) { toast('Nothing grouped here.'); return; }
     const undoBefore = { blocks: items.map(b => ({ ...b })), edges: [], files: [] };
     for (const b of items) {
@@ -2899,7 +2915,7 @@
   // (the editBaseline snapshot). Reverts every editable field; position is left as-is.
   function resetActiveEditor() {
     const base = editBaseline; if (!base) return;
-    const b = state.blocks.find(x => x.id === base.id); if (!b) return;
+    const b = state.byId.get(base.id); if (!b) return;
     EDIT_FIELDS.forEach(f => { b[f] = base[f]; });
     refreshItem(b.id); persistBlock(b); markChanged();
     // repopulate the open drawer's fields (re-open snapshots the same baseline)
@@ -2916,7 +2932,7 @@
   // value when the editor opened. `data-fields` lists the block props to revert.
   function resetParamField(btn) {
     const base = editBaseline; if (!base) return;
-    const b = state.blocks.find(x => x.id === base.id); if (!b) return;
+    const b = state.byId.get(base.id); if (!b) return;
     const fields = (btn.dataset.fields || '').split(',').filter(Boolean);
     if (!fields.length) return;
     fields.forEach(f => { b[f] = base[f]; });
@@ -2927,7 +2943,7 @@
   }
   // open the right editor for a block (text vs normal)
   function openAnyEditor(id) {
-    const b = state.blocks.find(x => x.id === id);
+    const b = state.byId.get(id);
     if (b && b.kind === 'text') openTextEditor(id);
     else if (b && b.kind === 'shape') openShapeEditor(id);
     else if (b && b.kind === 'image') openImageEditor(id);
@@ -2953,7 +2969,7 @@
   function flushEdit() {
     if (!editBaseline) return;
     const base = editBaseline; editBaseline = null;
-    const cur = state.blocks.find(x => x.id === base.id) ||
+    const cur = state.byId.get(base.id) ||
       (drawerBlock && drawerBlock.id === base.id ? drawerBlock : null) ||
       (textBlock && textBlock.id === base.id ? textBlock : null) ||
       (shapeBlock && shapeBlock.id === base.id ? shapeBlock : null) ||
@@ -2969,7 +2985,7 @@
   async function openDrawer(id, focusTitle) {
     flushEdit();
     closeOtherEditors();
-    const b = state.blocks.find(x => x.id === id);
+    const b = state.byId.get(id);
     if (!b) return;
     drawerBlock = b;
     editBaseline = snapshotFields(b);
@@ -3145,7 +3161,7 @@
   function openTextEditor(id) {
     flushEdit();
     closeOtherEditors();
-    const b = state.blocks.find(x => x.id === id);
+    const b = state.byId.get(id);
     if (!b) return;
     selectBlock(id);
     textBlock = b;
@@ -3248,7 +3264,7 @@
   function openShapeEditor(id) {
     flushEdit();
     closeOtherEditors();
-    const b = state.blocks.find(x => x.id === id);
+    const b = state.byId.get(id);
     if (!b) return;
     selectBlock(id);
     shapeBlock = b;
@@ -3341,7 +3357,7 @@
   function openImageEditor(id) {
     flushEdit();
     closeOtherEditors();
-    const b = state.blocks.find(x => x.id === id);
+    const b = state.byId.get(id);
     if (!b) return;
     selectBlock(id);
     imageBlock = b;
@@ -3387,7 +3403,7 @@
       e.target.value = '';
       if (!file) { replaceImageId = null; return; }
       if (replaceImageId) {
-        const b = state.blocks.find(x => x.id === replaceImageId); replaceImageId = null;
+        const b = state.byId.get(replaceImageId); replaceImageId = null;
         if (!b) return;
         const before = { ...b };
         b.src = await fileToStoredSrc(file);
@@ -3644,7 +3660,7 @@
   async function cropApply() {
     if (!crop || crop.busy) return;
     if (state.readOnly) { toast('Read mode is on.'); return; }
-    const b = state.blocks.find(x => x.id === crop.id);
+    const b = state.byId.get(crop.id);
     if (!b) { closeCrop(); return; }
     if (crop.mode === 'free' && crop.poly.length < 3) { toast('Draw a loop around the part to keep.'); return; }
     const r = crop.rect;
@@ -3731,7 +3747,7 @@
   }
   function openCheckEditor(id) {
     flushEdit(); closeOtherEditors();
-    const b = state.blocks.find(x => x.id === id); if (!b) return;
+    const b = state.byId.get(id); if (!b) return;
     selectBlock(id);
     checkBlock = b; editBaseline = snapshotFields(b);
     $('#ck-checked').checked = !!b.checked;
@@ -3796,7 +3812,7 @@
     editBaseline = null;            // this panel records its own change
     const before = [], after = [];
     bases.forEach(base => {
-      const cur = state.blocks.find(x => x.id === base.id); if (!cur) return;
+      const cur = state.byId.get(base.id); if (!cur) return;
       if (!EDIT_FIELDS.some(f => (cur[f] ?? '') !== (base[f] ?? ''))) return;
       const b0 = { ...cur };
       EDIT_FIELDS.forEach(f => { b0[f] = base[f]; });
@@ -3831,7 +3847,7 @@
   function openInkEditor(id) {
     flushEdit();
     closeOtherEditors();
-    const b = state.blocks.find(x => x.id === id);
+    const b = state.byId.get(id);
     if (!b) return;
     selectBlock(id);
     showInkPanel([b]);
@@ -3842,7 +3858,7 @@
   function openSelProps() {
     const ids = [...state.selectedIds];
     if (!ids.length) { toast('Select something first.'); return; }
-    const hasInk = ids.some(id => { const b = state.blocks.find(x => x.id === id); return b && b.kind === 'ink'; });
+    const hasInk = ids.some(id => { const b = state.byId.get(id); return b && b.kind === 'ink'; });
     if (hasInk) { openInkProps(); return; }
     if (ids.length > 1) { toast('Properties open for one block at a time.'); }
     openAnyEditor(ids[0]);
@@ -3851,7 +3867,7 @@
   // button opens, so a whole handwritten word can be recoloured in one go.
   function openInkProps() {
     const strokes = [...state.selectedIds]
-      .map(id => state.blocks.find(x => x.id === id))
+      .map(id => state.byId.get(id))
       .filter(b => b && b.kind === 'ink' && !b.locked);
     if (!strokes.length) { toast('Select some handwriting first.'); return; }
     flushEdit();
@@ -3905,7 +3921,7 @@
   function resetInkPanel() {
     if (!inkBaselines.length) { resetActiveEditor(); return; }
     inkBaselines.forEach(base => {
-      const cur = state.blocks.find(x => x.id === base.id); if (!cur) return;
+      const cur = state.byId.get(base.id); if (!cur) return;
       EDIT_FIELDS.forEach(f => { cur[f] = base[f]; });
       refreshItem(cur.id); persistBlock(cur);
     });
@@ -3949,7 +3965,7 @@
     else { if (drawerBlock || !$('#drawer').hidden) closeDrawer();
            if (textBlock) closeTextEditor(); if (shapeBlock) closeShapeEditor();
            if (imageBlock) closeImageEditor(); if (inkBlock) closeInkEditor(); }
-    const b = state.blocks.find(x => x.id === id); if (!b) return;
+    const b = state.byId.get(id); if (!b) return;
     selectBlock(id);
     tableBlock = b; editTableId = id; tfocus = 'cell'; titleEditing = false; tmultiMode = false;
     tableOrig = tableSnap(b);
@@ -3964,7 +3980,7 @@
   // Enter cell-interaction mode WITHOUT opening the drawer — a single click on a
   // cell just selects it; the edit panel only opens from the pencil button.
   function enterTableCells(id) {
-    const b = state.blocks.find(x => x.id === id); if (!b) return;
+    const b = state.byId.get(id); if (!b) return;
     closeDrawerIfOpen();   // close any other editor (incl. a table drawer / other cell-mode)
     selectBlock(id);
     editTableId = id; tfocus = 'cell'; titleEditing = false; tmultiMode = false;
@@ -3992,7 +4008,7 @@
   let colResize = null;   // { id, c, startX, startW, before }
   let rowResize = null;   // { id, r, startY, startH, before }
   function startColResize(e, id, c) {
-    const b = state.blocks.find(x => x.id === id); if (!b) return;
+    const b = state.byId.get(id); if (!b) return;
     const el = state.els[id]; const cell = el && el.querySelector(`[data-r="0"][data-c="${c}"]`);
     const s = state.view.scale || 1;
     const startW = cell ? Math.round(cell.getBoundingClientRect().width / s) : 80;
@@ -4001,7 +4017,7 @@
     e.preventDefault(); e.stopPropagation();
   }
   function startRowResize(e, id, r) {
-    const b = state.blocks.find(x => x.id === id); if (!b) return;
+    const b = state.byId.get(id); if (!b) return;
     const el = state.els[id]; const cell = el && el.querySelector(`[data-r="${r}"][data-c="0"]`);
     const s = state.view.scale || 1;
     const startH = cell ? Math.round(cell.getBoundingClientRect().height / s) : 28;
@@ -4072,7 +4088,7 @@
     syncTablePanel();
   }
   // --- title selection / inline editing ---
-  const activeTableBlock = () => tableBlock || state.blocks.find(x => x.id === editTableId) || null;
+  const activeTableBlock = () => tableBlock || state.byId.get(editTableId) || null;
   function titleElOf() { const el = tableEl(); return el ? el.querySelector('.table-title') : null; }
   function setFocusTitle() {
     if (tsel && tsel.editing) commitCellEdit();
@@ -4165,7 +4181,7 @@
     cell.focus(); placeCaretEnd(cell);
   }
   function setCellValue(r, c, val) {
-    const b = state.blocks.find(x => x.id === editTableId); if (!b) return;
+    const b = state.byId.get(editTableId); if (!b) return;
     ensureCell(b, r, c);
     b.rows[r][c] = val;
     const cell = cellEl(r, c); if (cell) cell.textContent = val;
@@ -4177,7 +4193,7 @@
   function commitCellEdit(cancel) {
     if (!tsel || !tsel.editing) return;
     const cell = cellEl(tsel.r, tsel.c);
-    const b = state.blocks.find(x => x.id === tsel.id);
+    const b = state.byId.get(tsel.id);
     if (cell && b) {
       if (cancel) cell.textContent = tsel.orig != null ? tsel.orig : '';
       const val = cell.textContent;
@@ -4194,7 +4210,7 @@
   }
   function moveCell(dr, dc) {
     if (!tsel) return;
-    const b = state.blocks.find(x => x.id === tsel.id); if (!b) return;
+    const b = state.byId.get(tsel.id); if (!b) return;
     const nr = (b.rows || []).length;
     const nc = (b.rows || []).reduce((m, r) => Math.max(m, r.length), 0);
     if (!nr || !nc) return;
@@ -4488,7 +4504,7 @@
   // Turn the selected handwriting into a text block in its place.
   async function convertInkToText(ids) {
     const inks = (ids || [...state.selectedIds])
-      .map(id => state.blocks.find(b => b.id === id))
+      .map(id => state.byId.get(id))
       .filter(b => b && b.kind === 'ink');
     if (!inks.length) { toast('Select some handwriting first.'); return; }
     if (!inkRecognizerKind()) {
@@ -4865,6 +4881,7 @@
       b.outlineW = Math.max(2, Math.round(strokeW));
     }
     state.blocks.push(b);
+    state.byId.set(b.id, b);
     state.childCounts[b.id] = { blocks: 0, files: 0 };
     world.appendChild(makeBlockEl(b));
     const level = state.level, gen = history.gen;
@@ -5111,7 +5128,7 @@
     // while you are moving around. (A tap still selects it - see onPointerUp.)
     let inkPassThrough = null;
     if (blockEl && !state.selectTool) {
-      const hb = state.blocks.find(x => x.id === blockEl.dataset.id);
+      const hb = state.byId.get(blockEl.dataset.id);
       // once picked up (tapped, or circled) a stroke drags like anything else
       if (hb && hb.kind === 'ink' && !state.selectedIds.has(hb.id)) { inkPassThrough = hb.id; blockEl = null; }
     }
@@ -5140,7 +5157,7 @@
       const edge = e.target.closest('.tnode-edge');
       const handle = edge || e.target.closest('.tnode-rotate, .tnode-resize');
       if (handle) {
-        const b = state.blocks.find(x => x.id === id);
+        const b = state.byId.get(id);
         if (b && b.locked) { selectBlock(id); return; }   // locked: no resize/rotate
         selectBlock(id);
         const rect = blockEl.getBoundingClientRect();
@@ -5161,7 +5178,7 @@
       }
       // table cells: single-click selects a cell (entering edit mode if the table is
       // already selected); dragging the title/border still moves the block.
-      const tb0 = state.blocks.find(x => x.id === id);
+      const tb0 = state.byId.get(id);
       if (tb0 && tb0.kind === 'table') {
         const cell = e.target.closest('.data-table [data-r]');
         const titleHit = e.target.closest('.table-title');
@@ -5186,7 +5203,7 @@
       if (state.linkMode) { handleLinkTap(id); return; }
       // if it's an unselected block and no shift, select just it (so drag moves it)
       if (!e.shiftKey && !state.selectedIds.has(id)) selectBlock(id);
-      const primaryBlock = state.blocks.find(x => x.id === id);
+      const primaryBlock = state.byId.get(id);
       // locked blocks: select (and shift-toggle) but never drag-move
       if (primaryBlock && primaryBlock.locked && !e.shiftKey) {
         // fall through to long-press handling below, but don't start a drag
@@ -5194,7 +5211,7 @@
         // move the whole current selection if this block is part of it; else just this one
         const ids = (!e.shiftKey && state.selectedIds.has(id)) ? [...state.selectedIds] : [id];
         const starts = {};
-        ids.forEach(bid => { const bb = state.blocks.find(x => x.id === bid); if (bb && !bb.locked) starts[bid] = { x: bb.x, y: bb.y }; });
+        ids.forEach(bid => { const bb = state.byId.get(bid); if (bb && !bb.locked) starts[bid] = { x: bb.x, y: bb.y }; });
         dragging = { primary: id, pointerId: e.pointerId, ids: Object.keys(starts), starts, startX: e.clientX, startY: e.clientY, moved: false, shift: e.shiftKey };
         dragging.frame0 = selectionWorldBox();
         // connectors only need redrawing per move when one is attached to what moves
@@ -5230,7 +5247,7 @@
         if (panning) { stage.classList.remove('panning'); panning = null; }
         selFrameBox = null;
         if (tid && (lpCell || lpTitle)) {
-          const bb = state.blocks.find(x => x.id === tid);
+          const bb = state.byId.get(tid);
           if (bb && bb.kind === 'table') {
             openTableEditor(tid);
             if (lpCell) focusCell(tid, +lpCell.dataset.r, +lpCell.dataset.c, false);
@@ -5281,7 +5298,7 @@
       return;
     }
     if (colResize && colResize.pointerId === e.pointerId) {
-      const b = state.blocks.find(x => x.id === colResize.id); if (!b) return;
+      const b = state.byId.get(colResize.id); if (!b) return;
       const s = state.view.scale || 1;
       const nw = Math.max(24, Math.round(colResize.startW + (e.clientX - colResize.startX) / s));
       if (!Array.isArray(b.colW)) b.colW = [];
@@ -5290,7 +5307,7 @@
       return;
     }
     if (rowResize && rowResize.pointerId === e.pointerId) {
-      const b = state.blocks.find(x => x.id === rowResize.id); if (!b) return;
+      const b = state.byId.get(rowResize.id); if (!b) return;
       const s = state.view.scale || 1;
       const nh = Math.max(16, Math.round(rowResize.startH + (e.clientY - rowResize.startY) / s));
       if (!Array.isArray(b.rowH)) b.rowH = [];
@@ -5299,7 +5316,7 @@
       return;
     }
     if (gizmo && gizmo.pointerId === e.pointerId) {
-      const b = state.blocks.find(x => x.id === gizmo.id); if (!b) return;
+      const b = state.byId.get(gizmo.id); if (!b) return;
       const s = state.view.scale || 1;
       if (gizmo.mode === 'box') {
         const dxw = (e.clientX - gizmo.startX) / s, dyw = (e.clientY - gizmo.startY) / s;
@@ -5422,7 +5439,7 @@
     if (panning && panning.pointerId === pid) { stage.classList.remove('panning'); panning = null; }
     if (dragging && dragging.pointerId === pid) {
       for (const bid of dragging.ids) {
-        const st = dragging.starts[bid], bb = state.blocks.find(x => x.id === bid);
+        const st = dragging.starts[bid], bb = state.byId.get(bid);
         if (!st || !bb) continue;
         bb.x = st.x; bb.y = st.y;
         const el = state.els[bid]; if (el) { el.style.left = st.x + 'px'; el.style.top = st.y + 'px'; }
@@ -5432,7 +5449,7 @@
       clearGuides(); dragging = null; drawEdges();
     }
     if (gizmo && gizmo.pointerId === pid) {
-      const b = state.blocks.find(x => x.id === gizmo.id);
+      const b = state.byId.get(gizmo.id);
       if (b) {
         Object.assign(b, gizmo.before);
         const el = state.els[b.id]; if (el) { el.style.left = b.x + 'px'; el.style.top = b.y + 'px'; }
@@ -5441,12 +5458,12 @@
       gizmo = null;
     }
     if (colResize && colResize.pointerId === pid) {
-      const b = state.blocks.find(x => x.id === colResize.id);
+      const b = state.byId.get(colResize.id);
       if (b) { b.colW = colResize.before.colW; refreshBlockCard(b.id); }
       colResize = null;
     }
     if (rowResize && rowResize.pointerId === pid) {
-      const b = state.blocks.find(x => x.id === rowResize.id);
+      const b = state.byId.get(rowResize.id);
       if (b) { b.rowH = rowResize.before.rowH; refreshBlockCard(b.id); }
       rowResize = null;
     }
@@ -5461,7 +5478,7 @@
     if (!dragging) return;
     const d = dragging; dragging = null;
     for (const bid of d.ids) {
-      const st = d.starts[bid], bb = (d.byId && d.byId.get(bid)) || state.blocks.find(x => x.id === bid);
+      const st = d.starts[bid], bb = (d.byId && d.byId.get(bid)) || state.byId.get(bid);
       if (!st || !bb) continue;
       bb.x = st.x; bb.y = st.y;
       const el = state.els[bid]; if (el) { el.style.left = st.x + 'px'; el.style.top = st.y + 'px'; }
@@ -5478,7 +5495,7 @@
     // the pointer's own gesture is handled first, whatever else is live
     if (colResize && colResize.pointerId === e.pointerId) {
       const cr = colResize; colResize = null; pointers.delete(e.pointerId);
-      const b = state.blocks.find(x => x.id === cr.id);
+      const b = state.byId.get(cr.id);
       if (b) {
         b.updatedAt = Date.now();
         recordChange({ blocks: [{ ...cr.before }], edges: [], files: [] }, { blocks: [{ ...b, colW: (b.colW || []).slice() }], edges: [], files: [] });
@@ -5488,7 +5505,7 @@
     }
     if (rowResize && rowResize.pointerId === e.pointerId) {
       const rr = rowResize; rowResize = null; pointers.delete(e.pointerId);
-      const b = state.blocks.find(x => x.id === rr.id);
+      const b = state.byId.get(rr.id);
       if (b) {
         b.updatedAt = Date.now();
         recordChange({ blocks: [{ ...rr.before }], edges: [], files: [] }, { blocks: [{ ...b, rowH: (b.rowH || []).slice() }], edges: [], files: [] });
@@ -5559,7 +5576,7 @@
       const g = gizmo; gizmo = null;      // nothing stays live across the write below
       pointers.delete(e.pointerId);       // release the handle's pointer (else next touch looks like a 2nd finger → pinch)
       if (pointers.size < 2) { pinch = null; flushInv(); }
-      const b = state.blocks.find(x => x.id === g.id);
+      const b = state.byId.get(g.id);
       if (b) {
         b.updatedAt = Date.now();
         recordChange({ blocks: [{ ...g.before }], edges: [], files: [] }, { blocks: [{ ...b }], edges: [], files: [] });
@@ -5580,7 +5597,7 @@
       if (NG.Lift && NG.Lift.has()) {
         // the lifted elements return to #world; their records already hold the final positions
         for (const it of NG.Lift.end(true)) {
-          const bb = (d.byId && d.byId.get(it.id)) || state.blocks.find(x => x.id === it.id);
+          const bb = (d.byId && d.byId.get(it.id)) || state.byId.get(it.id);
           if (bb) { it.el.style.left = bb.x + 'px'; it.el.style.top = bb.y + 'px'; }
         }
         if (NG.Overlay) NG.Overlay.draw();
@@ -5592,7 +5609,7 @@
         const after = { blocks: [], edges: [], files: [] };
         const moved = [];
         for (const bid of d.ids) {
-          const bb = state.blocks.find(x => x.id === bid);
+          const bb = state.byId.get(bid);
           if (!bb) continue;
           const st = d.starts[bid];
           bb.updatedAt = Date.now();
@@ -5694,7 +5711,7 @@
     let items;
     if (targetId) {
       if (!state.selectedIds.has(targetId)) selectBlock(targetId);
-      const b = state.blocks.find(x => x.id === targetId);
+      const b = state.byId.get(targetId);
       const many = state.selectedIds.size > 1;
       const openable = opensInside(b);
       items = [{ icon: 'pencil', label: 'Edit', fn: () => openAnyEditor(targetId), disabled: many }];
@@ -5812,12 +5829,18 @@
     );
     return list;
   }
+  // The palette searches the whole workspace (so you can jump to a block on
+  // another page), not just what is loaded on screen - but the workspace
+  // does not change while you are typing one query, so fetch it once per
+  // open instead of on every keystroke.
+  let cmdBlocksCache = { ws: null, blocks: null };
   async function cmdRender(q) {
     const ql = (q || '').toLowerCase().trim();
     const cmds = cmdCommands().filter(c => !ql || c.title.toLowerCase().includes(ql));
     let blockHits = [];
     if (ql && state.ws != null) {
-      const blocks = await DB.allByWs('blocks', state.ws);
+      if (cmdBlocksCache.ws !== state.ws) cmdBlocksCache = { ws: state.ws, blocks: await DB.allByWs('blocks', state.ws) };
+      const blocks = cmdBlocksCache.blocks;
       blockHits = blocks.filter(b => {
         const label = b.kind === 'text' ? (b.text || '') : (b.title || '');
         return label.toLowerCase().includes(ql) || (b.notes || '').toLowerCase().includes(ql) || (b.tags || '').toLowerCase().includes(ql);
@@ -5857,6 +5880,7 @@
   function openCmdk() {
     $('#menu').hidden = true; $('#add-menu').hidden = true; hideCtxMenu();
     $('#cmdk').hidden = false;
+    cmdBlocksCache = { ws: null, blocks: null };   // a fresh open should see edits made since the last one
     const inp = $('#cmdk-input'); inp.value = '';
     cmdRender('');
     setTimeout(() => inp.focus(), 30);
@@ -5906,7 +5930,7 @@
     if (state.levelLayout === 'list') return;   // handled by list-view
     if (state.readOnly) {                       // look, step in, change nothing
       const el = e.target.closest('.block');
-      const b = el && state.blocks.find(x => x.id === el.dataset.id);
+      const b = el && state.byId.get(el.dataset.id);
       if (opensInside(b)) navigateTo(b.id);
       return;
     }
@@ -5915,7 +5939,7 @@
     if (e.target.closest('[data-blk]')) return; // action buttons, not "open"
     const blockEl = topElAt(e.clientX, e.clientY, e.target.closest('.block'));
     if (blockEl) {
-      const b = state.blocks.find(x => x.id === blockEl.dataset.id);
+      const b = state.byId.get(blockEl.dataset.id);
       if (b && b.kind === 'text') openTextEditor(b.id);
       else if (b && b.kind === 'shape') openShapeEditor(b.id);
       else if (b && b.kind === 'image') openImageEditor(b.id);
@@ -5955,7 +5979,7 @@
   }
   let justDragged = false;                    // the click after a drag is not a tap
   async function toggleCheck(id) {
-    const b = state.blocks.find(x => x.id === id); if (!b || b.kind !== 'check' || b.locked) return;
+    const b = state.byId.get(id); if (!b || b.kind !== 'check' || b.locked) return;
     const before = { ...b };
     b.checked = !b.checked; b.updatedAt = Date.now();
     refreshBlockCard(id);
@@ -6172,6 +6196,7 @@
     if (b.kind !== 'ink') closeEditorsFor(b.id);
     if (b.kind === 'ink') planesRemove(b.id);
     state.blocks = state.blocks.filter(x => x.id !== b.id);
+    state.byId.delete(b.id);
     const wasSel = state.selectedIds.delete(b.id);
     const el = state.els[b.id]; if (el) el.remove();
     untrackSize(b.id);
@@ -6231,7 +6256,7 @@
       if (sweepHitsRect(x0, y0, x1, y1, r, R)) removeInkBlock(b);
     }
     for (const ed of state.edges.slice()) {
-      const a = state.blocks.find(x => x.id === ed.from), b = state.blocks.find(x => x.id === ed.to);
+      const a = state.byId.get(ed.from), b = state.byId.get(ed.to);
       if (!a || !b) continue;
       const pts = edgePolyline(eraseBoxOf(a), eraseBoxOf(b), ed.style);
       for (let i = 1; i < pts.length; i++) {
@@ -6243,6 +6268,7 @@
     beginEraseBatch();
     eraseBatch.added.set(nb.id, nb);
     state.blocks.push(nb);
+    state.byId.set(nb.id, nb);
     state.childCounts[nb.id] = { blocks: 0, files: 0 };
     world.appendChild(makeBlockEl(nb));
     planesAdd(nb);
@@ -6260,7 +6286,7 @@
     }
     const node = el.closest('.block-ink') || inkElAt(clientX, clientY);
     if (!node) return;
-    const b = state.blocks.find(x => x.id === node.dataset.id);
+    const b = state.byId.get(node.dataset.id);
     if (!b || b.kind !== 'ink' || b.locked) return;
     removeInkBlock(b);
   }
@@ -6356,7 +6382,7 @@
       }
       // a connector goes when its middle is circled (one between two erased blocks is gone with them)
       for (const ed of state.edges.slice()) {
-        const a = state.blocks.find(x => x.id === ed.from), b = state.blocks.find(x => x.id === ed.to);
+        const a = state.byId.get(ed.from), b = state.byId.get(ed.to);
         if (!a || !b) continue;
         const pts = edgePolyline(blockRectOf(a), blockRectOf(b), ed.style);
         const q = pts.length === 2 ? [(pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2] : [(pts[1][0] + pts[2][0]) / 2, (pts[1][1] + pts[2][1]) / 2];
@@ -6636,6 +6662,7 @@
     // Draw it first, save second: the ink is on the page before the write
     // finishes, so the next stroke never waits on storage.
     state.blocks.push(b);
+    state.byId.set(b.id, b);
     state.childCounts[b.id] = { blocks: 0, files: 0 };
     world.appendChild(makeBlockEl(b));
     planesAdd(b, true);          // on the plane before the wet layer releases it
@@ -7111,6 +7138,7 @@
   // Search opens under its toolbar button, sized to the screen.
   function openSearch() {
     const pop = $('#search-pop'), btn = $('#btn-search'); if (!pop) return;
+    searchDataCache = null;   // a fresh open should see edits made since the last one
     pop.hidden = false;
     const tb = $('#topbar'), top = tb ? tb.getBoundingClientRect().bottom + 6 : 60;
     const w = Math.min(560, window.innerWidth - 24);
@@ -7127,15 +7155,24 @@
     pop.hidden = true; hideSearchResults(); $('#btn-search')?.classList.remove('active');
   }
 
+  // search ALL workspaces so you can jump anywhere; current workspace ranks
+  // higher. That whole-database read is real work, and typing a query is a
+  // keystroke-per-160ms stream - it must run once per time the panel is
+  // opened, not once per keystroke. openSearch() clears this so a fresh
+  // search always sees anything added or edited since the last one.
+  let searchDataCache = null;
   async function runSearch(q) {
     const box = $('#search-results');
     if (!q) { hideSearchResults(); return; }
     const ql = q.toLowerCase();
-    // search ALL workspaces so you can jump anywhere; current workspace ranks higher
-    const [blocks, files, wss] = await Promise.all([DB.getAll('blocks'), DB.getAll('files'), DB.listWorkspaces()]);
-    const wsName = {}; wss.forEach(w => { wsName[w.id] = w.name; });
-    const fileByBlock = {};
-    files.forEach(f => { (fileByBlock[f.blockId] ||= []).push(f); });
+    if (!searchDataCache) {
+      const [blocks, files, wss] = await Promise.all([DB.getAll('blocks'), DB.getAll('files'), DB.listWorkspaces()]);
+      const wsName = {}; wss.forEach(w => { wsName[w.id] = w.name; });
+      const fileByBlock = {};
+      files.forEach(f => { (fileByBlock[f.blockId] ||= []).push(f); });
+      searchDataCache = { blocks, wsName, fileByBlock };
+    }
+    const { blocks, wsName, fileByBlock } = searchDataCache;
 
     const hits = [];
     for (const b of blocks) {
@@ -7826,15 +7863,31 @@
   /* --------------------------- outline sidebar -------------------------- *
    * The whole workspace as a tree — the same shape the PDF bookmarks use.  */
   let outlineOpen = false;
+  // The whole-workspace fetch below is real work; re-running it on every
+  // 250ms redraw while the panel just sits open would mean paying it
+  // continuously for however long you keep writing. Cache it per open and,
+  // for the periodic live redraw, patch in this level's blocks from
+  // `state.blocks` (already correct in memory) instead of asking the
+  // database again - a fresh fetch only happens when the panel is opened.
+  let outlineCache = { ws: null, all: null };
   async function toggleOutline(force) {
+    const wasOpen = outlineOpen;
     outlineOpen = force === undefined ? !outlineOpen : !!force;
     $('#outline').hidden = !outlineOpen;
     $('#btn-outline')?.classList.toggle('active', outlineOpen);
-    if (outlineOpen) await renderOutline();
+    if (outlineOpen) {
+      if (!wasOpen) outlineCache = { ws: null, all: null };
+      await renderOutline();
+    }
   }
   async function renderOutline() {
     const tree = $('#outline-tree'); if (!tree || !state.ws) return;
-    const all = await DB.allByWs('blocks', state.ws);
+    if (outlineCache.ws !== state.ws) {
+      outlineCache = { ws: state.ws, all: await DB.allByWs('blocks', state.ws) };
+    } else {
+      outlineCache.all = outlineCache.all.filter(b => b.parentId !== state.level).concat(state.blocks);
+    }
+    const all = outlineCache.all;
     const kidsOf = (id) => all.filter(b => b.parentId === id).sort((a, b) => (a.y - b.y) || (a.x - b.x));
     tree.innerHTML = '';
     const add = (id, title, colour, depth) => {
@@ -8401,7 +8454,7 @@
     const wss = await DB.listWorkspaces();
     wss.sort((a, b) => wsLastUse(b) - wsLastUse(a));
     const counts = {};
-    await Promise.all(wss.map(async w => { counts[w.id] = (await DB.allByWs('blocks', w.id)).length; }));
+    await Promise.all(wss.map(async w => { counts[w.id] = await DB.countByWs('blocks', w.id); }));
     grid.innerHTML = '';
     let idx = 0;
     for (const w of wss) {
@@ -9138,7 +9191,7 @@
     const p = $('#tab-about');
     if (state.ws == null) { p.innerHTML = '<p class="muted">Open a workspace to see its details here.</p>'; return; }
     const w = await DB.getWorkspace(state.ws);
-    const blocks = await DB.allByWs('blocks', state.ws);
+    const blockCount = await DB.countByWs('blocks', state.ws);
     const rec = await DB.getHandleRec(state.ws);
     const loc = (rec && rec.path)
       ? `<a class="loc-link" id="about-loc-link" title="Show in folder">${esc(rec.path)}</a>`
@@ -9164,7 +9217,7 @@
       <dl class="about-props">
         <div><dt>Name</dt><dd>${esc((w && w.name) || 'Untitled')}</dd></div>
         <div><dt>Color</dt><dd><span class="prop-dot" style="background:${esc((w && w.color) || PALETTE[0])}"></span>${esc((w && w.color) || '')}</dd></div>
-        <div><dt>Blocks</dt><dd>${blocks.length}</dd></div>
+        <div><dt>Blocks</dt><dd>${blockCount}</dd></div>
         <div><dt>Created</dt><dd>${esc(created)}</dd></div>
         <div><dt>File</dt><dd>${loc}</dd></div>
         <div><dt>Storage</dt><dd>${esc(storage)} <span class="muted">— all workspaces in this ${SHELL ? 'app' : 'browser'}</span></dd></div>
@@ -9433,7 +9486,7 @@
     view.addEventListener('dblclick', (e) => {
       const row = e.target.closest('.list-row');
       if (!row) return;
-      const b = state.blocks.find(x => x.id === row.dataset.id);
+      const b = state.byId.get(row.dataset.id);
       if (b && b.kind === 'text') openTextEditor(b.id); else navigateTo(row.dataset.id);
     });
   }

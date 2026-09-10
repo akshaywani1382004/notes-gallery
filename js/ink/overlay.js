@@ -170,13 +170,15 @@
     ensureSize();
     const view = st.view || { scale: 1, tx: 0, ty: 0 };
     const S = (view.scale || 1) * dpr, Tx = Math.round((view.tx || 0) * dpr), Ty = Math.round((view.ty || 0) * dpr);
-    // one pass over the level's blocks, Set lookups only: no find() per id
+    // Walk the (usually much smaller) selection instead of every block on the
+    // level - an id->block map is instant either way, but a page can have
+    // orders of magnitude more blocks than are ever selected at once.
+    const byId = st.byId;
     const p = new Path2D();
     let n = 0;
-    const blocks = st.blocks;
-    for (let i = 0; i < blocks.length; i++) {
-      const b = blocks[i];
-      if (b.kind !== 'ink' || !sel.has(b.id)) continue;
+    for (const id of sel) {
+      const b = byId ? byId.get(id) : null;
+      if (!b || b.kind !== 'ink') continue;
       addRect(p, bag.inkBox(b), S, Tx, Ty, dpr);
       n++;
     }

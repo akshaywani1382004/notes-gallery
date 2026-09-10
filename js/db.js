@@ -117,6 +117,16 @@ const DB = (() => {
     const idx = db.transaction(store, 'readonly').objectStore(store).index(index);
     return reqP(idx.getAll(key));
   }
+  // Same range as getAllByIndex, but count() never reads a single record off
+  // disk - it walks the index's key count directly. For "how many blocks does
+  // this workspace have" (a card label, a properties panel) that is the
+  // difference between loading the workspace and not loading it at all.
+  async function countByIndex(store, index, key) {
+    await settled();
+    const db = await open();
+    const idx = db.transaction(store, 'readonly').objectStore(store).index(index);
+    return reqP(idx.count(key));
+  }
   async function get(store, key) {
     // served from the queue when it is waiting there (no commit needed)
     const m = queued.get(store);
@@ -214,6 +224,7 @@ const DB = (() => {
   const getWorkspace   = (id) => get('workspaces', id);
   const saveWorkspace  = (w)  => put('workspaces', w);
   const allByWs        = (store, ws) => getAllByIndex(store, 'ws', ws);
+  const countByWs      = (store, ws) => countByIndex(store, 'ws', ws);
 
   async function deleteWorkspaceDeep(ws) {
     for (const store of ['files', 'edges', 'blocks']) {
@@ -324,7 +335,7 @@ const DB = (() => {
 
   return {
     ROOT, open, getAll, get, put, del, flush, pendingWrites: pendingCount,
-    listWorkspaces, getWorkspace, saveWorkspace, allByWs, deleteWorkspaceDeep,
+    listWorkspaces, getWorkspace, saveWorkspace, allByWs, countByWs, deleteWorkspaceDeep,
     getHandleRec, saveHandleRec, savePathRec, delHandle,
     childBlocks, levelEdges, blockFiles, levelStats,
     getBlock, saveBlock, saveEdge, saveFile, getFile, delFile, delEdge,
