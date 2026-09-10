@@ -7502,13 +7502,14 @@
         saveJobs.delete(id);
         if (error) { job.reject(new Error(error)); return; }
         // buffer arrived as a transfer (a handoff, not a structured-clone
-        // copy) - decode it to text once, here, with the platform's own
-        // decoder. This one decode is real work too, but it is a single
-        // native pass over bytes already in hand, not a browser-internal
-        // clone of a multi-megabyte string - the thing that was actually
-        // costing multiple seconds on a real device (see save-worker.js).
-        const json = new TextDecoder().decode(buffer);
-        job.resolve({ json, bytes: buffer.byteLength, blocks });
+        // copy). Left undecoded here on purpose - decoding a multi-megabyte
+        // buffer to a JS string turned out to still be real, measurable cost
+        // on a slow device even once the transfer itself stopped being a
+        // clone, and the linked-file autosave path (by far the hottest
+        // caller - it fires repeatedly while actively writing) never needs
+        // a string at all, since the file-write bridge takes raw bytes
+        // directly. workspaceJson decodes for the callers that do need text.
+        job.resolve({ buffer, blocks });
       };
       saveWorker.onerror = () => {
         saveWorkerBroken = true;
@@ -7520,9 +7521,13 @@
     } catch (_) { saveWorkerBroken = true; saveWorker = null; }
     return saveWorker;
   }
-  // The finished file text for a workspace. Built on the worker when there is
-  // one, on this thread when there is not (a plain file:// open, say).
-  async function workspaceJson(wsId, overrideName) {
+  // The finished file, as raw bytes. Built on the worker when there is one,
+  // on this thread when there is not (a plain file:// open, say). Prefer
+  // this over workspaceJson wherever the caller is about to hand the result
+  // to something that takes bytes directly (NGShell.writeFile and a File
+  // System Access writable stream both do) - it skips a text decode that is
+  // not actually needed just to write a file back out.
+  async function workspaceBytes(wsId, overrideName) {
     // A panel's edits are written on a short timer and a stroke is written
     // after the pen lifts; the file has to contain both, or a save can be one
     // sentence behind what is on screen.
@@ -7539,8 +7544,8 @@
           w.postMessage({ id, ws: wsId, name: overrideName, color: (wsRec && wsRec.color) || PALETTE[0] });
           setTimeout(() => { if (saveJobs.has(id)) { saveJobs.delete(id); reject(new Error('the save worker did not answer')); } }, 30000);
         });
-        if (NG.Diag) NG.Diag.metrics.savePayload = { where: 'worker', ms: Math.round(performance.now() - t0), bytes: res.bytes };
-        return res.json;
+        if (NG.Diag) NG.Diag.metrics.savePayload = { where: 'worker', ms: Math.round(performance.now() - t0), bytes: res.buffer.byteLength };
+        return new Uint8Array(res.buffer);
       } catch (e) {
         console.warn('save worker failed, building on the page instead:', e && e.message);
         saveWorkerBroken = true;
@@ -7549,7 +7554,15 @@
     const t1 = performance.now();
     const json = JSON.stringify(await workspacePayload(wsId, overrideName));
     if (NG.Diag) NG.Diag.metrics.savePayload = { where: 'page', ms: Math.round(performance.now() - t1), bytes: json.length };
-    return json;
+    return new TextEncoder().encode(json);
+  }
+  // The finished file as text. Decodes workspaceBytes once - for callers
+  // that need an actual string (export's Blob/download path, a page-side
+  // JSON.parse, and so on). Callers that are only going to write the result
+  // straight back to a file should call workspaceBytes directly instead.
+  async function workspaceJson(wsId, overrideName) {
+    const bytes = await workspaceBytes(wsId, overrideName);
+    return new TextDecoder().decode(bytes);
   }
   const safeFileName = (name) => (String(name || 'workspace').replace(/[^\w-]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase()) || 'workspace';
 
@@ -7559,16 +7572,16 @@
     if (!wsId) return;
     toast('Preparing export…');
     const w = await DB.getWorkspace(wsId);
-    const json = await workspaceJson(wsId, overrideName);
+    const bytes = await workspaceBytes(wsId, overrideName);
     const fname = `${safeFileName(overrideName || (w && w.name) || 'workspace')}.notesgallery.json`;
     if (SHELL) {                                     // app shell: native Save-As
       const p = await NGShell.saveDialog(fname);
       if (!p) return;
-      try { await NGShell.writeFile(p, json); toast('Workspace exported'); }
+      try { await NGShell.writeFile(p, bytes); toast('Workspace exported'); }
       catch (e) { console.error(e); toast('Could not write the file.'); }
       return;
     }
-    const blob = new Blob([json], { type: 'application/json' });
+    const blob = new Blob([bytes], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = fname;
@@ -8236,9 +8249,11 @@
     return false;
   }
   // `json` is the finished file text (built on the worker when there is one).
-  async function writeToHandle(handle, json) {
+  // `data` may be bytes (preferred - skips a text decode neither Blob nor
+  // the writable stream actually needs) or a string; Blob accepts either.
+  async function writeToHandle(handle, data) {
     const writable = await handle.createWritable();
-    await writable.write(new Blob([json], { type: 'application/json' }));
+    await writable.write(new Blob([data], { type: 'application/json' }));
     await writable.close();
   }
 
@@ -8421,11 +8436,15 @@
     const rec = await DB.getHandleRec(wsId);
     if (SHELL && rec && rec.path) {                 // app shell: write straight to the path
       try {
+        // Bytes straight through, never decoded to a string - this is the
+        // hottest of every save path (it fires repeatedly while you are
+        // actively writing, not once), and NGShell.writeFile already takes
+        // raw bytes directly, so there is nothing a string would buy here.
         const t0 = performance.now();
-        const json = await workspaceJson(wsId);
+        const bytes = await workspaceBytes(wsId);
         const t1 = performance.now();
-        await NGShell.writeFile(rec.path, json);
-        if (NG.Diag) NG.Diag.metrics.save = { payloadMs: t1 - t0, writeMs: performance.now() - t1, bytes: json.length, at: performance.now() };
+        await NGShell.writeFile(rec.path, bytes);
+        if (NG.Diag) NG.Diag.metrics.save = { payloadMs: t1 - t0, writeMs: performance.now() - t1, bytes: bytes.byteLength, at: performance.now() };
         if (state.ws === wsId) { state.dirty = false; setSaveState(); }
         saveFailShown = false;
       } catch (e) {
@@ -8452,10 +8471,10 @@
     }
     try {
       const t0 = performance.now();
-      const json = await workspaceJson(wsId);
+      const bytes = await workspaceBytes(wsId);
       const t1 = performance.now();
-      await writeToHandle(rec.handle, json);
-      if (NG.Diag) NG.Diag.metrics.save = { payloadMs: t1 - t0, writeMs: performance.now() - t1, bytes: 0, at: performance.now() };
+      await writeToHandle(rec.handle, bytes);
+      if (NG.Diag) NG.Diag.metrics.save = { payloadMs: t1 - t0, writeMs: performance.now() - t1, bytes: bytes.byteLength, at: performance.now() };
       if (state.ws === wsId) { state.dirty = false; setSaveState(); }
       saveFailShown = false;
     } catch (e) {
@@ -9446,7 +9465,7 @@
     }
     await DB.saveHandleRec(id, handle);
     try {
-      await writeToHandle(handle, await workspaceJson(id));
+      await writeToHandle(handle, await workspaceBytes(id));
       toast('Workspace linked to file');
       state.dirty = false;
     } catch (e) { reportSaveFailure(e, true, handle.name || ''); }
@@ -9459,7 +9478,7 @@
     const path = await NGShell.saveDialog(safeFileName((w && w.name) || 'workspace') + '.notesgallery.json');
     if (!path) return null;
     await DB.savePathRec(id, path);
-    try { await NGShell.writeFile(path, await workspaceJson(id)); toast('Workspace linked to file'); }
+    try { await NGShell.writeFile(path, await workspaceBytes(id)); toast('Workspace linked to file'); }
     catch (e) { reportSaveFailure(e, true, path); }
     if (state.ws === id) setSaveState();
     return path;
