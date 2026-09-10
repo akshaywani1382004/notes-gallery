@@ -7497,10 +7497,18 @@
     try {
       saveWorker = new Worker('js/save-worker.js?v=' + (NG.version || ''));
       saveWorker.onmessage = (e) => {
-        const { id, json, error, bytes, blocks } = e.data || {};
+        const { id, buffer, error, blocks } = e.data || {};
         const job = saveJobs.get(id); if (!job) return;
         saveJobs.delete(id);
-        if (error) job.reject(new Error(error)); else job.resolve({ json, bytes, blocks });
+        if (error) { job.reject(new Error(error)); return; }
+        // buffer arrived as a transfer (a handoff, not a structured-clone
+        // copy) - decode it to text once, here, with the platform's own
+        // decoder. This one decode is real work too, but it is a single
+        // native pass over bytes already in hand, not a browser-internal
+        // clone of a multi-megabyte string - the thing that was actually
+        // costing multiple seconds on a real device (see save-worker.js).
+        const json = new TextDecoder().decode(buffer);
+        job.resolve({ json, bytes: buffer.byteLength, blocks });
       };
       saveWorker.onerror = () => {
         saveWorkerBroken = true;

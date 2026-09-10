@@ -70,7 +70,16 @@ self.onmessage = async (e) => {
     db.close();
     const payload = NGPayload.build({ workspace, blocks, edges, files: outFiles }, name, color);
     const json = JSON.stringify(payload);
-    self.postMessage({ id, json, bytes: json.length, blocks: blocks.length });
+    // Sending `json` as a plain string makes the browser structured-clone the
+    // whole thing on the way back to the page - a real copy, sized to the
+    // string, and on a slow device that copy alone measured over two seconds
+    // for one real workspace (confirmed via the Diagnostics overlay: the
+    // worst recorded long frame was inside this very message delivery). A
+    // transferable ArrayBuffer is a handoff, not a copy - its cost does not
+    // scale with size the same way. The page decodes it back to text once,
+    // with the platform's own (fast, native) decoder, right when it receives it.
+    const bytes = new TextEncoder().encode(json);
+    self.postMessage({ id, buffer: bytes.buffer, blocks: blocks.length }, [bytes.buffer]);
   } catch (err) {
     self.postMessage({ id, error: (err && err.message) || String(err) });
   }
