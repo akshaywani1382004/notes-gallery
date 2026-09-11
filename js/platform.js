@@ -90,59 +90,6 @@
       return new TextDecoder().decode(bytes);
     },
 
-    // Where this app keeps its own workspace folders - resolved by Tauri
-    // itself, not chosen through a dialog. A directory-picker dialog
-    // (dialog.open({directory:true})) is not implemented on Android, and a
-    // path taken from the file-open/save dialogs is not a filesystem path
-    // to build sibling folders under either - on Android it can be an opaque
-    // SAF content:// reference, so slicing it apart to derive "next to this
-    // file" broke silently there (the folder never got created; the
-    // workspace only existed in the browser's storage). appDataDir() is
-    // always a real, private, writable path - on Android specifically it is
-    // the app's own `/data/user/0/<package>` sandbox, plain mkdir/writeFile
-    // and all.
-    async appWorkspacesDir() {
-      const base = (T.path && T.path.appDataDir) ? await T.path.appDataDir()
-        : await inv('plugin:path|resolve_directory', { directory: 14 });  // BaseDirectory.AppData
-      return (T.path && T.path.join) ? T.path.join(base, 'workspaces')
-        : inv('plugin:path|join', { paths: [base, 'workspaces'] });
-    },
-
-    // ---- directory primitives, for a workspace stored as a folder of small
-    // files (one per block) instead of one big JSON - see js/workspacefs.js.
-    // Same dual pattern as everything else here: the JS-wrapped plugin call
-    // when present, the raw IPC command name otherwise.
-    async mkdir(path) {
-      if (T.fs && T.fs.mkdir) return T.fs.mkdir(path, { recursive: true });
-      return inv('plugin:fs|mkdir', { path, options: { recursive: true } });
-    },
-
-    // [{name, isDirectory, isFile}, ...] - empty array if the directory does
-    // not exist (callers use this to tell "nothing saved yet" from "broken").
-    async readDir(path) {
-      try {
-        const r = (T.fs && T.fs.readDir) ? await T.fs.readDir(path) : await inv('plugin:fs|read_dir', { path });
-        return r || [];
-      } catch (_) { return []; }
-    },
-
-    // Deleting something already gone is not an error here - a block whose
-    // file never made it to disk (a crash mid-save, say) must not block a
-    // later delete of that same block.
-    async removeFile(path) {
-      try {
-        if (T.fs && T.fs.remove) return await T.fs.remove(path);
-        return await inv('plugin:fs|remove', { path });
-      } catch (_) {}
-    },
-
-    async exists(path) {
-      try {
-        if (T.fs && T.fs.exists) return await T.fs.exists(path);
-        return await inv('plugin:fs|exists', { path });
-      } catch (_) { return false; }
-    },
-
     // open Windows Explorer / Finder with the file selected
     async reveal(path) {
       try {

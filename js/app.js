@@ -158,6 +158,7 @@
     map: '<path d="M9 4 4 6v14l5-2 6 2 5-2V4l-5 2-6-2Z"/><line x1="9" y1="4" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="20"/>',
     undo: '<path d="M4 8h9.5a5.5 5.5 0 0 1 0 11H8"/><polyline points="7.5 4 4 8 7.5 12"/>',
     front: '<rect x="8" y="8" width="12" height="12" rx="2" fill="currentColor" stroke="none"/><path d="M4 14V5.5A1.5 1.5 0 0 1 5.5 4H14"/>',
+    save: '<path d="M6 4.5h9.5L18.5 7.5V19a.5.5 0 0 1-.5.5H6a.5.5 0 0 1-.5-.5V5a.5.5 0 0 1 .5-.5Z"/><path d="M8.5 4.5V9h6V4.5"/><rect x="8" y="13" width="8" height="6"/>',
     back: '<rect x="4" y="4" width="12" height="12" rx="2"/><path d="M10 16h8.5A1.5 1.5 0 0 0 20 14.5V6" fill="none"/><rect x="10" y="10" width="10" height="10" rx="2" fill="currentColor" stroke="none"/>',
     lock: '<rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>',
     unlock: '<rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 7.7-1.5"/>',
@@ -1949,39 +1950,11 @@
     edges: (s.edges || []).map(cloneRec),
     files: (s.files || []).map(cloneRec),
   });
-  // ---- folder-workspace dirty tracking (js/workspacefs.js) --------------
-  // wsId -> { blocks: Map(id -> record|null), files: Map(id -> record|null),
-  // edgesDirty }. A `null` entry means "deleted since the last folder save".
-  // Only the app shell links a workspace to a folder, so this stays empty
-  // (and free) on the website. recordChange already hands every edit's exact
-  // before/after here - the same source markChanged uses for the mini-map -
-  // so a folder save never has to diff the whole workspace to find what to
-  // write, only replay what this already collected since the last save.
-  const wsDirty = new Map();
-  function wsDirtyFor(wsId) {
-    let d = wsDirty.get(wsId);
-    if (!d) { d = { blocks: new Map(), files: new Map(), edgesDirty: false }; wsDirty.set(wsId, d); }
-    return d;
-  }
-  function trackFolderDirty(wsId, before, after) {
-    if (!SHELL || wsId == null) return;
-    const d = wsDirtyFor(wsId);
-    const beforeB = before.blocks || [], afterB = after.blocks || [];
-    const afterBIds = new Set(afterB.map(b => b.id));
-    for (const b of afterB) d.blocks.set(b.id, b);                          // created or updated
-    for (const b of beforeB) if (!afterBIds.has(b.id)) d.blocks.set(b.id, null);   // deleted
-    const beforeF = before.files || [], afterF = after.files || [];
-    const afterFIds = new Set(afterF.map(f => f.id));
-    for (const f of afterF) d.files.set(f.id, f);
-    for (const f of beforeF) if (!afterFIds.has(f.id)) d.files.set(f.id, null);
-    if ((before.edges && before.edges.length) || (after.edges && after.edges.length)) d.edgesDirty = true;
-  }
   function recordChange(before, after, level = state.level) {
     history.past.push({ level, before: cloneSet(before), after: cloneSet(after) });
     if (history.past.length > history.limit) history.past.shift();
     history.future.length = 0;
     markChanged(before, after);        // exactly what changed, straight to the mini-map's index
-    trackFolderDirty(state.ws, before, after);
     // A handwriting block can change position or shape without ever passing
     // through finalizeInk/refreshBlockCard - a multi-select drag is exactly
     // this: the record moves and the DOM element follows it, but nothing told
@@ -8292,71 +8265,6 @@
   // file:// exposes the method names but throws on call; require a secure http(s)/localhost context.
   const FS_OK = SHELL || (('showSaveFilePicker' in window) && ('showOpenFilePicker' in window)
     && window.isSecureContext && location.protocol !== 'file:');
-  // Folder-of-files workspace storage (js/workspacefs.js) — app shell only.
-  // The website keeps IndexedDB + a single exported JSON file; it never had
-  // the "autosave rewrites the whole workspace" cost this exists to avoid.
-  const wsFs = SHELL ? NG.WorkspaceFS.makeApi(NGShell) : null;
-  const WS_FOLDER_SUFFIX = '.ngws';
-
-  // Write only what changed since the last folder save (from wsDirty, filled
-  // in by recordChange) into `folder`. Snapshots and clears the workspace's
-  // dirty set first so edits arriving while this write is in flight start a
-  // fresh one, rather than being silently folded into (or lost from) this
-  // write.
-  async function saveWorkspaceFolderDelta(wsId, folder) {
-    // No dirty set yet for this workspace means tracking never saw its
-    // current content - either this is the first save after it was created
-    // or opened this session (a freshly-seeded template's blocks are written
-    // straight to the DB, not through recordChange, so nothing tracked them),
-    // or the app just (re)started and lost its in-memory tracking entirely.
-    // Either way the only correct move is a full write, not an empty delta -
-    // an untracked workspace is not the same thing as an unchanged one.
-    const tracked = wsDirty.has(wsId);
-    const d = wsDirty.get(wsId) || null;
-    wsDirty.delete(wsId);
-    const w = await DB.getWorkspace(wsId);
-    const manifest = { name: (w && w.name) || 'Workspace', color: (w && w.color) || PALETTE[0], paper: (w && w.paper) || 'dots', version: 1 };
-    const dirtyBlocks = [], deletedBlockIds = [];
-    const newFiles = [], deletedFileIds = [];
-    let edgesDirty, edges;
-    if (tracked) {
-      for (const [id, rec] of d.blocks) { if (rec) dirtyBlocks.push({ ...rec, ws: undefined }); else deletedBlockIds.push(id); }
-      for (const [id, rec] of d.files) {
-        if (rec) newFiles.push({
-          id: rec.id, blockId: rec.blockId, name: rec.name, type: rec.type, size: rec.size, kind: rec.kind,
-          createdAt: rec.createdAt, data: rec.blob ? await blobToDataUrl(rec.blob) : null,
-        });
-        else deletedFileIds.push(id);
-      }
-      edgesDirty = d.edgesDirty;
-      edges = edgesDirty ? (await DB.allByWs('edges', wsId)).map(NGPayload.edgeOut) : undefined;
-    } else {
-      const [allBlocks, allEdges, allFiles] = await Promise.all([
-        DB.allByWs('blocks', wsId), DB.allByWs('edges', wsId), DB.allByWs('files', wsId),
-      ]);
-      for (const b of allBlocks) dirtyBlocks.push({ ...b, ws: undefined });
-      for (const f of allFiles) newFiles.push({
-        id: f.id, blockId: f.blockId, name: f.name, type: f.type, size: f.size, kind: f.kind,
-        createdAt: f.createdAt, data: f.blob ? await blobToDataUrl(f.blob) : null,
-      });
-      edgesDirty = true;
-      edges = allEdges.map(NGPayload.edgeOut);
-    }
-    try {
-      await wsFs.saveDelta(folder, { manifest, manifestDirty: true, dirtyBlocks, deletedBlockIds, edges, edgesDirty, newFiles, deletedFileIds });
-      if (!wsDirty.has(wsId)) wsDirtyFor(wsId);     // tracking is live from here on - future saves may go back to a real delta
-    } catch (e) {
-      // put back what this write did not manage to persist, so the next
-      // save (autosave or manual) retries exactly what is still unwritten
-      const cur = wsDirtyFor(wsId);
-      for (const b of dirtyBlocks) if (!cur.blocks.has(b.id)) cur.blocks.set(b.id, b);
-      for (const id of deletedBlockIds) if (!cur.blocks.has(id)) cur.blocks.set(id, null);
-      for (const f of newFiles) if (!cur.files.has(f.id)) cur.files.set(f.id, f);
-      for (const id of deletedFileIds) if (!cur.files.has(id)) cur.files.set(id, null);
-      if (edgesDirty) cur.edgesDirty = true;
-      throw e;
-    }
-  }
   function fsStatus() {
     if (SHELL) return { ok: true, why: 'workspaces are saved as files on this computer' };
     if (!('showSaveFilePicker' in window)) return { ok: false, why: 'this browser has no file access — use Chrome or Edge' };
@@ -8461,27 +8369,13 @@
       catch (_) { toast('That file is not valid JSON.'); return; }
       if (!validWorkspaceData(data)) { toast('Not a Notes Gallery workspace file.'); return; }
       const { wsId, name, skipped } = await createWorkspaceFromData(data);
-      // Re-home the imported content as a workspace folder under the app's
-      // own storage, instead of linking straight to the file it came from -
-      // this workspace is now stored the same way any other one made in this
-      // app is. `path` (from the file-open dialog) is only where the content
-      // was read from - on Android it can be an opaque SAF content:// URI,
-      // not something a sibling folder can be derived from, so it plays no
-      // part in where the folder goes (see NGShell.appWorkspacesDir). The
-      // link is written and flushed before anything else touches this
-      // workspace, so it can never come up "imported but not linked".
-      let linked = false, folder = null;
-      try {
-        const base = await NGShell.appWorkspacesDir();
-        folder = NGShell.pathJoin(base, safeFileName(name) + '-' + wsId.slice(0, 8) + WS_FOLDER_SUFFIX);
-        const w = await DB.getWorkspace(wsId);
-        await wsFs.init(folder, { name: (w && w.name) || name, color: (w && w.color) || PALETTE[0], paper: (w && w.paper) || 'dots', version: 1 });
-        await DB.saveFolderRec(wsId, folder);
-        await DB.flush();
-        linked = true;
-      } catch (e) { console.warn('workspace folder init failed on import:', e); }
-      if (linked) await saveWorkspaceFolderDelta(wsId, folder);   // write the imported content in immediately
-      await afterImport(wsId, name, linked, skipped);
+      // Linked straight to the file it was imported from - pressing Save
+      // later writes back to this exact file, not somewhere else. Written
+      // and flushed before anything else touches this workspace, so it can
+      // never come up "imported but not linked".
+      await DB.savePathRec(wsId, path);
+      await DB.flush();
+      await afterImport(wsId, name, true, skipped);
       return;
     }
     if (!FS_OK) { $('#import-input').click(); return; }
@@ -8578,19 +8472,7 @@
     if (state.ws == null) return;
     const wsId = state.ws;                         // this write is for this workspace, whatever happens meanwhile
     const rec = await DB.getHandleRec(wsId);
-    if (SHELL && rec && rec.folder) {                // app shell: folder-of-files workspace (js/workspacefs.js)
-      try {
-        const t0 = performance.now();
-        await saveWorkspaceFolderDelta(wsId, rec.folder);
-        if (NG.Diag) NG.Diag.metrics.save = { payloadMs: 0, writeMs: performance.now() - t0, bytes: 0, at: performance.now() };
-        if (state.ws === wsId) { state.dirty = false; setSaveState(); }
-        saveFailShown = false;
-      } catch (e) {
-        reportSaveFailure(e, manual, rec.folder);
-      }
-      return;
-    }
-    if (SHELL && rec && rec.path) {                 // app shell: legacy single-file link, write straight to the path
+    if (SHELL && rec && rec.path) {                 // app shell: write straight to the linked path
       try {
         // Bytes straight through, never decoded to a string - this is the
         // hottest of every save path (it fires repeatedly while you are
@@ -8658,7 +8540,13 @@
   }
   async function refreshSaveUi() { setSaveState(); }
   function bindAutosave() {
-    let on = true;
+    // App shell: off by default - file writes are a deliberate Save action
+    // now (the Save button / Ctrl+S), not a continuous background one, so a
+    // workspace's file only ever changes when you ask it to. The website
+    // never had that continuous-write cost in the first place (nothing
+    // forces a write there beyond what the File System Access API already
+    // gates behind a permission), so its default is unchanged.
+    let on = !SHELL;
     try { const v = localStorage.getItem('ng-autosave'); if (v != null) on = v === '1'; } catch (_) {}
     state.autosave = on;
     const cb = $('#autosave');
@@ -8748,7 +8636,7 @@
     await DB.flush();
     try {
       const rec = await DB.getHandleRec(wsId);
-      if (rec && (rec.folder || rec.path || rec.handle)) toast('Not saved to its file yet \u2014 press Ctrl+S in the workspace');
+      if (rec && (rec.path || rec.handle)) toast('Not saved to its file yet \u2014 press Ctrl+S in the workspace');
     } catch (_) {}
   }
 
@@ -9179,24 +9067,10 @@
     promptDialog('New Workspace', '', async (name, color, template) => {
       name = (name || '').trim() || 'Untitled workspace';
       const chosen = color || pickWsColor(count);
-      const id = uid();
-      let handle = null, path = null, folder = null;
+      let handle = null, path = null;
       if (SHELL) {
-        // The folder lives under the app's own managed storage, not a
-        // location the user picks through a dialog - a directory-picker
-        // dialog is not implemented on Android at all, and a path taken
-        // from the file dialogs is not something sibling folders can be
-        // derived from there either (see NGShell.appWorkspacesDir). No
-        // dialog, no cancellation, and it works the same way every time.
-        try {
-          const base = await NGShell.appWorkspacesDir();
-          // The id suffix keeps two workspaces named the same from ever
-          // fighting over one folder - no existence check needed.
-          folder = NGShell.pathJoin(base, safeFileName(name) + '-' + id.slice(0, 8) + WS_FOLDER_SUFFIX);
-        } catch (e) {
-          console.warn('could not resolve the app workspaces directory:', e);
-          toast('Could not create the workspace folder — created in-app for now.');
-        }
+        path = await NGShell.saveDialog(safeFileName(name) + '.notesgallery.json');
+        if (path == null) return;                     // user cancelled the native dialog
       } else if (FS_OK) {
         try {
           handle = await window.showSaveFilePicker({
@@ -9211,21 +9085,17 @@
       } else {
         toast('Saving to a file needs Chrome/Edge opened via the launcher — created in-browser for now.');
       }
+      const id = uid();
       const now = Date.now();
-      if (folder) {
-        try { await wsFs.init(folder, { name, color: chosen, paper: 'dots', version: 1 }); }
-        catch (e) { console.warn('workspace folder init failed:', e); toast('Could not create the workspace folder — created in-app for now.'); folder = null; }
-      }
       await DB.saveWorkspace({ id, name, color: chosen, createdAt: now, updatedAt: now });
-      if (path) await DB.savePathRec(id, path);
-      if (handle) await DB.saveHandleRec(id, handle);
-      // The folder link is written and flushed to IndexedDB BEFORE anything
-      // else touches this workspace (seeding, opening) - so it is never in a
-      // state where content exists but the link back to it has not landed.
-      if (folder) { await DB.saveFolderRec(id, folder); await DB.flush(); }
+      // Written and flushed before anything else touches this workspace
+      // (seeding, opening) - so it is never in a state where content exists
+      // but the link back to its file has not landed yet.
+      if (path) { await DB.savePathRec(id, path); await DB.flush(); }
+      if (handle) { await DB.saveHandleRec(id, handle); await DB.flush(); }
       if (template && template !== 'blank') await seedTemplate(id, template);
       await openWorkspace(id);              // jump straight into the new workspace
-      if (handle || path || folder) await saveCurrentWorkspace(false);   // write the initial contents now
+      if (handle || path) await saveCurrentWorkspace(false);   // write the initial file now
     }, { colors: true, color: pickWsColor(count), okLabel: 'Create', templates: true });
   }
 
@@ -9293,15 +9163,12 @@
     renderPropsColors(propsColor);
     const rec = await DB.getHandleRec(id);
     const loc = $('#props-loc');
-    if (rec && rec.folder) {
-      loc.innerHTML = `<a class="loc-link" title="Show in folder">${esc(rec.folder)}</a>`;
-      loc.querySelector('.loc-link').addEventListener('click', () => NGShell.reveal(rec.folder));
-    } else if (rec && rec.path) {
+    if (rec && rec.path) {
       loc.innerHTML = `<a class="loc-link" title="Show in folder">${esc(rec.path)}</a>`;
       loc.querySelector('.loc-link').addEventListener('click', () => NGShell.reveal(rec.path));
     } else if (SHELL) {
-      // app shell: not linked yet → offer to link now
-      loc.innerHTML = `<a class="loc-link">Save to a folder</a> <span class="muted">(this workspace exists only in the app right now)</span>`;
+      // app shell: no real path yet (unlinked, or an old browser-style link) → offer to link now
+      loc.innerHTML = `<a class="loc-link">Choose a file location…</a> <span class="muted">(saves this workspace to a file)</span>`;
       loc.querySelector('.loc-link').addEventListener('click', async () => {
         const p = await relinkWorkspace(id);
         if (p) openProperties(id);
@@ -9350,7 +9217,6 @@
     confirmDialog(`Delete “${(w && w.name) || 'workspace'}”?`,
       'This permanently removes the workspace and everything inside it. This cannot be undone.', 'Delete', async () => {
         await DB.deleteWorkspaceDeep(id);
-        wsDirty.delete(id);
         if (state.ws === id) await goHome(); else await renderHome();
         toast('Workspace deleted');
       });
@@ -9548,6 +9414,7 @@
       const btn = e.target.closest('[data-act]'); if (!btn) return;
       const act = btn.dataset.act;
       menu.hidden = true;
+      if (act === 'save') saveButtonFlow();
       if (act === 'export') exportWorkspaceFlow(state.ws);
       if (act === 'export-pdf') exportWorkspacePdfFlow(state.ws);
       if (act === 'fullscreen') toggleFullscreen();
@@ -9604,17 +9471,15 @@
     const w = await DB.getWorkspace(state.ws);
     const blockCount = await DB.countByWs('blocks', state.ws);
     const rec = await DB.getHandleRec(state.ws);
-    const loc = (rec && rec.folder)
-      ? `<a class="loc-link" id="about-loc-link" title="Show in folder">${esc(rec.folder)}</a>`
-      : (rec && rec.path)
-        ? `<a class="loc-link" id="about-loc-link" title="Show in folder">${esc(rec.path)}</a>`
-        : SHELL
-          ? `<a class="loc-link" id="about-loc-link">Save to a folder</a> <span class="muted">(this workspace exists only in the app right now)</span>`
-          : (rec && rec.handle)
-            ? esc(rec.handle.name) + ' <span class="muted">(folder hidden by the browser)</span>'
-            : FS_OK
-              ? `<a class="loc-link" id="about-loc-link">Choose a file location…</a> <span class="muted">(saves this workspace to a file)</span>`
-              : '<span class="muted">Stored in this browser — no linked file</span>';
+    const loc = (rec && rec.path)
+      ? `<a class="loc-link" id="about-loc-link" title="Show in folder">${esc(rec.path)}</a>`
+      : SHELL
+        ? `<a class="loc-link" id="about-loc-link">Choose a file location…</a> <span class="muted">(saves this workspace to a file)</span>`
+        : (rec && rec.handle)
+          ? esc(rec.handle.name) + ' <span class="muted">(folder hidden by the browser)</span>'
+          : FS_OK
+            ? `<a class="loc-link" id="about-loc-link">Choose a file location…</a> <span class="muted">(saves this workspace to a file)</span>`
+            : '<span class="muted">Stored in this browser — no linked file</span>';
     const created = w && w.createdAt ? new Date(w.createdAt).toLocaleString() : '—';
     let storage = 'not reported by this browser';
     try {
@@ -9637,8 +9502,7 @@
         <div><dt>Build</dt><dd class="muted">${esc(appBuild())} · ${SHELL ? 'app' : 'web'}</dd></div>
       </dl>`;
     const link = p.querySelector('#about-loc-link');
-    if (link && rec && rec.folder) link.addEventListener('click', () => NGShell.reveal(rec.folder));
-    else if (link && rec && rec.path) link.addEventListener('click', () => NGShell.reveal(rec.path));
+    if (link && rec && rec.path) link.addEventListener('click', () => NGShell.reveal(rec.path));
     else if (link && SHELL) link.addEventListener('click', async () => { const p2 = await relinkWorkspace(state.ws); if (p2) fillAboutPanel(); });
     else if (link) link.addEventListener('click', async () => { const h = await linkWorkspaceFile(state.ws); if (h) fillAboutPanel(); });
   }
@@ -9670,21 +9534,36 @@
 
   async function relinkWorkspace(id) {
     const w = await DB.getWorkspace(id);
-    const name = (w && w.name) || 'workspace';
-    // See newWorkspaceFlow: the folder lives under the app's own managed
-    // storage, resolved the same deterministic way every time - nothing to
-    // pick, nothing that can come back an unusable SAF reference on Android.
-    let folder = null;
-    try {
-      folder = NGShell.pathJoin(await NGShell.appWorkspacesDir(), safeFileName(name) + '-' + id.slice(0, 8) + WS_FOLDER_SUFFIX);
-      await wsFs.init(folder, { name, color: (w && w.color) || PALETTE[0], paper: (w && w.paper) || 'dots', version: 1 });
-      await DB.saveFolderRec(id, folder);
-      await DB.flush();
-      await saveWorkspaceFolderDelta(id, folder);           // write everything in right away
-      toast('Workspace linked to folder');
-    } catch (e) { reportSaveFailure(e, true, folder || ''); return null; }
+    const path = await NGShell.saveDialog(safeFileName((w && w.name) || 'workspace') + '.notesgallery.json');
+    if (!path) return null;
+    await DB.savePathRec(id, path);
+    await DB.flush();
+    try { await NGShell.writeFile(path, await workspaceBytes(id)); toast('Workspace linked to file'); }
+    catch (e) { reportSaveFailure(e, true, path); }
     if (state.ws === id) { state.dirty = false; setSaveState(); }
-    return folder;
+    return path;
+  }
+  // The "Save" button (and Ctrl+S): writes the linked file right now, once -
+  // never on a timer. Nothing to save to yet gets the same "where should
+  // this live" prompt any other app's first Save gives you; already linked,
+  // it just writes and says so.
+  async function saveButtonFlow() {
+    if (state.ws == null) { toast('Open a workspace first.'); return; }
+    const wsId = state.ws;
+    const rec = await DB.getHandleRec(wsId);
+    if (SHELL && rec && rec.path) {
+      await saveCurrentWorkspace(true);
+      if (state.ws === wsId && !state.dirty) toast('Workspace saved');
+      return;
+    }
+    if (!SHELL && rec && rec.handle) {
+      await saveCurrentWorkspace(true);
+      if (state.ws === wsId && !state.dirty) toast('Workspace saved');
+      return;
+    }
+    if (SHELL) { await relinkWorkspace(wsId); return; }          // not linked yet: ask where to save
+    if (FS_OK) { await linkWorkspaceFile(wsId); return; }
+    toast('Saving to a file needs the app, or Chrome/Edge opened via the launcher — use ⋯ → Export instead.');
   }
   async function openAbout(tab) {
     await fillAboutPanel();

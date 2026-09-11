@@ -3,7 +3,7 @@
    Classic scripts on globalThis (page and worker) — ES modules in stage 4. */
 (() => {
   const NG = (globalThis.NG = globalThis.NG || {});
-  NG.version = '2.3.3';
+  NG.version = '2.4.0';
 
   // Counters read by the diagnostics overlay and window.__ng.counters().
   NG.counters = {
