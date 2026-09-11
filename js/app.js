@@ -687,9 +687,26 @@
     for (const id in state.els) if (!want.has(id)) virtUnmountOne(id);
     for (const id of want) virtMountOne(id);
   }
+  // A live zoom or pan calls this on every single wheel/pointermove tick -
+  // up to 60+ times a second. Recomputing "what's near the viewport" that
+  // often is the expensive part on a huge workspace (measured: multi-second
+  // stalls under a slow-CPU simulation of a weak tablet), and running it
+  // back-to-back on every tick buys nothing a viewer can actually see -
+  // eyes cannot resolve mount/unmount changes faster than this anyway. So a
+  // burst of calls collapses to one run right away (nothing pending yet)
+  // and then at most one more every VIRT_THROTTLE_MS while the burst
+  // continues, trailing to catch the final position the moment it stops.
+  let virtLastRunAt = 0;
+  let virtTrailingTimer = 0;
+  const VIRT_THROTTLE_MS = 120;
   function scheduleVirtApply() {
-    if (virtRAF) return;
-    virtRAF = requestAnimationFrame(() => { virtRAF = 0; virtApply(); });
+    if (virtRAF || virtTrailingTimer) return;
+    const since = performance.now() - virtLastRunAt;
+    if (since >= VIRT_THROTTLE_MS) {
+      virtRAF = requestAnimationFrame(() => { virtRAF = 0; virtLastRunAt = performance.now(); virtApply(); });
+    } else {
+      virtTrailingTimer = setTimeout(() => { virtTrailingTimer = 0; virtLastRunAt = performance.now(); virtApply(); }, VIRT_THROTTLE_MS - since);
+    }
   }
   // A block id that might not currently have an element (off-view) but is
   // about to be interacted with programmatically (a jump, a keyboard action,
@@ -8852,6 +8869,12 @@
    * card whose snapshot is missing, stale or in the other theme - never
    * while working: nothing here runs on the canvas paths.                  */
   const PREVIEW_W = 480, PREVIEW_H = 264, PREVIEW_PAD = 24, PREVIEW_MAX_SCALE = 0.5, PREVIEW_MAX_IMAGES = 24;
+  // A thumbnail this small cannot show more than a few hundred shapes as
+  // anything but noise anyway - drawing every one of a huge workspace's root
+  // blocks was a real multi-second stall right after opening it (measured on
+  // a 100k-block stress import). Capped, the bounding box and the drawing
+  // pass both stay cheap regardless of how big the real workspace is.
+  const PREVIEW_MAX_BLOCKS = 1500;
   const previewFlagged = new Set();   // workspaces whose record already says previewStale (one write per visit)
   const previewQueue = [];            // [{ id, force }]: force = the page just left; the rest is the home's pass
   let previewBusy = false;
@@ -8927,6 +8950,7 @@
     ctx.fillStyle = T.bg1; ctx.fillRect(0, 0, W, H);
     drawPreviewPaper(ctx, (w && w.paper) || 'dots', W, H, T);
     blocks = (blocks || []).filter(b => b && b.parentId === DB.ROOT);
+    if (blocks.length > PREVIEW_MAX_BLOCKS) blocks = blocks.slice(0, PREVIEW_MAX_BLOCKS);
     if (blocks.length) {
       const rects = new Map();
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -9091,11 +9115,15 @@
   // workspace is open: leaving it renders a fresh one anyway.
   async function snapshotWorkspace(wsId) {
     if (state.ws === wsId) return null;
-    const [w, blocks, edges] = await Promise.all([DB.getWorkspace(wsId), DB.allByWs('blocks', wsId), DB.levelEdges(DB.ROOT, wsId)]);
+    // Root-level blocks only, straight off the (ws, parentId) index - a
+    // preview never needed the rest of the workspace, and fetching every
+    // block just to filter down to these was a real multi-second stall on
+    // a 100k-block workspace (measured on a stress import).
+    const [w, blocks, edges] = await Promise.all([DB.getWorkspace(wsId), DB.childBlocks(DB.ROOT, wsId), DB.levelEdges(DB.ROOT, wsId)]);
     if (!w || state.ws === wsId) return null;
     const theme = currentTheme();
     const t0 = performance.now();
-    const url = await renderWorkspacePreview(w, blocks.filter(b => b.parentId === DB.ROOT), edges);
+    const url = await renderWorkspacePreview(w, blocks, edges);
     if (NG.Diag) NG.Diag.metrics.preview = { ws: wsId, renderMs: performance.now() - t0, blocks: blocks.length, bytes: url.length, at: performance.now() };
     if (state.ws === wsId) return null;                          // re-entered while it rendered
     if (currentTheme() !== theme) { queuePreview(wsId, true); return null; }   // theme flipped mid-render: draw it again in the current one
