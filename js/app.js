@@ -420,8 +420,7 @@
   const state = {
     ws: null,                // current workspace id (null = on landing screen)
     wsName: '',              // current workspace name
-    autosave: true,          // autosave changes to the bound file
-    dirty: false,            // unsaved changes (when autosave is off)
+    dirty: false,            // unsaved changes since the last Save
     level: DB.ROOT,          // current parent id being viewed
     navStack: [],            // history of visited levels (for back/forward)
     navIndex: -1,
@@ -2734,7 +2733,6 @@
   function updateMenuStates() {
     const set = (id, on) => { const e = $(id); if (e) e.textContent = on ? 'on' : 'off'; };
     set('#map-state', minimapOn);
-    set('#autosave-state', !!($('#autosave') && $('#autosave').checked));
     set('#lockx-state', axisLock === 'x');
     set('#locky-state', axisLock === 'y');
     set('#fs-state', !!document.fullscreenElement);
@@ -5939,7 +5937,6 @@
         { icon: 'lock', label: 'Lock to horizontal: ' + (axisLock === 'x' ? 'on' : 'off'), fn: () => setAxisLock(axisLock === 'x' ? null : 'x') },
         { icon: 'lock', label: 'Lock to vertical: ' + (axisLock === 'y' ? 'on' : 'off'), fn: () => setAxisLock(axisLock === 'y' ? null : 'y') },
         { icon: 'frame', label: 'Snap to grid: ' + (snapOn ? 'on' : 'off'), fn: () => { snapOn = !snapOn; try { localStorage.setItem('ng-snap', snapOn ? '1' : '0'); } catch (_) {} updateSnapLabel(); toast(snapOn ? 'Snap on' : 'Snap off'); } },
-        { icon: 'upload', label: 'Autosave: ' + ($('#autosave') && $('#autosave').checked ? 'on' : 'off'), fn: () => { const cb = $('#autosave'); if (cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change', { bubbles: true })); toast(cb.checked ? 'Autosave on' : 'Autosave off'); } updateMenuStates(); } },
         { sep: true },
         { icon: 'sliders', label: 'Workspace properties', fn: () => openProperties(state.ws) },
         { icon: 'info', label: 'About', fn: () => openAbout('about') },
@@ -7511,15 +7508,15 @@
       outFiles.push({ blockId: f.blockId, name: f.name, type: f.type, size: f.size, kind: f.kind, createdAt: f.createdAt, data });
     }
     // One builder for the file's shape, shared with the save worker
-    // (js/payload.js), so an export and an autosave can never disagree.
+    // (js/payload.js), so an export and a Save can never disagree.
     return NGPayload.build({ workspace: w, blocks, edges, files: outFiles }, overrideName, PALETTE[0]);
   }
 
   /* ------------------------- saving off the input thread ------------------ *
    * Reading every record, turning attachments into data URLs and stringifying
-   * the result took 97 ms at 2000 strokes and 235 ms at 6000 - a freeze in
-   * the middle of writing, since autosave fires while the pen is down. The
-   * worker does that work on its own thread and hands back the finished text.
+   * the result took 97 ms at 2000 strokes and 235 ms at 6000 - long enough to
+   * freeze the page if Save runs while the pen is still down. The worker
+   * does that work on its own thread and hands back the finished text.
    * The page still does the file write itself: the app shell's file API is not
    * available to workers.                                                    */
   let saveWorker = null, saveWorkerBroken = false, saveJobId = 0;
@@ -7538,10 +7535,9 @@
         // copy). Left undecoded here on purpose - decoding a multi-megabyte
         // buffer to a JS string turned out to still be real, measurable cost
         // on a slow device even once the transfer itself stopped being a
-        // clone, and the linked-file autosave path (by far the hottest
-        // caller - it fires repeatedly while actively writing) never needs
-        // a string at all, since the file-write bridge takes raw bytes
-        // directly. workspaceJson decodes for the callers that do need text.
+        // clone, and the linked-file write never needs a string at all,
+        // since the file-write bridge takes raw bytes directly. workspaceJson
+        // decodes for the callers that do need text.
         job.resolve({ buffer, blocks });
       };
       saveWorker.onerror = () => {
@@ -8400,20 +8396,7 @@
     await afterImport(wsId, name, true, skipped);
   }
 
-  /* ---- autosave / manual (Ctrl+S) save -------------------------------- */
-  let autoSaveTimer = null;
-  let autosaveDue = 0;                 // when a deferred autosave must run at the latest
-  // Serialising the whole workspace in the pause between two words is exactly
-  // when it hurts, so autosave waits until no gesture is live. A 10 s deadline
-  // still guarantees the write even if a gesture flag ever sticks.
-  function autosaveTick() {
-    autoSaveTimer = null;
-    const busy = inking || erasing || dragging || gizmo || selScale || lasso || panning || pinch
-      || (performance.now() - lastPointerUpAt < 1500);          // the hand has only just lifted
-    if (busy && Date.now() < autosaveDue) { autoSaveTimer = setTimeout(autosaveTick, 900); return; }
-    autosaveDue = 0;
-    saveCurrentWorkspace(false);
-  }
+  /* ---- manual (Ctrl+S / Save) save ------------------------------------- */
   // One write at a time: a save requested while one is running goes after it
   // (the newest state wins, and two writers never race on the same file).
   let saveRun = null, saveNext = null;
@@ -8431,15 +8414,14 @@
     });
     return saveRun;
   }
-  // 3-state light: grey = autosave off, red = unsaved changes, blue = autosave on
+  // grey = saved, red = unsaved changes — file writes only ever happen on
+  // Save (the button or Ctrl+S), never on their own.
   function setSaveState() {
     const el = $('#save-status');
     if (!el) return;
     if (state.ws == null) { el.className = 'save-status-pill'; el.title = ''; return; }
-    let cls, title;
-    if (state.dirty) { cls = 'red'; title = 'Unsaved changes — press Ctrl+S'; }
-    else if (state.autosave) { cls = 'blue'; title = 'Autosave on'; }
-    else { cls = 'grey'; title = 'Autosave off'; }
+    const cls = state.dirty ? 'red' : 'grey';
+    const title = state.dirty ? 'Unsaved changes — press Ctrl+S' : 'Saved';
     el.className = 'save-status-pill ' + cls;
     el.title = title;
   }
@@ -8450,7 +8432,7 @@
     const why = (err && (err.message || String(err))) || 'unknown error';
     console.error('workspace save failed:', err);
     state.dirty = true; setSaveState();
-    if (!manual && saveFailShown) return;          // don't nag on every autosave
+    if (!manual && saveFailShown) return;          // don't nag twice for the same implicit write
     saveFailShown = true;
     const canRelink = SHELL || FS_OK;
     confirmDialog(
@@ -8498,8 +8480,8 @@
     }
     const ok = await ensurePermission(rec.handle, 'readwrite');
     if (!ok) {
-      // Browsers only re-grant file permission during a click, so an autosave
-      // can never do it: flag it and ask next time the user saves by hand.
+      // Browsers only re-grant file permission during a click; if this one
+      // somehow lost it, flag it and ask again next time Save runs.
       state.dirty = true; setSaveState();
       if (manual) {
         reportSaveFailure(new Error('The browser needs permission to write this file again.'),
@@ -8519,7 +8501,9 @@
       reportSaveFailure(e, manual, (rec.handle && rec.handle.name) || '');
     }
   }
-  // called after any edit; schedules a save (autosave) or flags dirty (manual)
+  // called after any edit; flags the workspace dirty so Save (button or
+  // Ctrl+S) knows there is something to write. Nothing here ever schedules
+  // a file write itself - only Save does that.
   // before/after (when the caller has them, from recordChange) are the exact
   // records that changed, so the mini-map can patch just their patch of the
   // page instead of redrawing all of it; omit them and it falls back to that.
@@ -8529,35 +8513,10 @@
     mmMarkDirty(before, after); scheduleMinimap();
     scheduleOutline();
     scheduleVirtApply();
-    if (state.autosave) {
-      clearTimeout(autoSaveTimer);
-      if (!autosaveDue) autosaveDue = Date.now() + 10000;
-      autoSaveTimer = setTimeout(autosaveTick, (state.penMode || state.penEraser) ? 2500 : 900);
-    } else {
-      state.dirty = true;
-    }
+    state.dirty = true;
     setSaveState();
   }
   async function refreshSaveUi() { setSaveState(); }
-  function bindAutosave() {
-    // App shell: off by default - file writes are a deliberate Save action
-    // now (the Save button / Ctrl+S), not a continuous background one, so a
-    // workspace's file only ever changes when you ask it to. The website
-    // never had that continuous-write cost in the first place (nothing
-    // forces a write there beyond what the File System Access API already
-    // gates behind a permission), so its default is unchanged.
-    let on = !SHELL;
-    try { const v = localStorage.getItem('ng-autosave'); if (v != null) on = v === '1'; } catch (_) {}
-    state.autosave = on;
-    const cb = $('#autosave');
-    cb.checked = on;
-    cb.addEventListener('change', () => {
-      state.autosave = cb.checked;
-      try { localStorage.setItem('ng-autosave', state.autosave ? '1' : '0'); } catch (_) {}
-      if (state.autosave && state.dirty) saveCurrentWorkspace(true);
-      setSaveState();
-    });
-  }
 
   /* ---------------------------- workspaces / home ---------------------- */
   const pickWsColor = (n) => PALETTE[n % PALETTE.length];
@@ -8615,25 +8574,15 @@
   }
   function stopTyping() { clearTimeout(typeTimer); const el = $('#hero-tag'); if (el) el.classList.remove('typing'); }
 
-  // Everything still owed to this workspace's file, before we stop being in
-  // it. Leaving used to cancel the pending autosave without running it, so an
-  // edit made in the last second reached the records but never the file.
+  // Before we stop being in this workspace: the records are always safe
+  // (IndexedDB has them either way), but if its linked file is behind, say
+  // so instead of quietly leaving it that way - Save is the only thing that
+  // writes it now, so leaving is never itself going to catch it up.
   async function settleWorkspaceFile(wsId) {
     if (wsId == null) return;
     await flushPendingSaves();              // a panel edit still on its timer is committed either way
-    const owed = !!autoSaveTimer || !!saveRun || state.dirty || DB.pendingWrites() > 0;
-    clearTimeout(autoSaveTimer); autoSaveTimer = null; autosaveDue = 0;
-    if (!owed) return;
-    if (state.autosave) {
-      try {
-        await saveCurrentWorkspace(false);
-        while (saveRun) await saveRun;        // a save queued behind that one still has to run
-      } catch (_) {}
-      return;
-    }
-    // Manual saving: the records are safe, the file is not up to date. Say so
-    // instead of clearing the flag and looking saved.
     await DB.flush();
+    if (!state.dirty) return;
     try {
       const rec = await DB.getHandleRec(wsId);
       if (rec && (rec.path || rec.handle)) toast('Not saved to its file yet \u2014 press Ctrl+S in the workspace');
@@ -8654,7 +8603,6 @@
     if (state.penMode) setPenMode(false);
     if (state.penEraser) setEraser(false, true);
     if (state.selectTool) setSelectMode(false);
-    clearTimeout(autoSaveTimer); autoSaveTimer = null; autosaveDue = 0;
     fileDataCache.clear(); fileDataBytes = 0; _mmImgCache.clear();
     state.dirty = false;
     setSaveState('', '');
@@ -8688,7 +8636,6 @@
     await inkWrites;                          // nothing from the old page lands in the new history
     await settleWorkspaceFile(leaving);       // the page being left gets its file written
     saveNext = null;
-    clearTimeout(autoSaveTimer); autoSaveTimer = null; autosaveDue = 0;
     fileDataCache.clear(); fileDataBytes = 0; _mmImgCache.clear();
     state.ws = id; state.wsName = w.name;
     applyPaper(w.paper);
@@ -9419,13 +9366,6 @@
       if (act === 'export-pdf') exportWorkspacePdfFlow(state.ws);
       if (act === 'fullscreen') toggleFullscreen();
       if (act === 'minimap') toggleMinimap();
-      if (act === 'autosave') {
-        // the switch itself now lives off the toolbar, so say what changed
-        const cb = $('#autosave');
-        if (cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change', { bubbles: true }));
-          toast(cb.checked ? 'Autosave on' : 'Autosave off'); }
-        updateMenuStates();
-      }
       if (act === 'lock-x') { setAxisLock(axisLock === 'x' ? null : 'x'); }
       if (act === 'lock-y') { setAxisLock(axisLock === 'y' ? null : 'y'); }
       if (act === 'export-png') exportLevelImage('png');
@@ -9952,10 +9892,11 @@
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) return;
       resetGestures();
-      // The app is going away: commit the records first (a queue waiting on an
-      // animation frame would never run while hidden), then write the file.
+      // The app is going away: commit the records now, since a queue
+      // waiting on an animation frame would never run while hidden. The
+      // linked file itself only changes on Save - going to the background
+      // is not Save.
       DB.flush();
-      if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null; autosaveDue = 0; saveCurrentWorkspace(false); }
     });
     window.addEventListener('pagehide', () => { DB.flush(); });
 
@@ -10015,10 +9956,9 @@
     window.addEventListener('beforeunload', (e) => {
       DB.flush();                                  // never leave records in the queue
       objectUrls.forEach(u => URL.revokeObjectURL(u));
-      // Hold the close while anything is unwritten: unsaved by hand, or an
-      // autosave that has not reached the file yet.
-      const unwritten = state.ws != null
-        && ((!state.autosave && state.dirty) || (state.autosave && (autoSaveTimer || saveRun)));
+      // Hold the close while anything is unwritten: unsaved changes, or a
+      // Save that was just triggered and has not finished writing yet.
+      const unwritten = state.ws != null && (state.dirty || !!saveRun);
       if (unwritten) { e.preventDefault(); e.returnValue = ''; }
     });
   }
@@ -10039,7 +9979,7 @@
     $('#stage').hidden = true;
     bindToolbar(); bindStage(); bindChromeHover(); bindEdgeClicks(); bindDrawerFields(); bindFileInputs();
     bindSearch(); bindMenu(); bindConfirm(); bindKeys();
-    bindAddMenu(); bindListView(); bindHome(); bindPrompt(); bindBrandMenu(); bindAutosave(); bindProps(); bindAbout(); bindContextMenu();
+    bindAddMenu(); bindListView(); bindHome(); bindPrompt(); bindBrandMenu(); bindProps(); bindAbout(); bindContextMenu();
     bindTextEditor(); bindShapeEditor(); bindImageEditor(); bindCheckEditor(); bindInkEditor(); bindTableEditor(); bindImagePaste(); bindCmdk(); bindMinimap(); bindSelFrame();
     document.addEventListener('click', (e) => { const rb = e.target.closest && e.target.closest('.param-reset'); if (rb) { e.preventDefault(); resetParamField(rb); } });
     NG.attachApi(makeBag());

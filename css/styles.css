@@ -87,7 +87,7 @@ input, textarea { font-size: 15px; }
 .bar-right { gap: 8px; justify-content: space-between; }
 .bar-end { gap: 8px; }
 #topbar > .divider { margin: 0; }
-/* autosave dot: a little air on each side of it */
+/* save-status dot: a little air on each side of it */
 #topbar #save-status { margin: 0 4px 0 6px; }
 
 .brand { display: flex; align-items: center; gap: 10px; border: none; background: none; padding: 4px; margin: -4px; border-radius: 10px; cursor: pointer; transition: background .15s; }
@@ -180,7 +180,7 @@ input, textarea { font-size: 15px; }
 .btn.icon .pen-more { right: -3px; bottom: -3px; width: 15px; height: 15px; }
 .btn.icon.active .pen-more { color: var(--text); border-color: var(--accent); }
 
-/* autosave toggle switch */
+/* generic toggle switch, used across the editor panels */
 .switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
 .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
 .switch-track { position: relative; width: 38px; height: 22px; border-radius: 999px; background: var(--line); transition: background .18s ease; flex: none; }
@@ -193,7 +193,6 @@ input, textarea { font-size: 15px; }
 .save-status-pill { display: inline-flex; align-items: center; }
 .save-status-pill::before { content: ""; width: 9px; height: 9px; border-radius: 999px; background: var(--text-mute); flex: none; transition: background .15s ease, box-shadow .15s ease; }
 .save-status-pill.grey::before { background: var(--text-mute); }
-.save-status-pill.blue::before { background: var(--accent); box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 75%, transparent); }
 .save-status-pill.red::before  { background: var(--danger); box-shadow: 0 0 8px color-mix(in srgb, var(--danger) 75%, transparent); }
 
 /* ---------------------------- Add popover ------------------------------ */

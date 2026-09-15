@@ -1,6 +1,6 @@
 /* Notes Gallery — the workspace file format, in one place.
 
-   A workspace is written to disk (autosave) and exported (Save As) through the
+   A workspace is written to disk (Save) and exported (Save As) through the
    same shape, and it is now built in a worker as well as on the page, so the
    rules live here rather than in three copies. Nothing in this file touches
    the DOM or IndexedDB: it takes records in and gives the file's object out.  */

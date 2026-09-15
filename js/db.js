@@ -140,7 +140,7 @@ const DB = (() => {
    * animation frame. Moving 2000 objects used to be 2000 transactions.
    * `put`/`del` resolve as soon as the change is queued: reads below serve it
    * from the queue, so nothing can observe the difference, and `flush()` (what
-   * autosave, undo ordering and the tests await) resolves on the commit.     */
+   * Save, undo ordering and the tests await) resolves on the commit.        */
   const QUEUE_STORES = ['workspaces', 'blocks', 'edges', 'files', 'meta', 'handles'];
   const queued = new Map();          // store -> Map(key -> {op:'put'|'del', value})
   let flushTimer = 0, flushing = null, flushWaiters = [];
