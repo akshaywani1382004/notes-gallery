@@ -8297,29 +8297,38 @@
     await DB.saveWorkspace({ id: wsId, name, color, paper, createdAt: now, updatedAt: now, usedAt: now });
     const idMap = new Map();
     data.blocks.forEach(b => idMap.set(b.id, uid()));
+    // DB.saveBlock/saveEdge/saveFile only ever queue the write in memory
+    // here (every queued write is committed together, once, by the
+    // DB.flush() below) - awaiting each one individually bought nothing but
+    // a microtask round-trip per record, and on a big import (thousands of
+    // blocks) that added up to a real, measurable delay before the
+    // workspace was usable. Queue everything synchronously and let one
+    // flush do the actual work.
     for (const b of data.blocks) {
       const nb = { ...b, id: idMap.get(b.id), ws: wsId, createdAt: b.createdAt || now, updatedAt: b.updatedAt || now };
       nb.parentId = (b.parentId === DB.ROOT || b.parentId == null) ? DB.ROOT : (idMap.get(b.parentId) || DB.ROOT);
-      await DB.saveBlock(nb);
+      DB.saveBlock(nb);
     }
     for (const e of (data.edges || [])) {
       const from = idMap.get(e.from), to = idMap.get(e.to);
       if (!from || !to) continue;
       const parentId = (e.parentId === DB.ROOT || e.parentId == null) ? DB.ROOT : (idMap.get(e.parentId) || DB.ROOT);
-      await DB.saveEdge(edgeIn({ id: uid(), ws: wsId, parentId, from, to, createdAt: e.createdAt || now }, e));
+      DB.saveEdge(edgeIn({ id: uid(), ws: wsId, parentId, from, to, createdAt: e.createdAt || now }, e));
     }
+    // Decoding a data URL back into a real Blob is genuine async work (it
+    // goes through fetch()) - unlike the writes above, these really do
+    // benefit from running together instead of one at a time.
+    const fileEntries = (data.files || []).filter(f => idMap.has(f.blockId));
+    const blobs = await Promise.all(fileEntries.map(f => f.data ? dataUrlToBlob(f.data).catch(() => null) : null));
     let skipped = 0;
-    for (const f of (data.files || [])) {
-      const blockId = idMap.get(f.blockId);
-      if (!blockId) continue;
+    fileEntries.forEach((f, i) => {
+      const blob = blobs[i];
       // A file whose contents did not travel (a hand-edited export, a copy
       // trimmed for size) is left out rather than stored as an empty blob
       // that still claims a name and a size.
-      let blob = null;
-      if (f.data) { try { blob = await dataUrlToBlob(f.data); } catch (_) { blob = null; } }
-      if (!blob || !blob.size) { skipped++; continue; }
-      await DB.saveFile({ id: uid(), ws: wsId, blockId, name: f.name, type: f.type || blob.type, size: blob.size, kind: f.kind, blob, createdAt: f.createdAt || now });
-    }
+      if (!blob || !blob.size) { skipped++; return; }
+      DB.saveFile({ id: uid(), ws: wsId, blockId: idMap.get(f.blockId), name: f.name, type: f.type || blob.type, size: blob.size, kind: f.kind, blob, createdAt: f.createdAt || now });
+    });
     await DB.flush();                          // the import is committed before anything opens it
     return { wsId, name, skipped };
   }
@@ -8348,6 +8357,11 @@
     try { data = JSON.parse(text); }
     catch (_) { toast('That file is not valid JSON.'); return; }
     if (!validWorkspaceData(data)) { toast('Not a Notes Gallery workspace file.'); return; }
+    // A big workspace's actual bottleneck is the database commit itself
+    // (verified: for 10k blocks, well over a second of a ~2s import is that
+    // one write) - nothing here makes that step itself faster, but nothing
+    // should sit silent for it either.
+    if (data.blocks.length > 500) toast('Importing…');
     const { wsId, name, skipped } = await createWorkspaceFromData(data);
     await afterImport(wsId, name, false, skipped);
   }
@@ -8364,6 +8378,7 @@
       try { data = JSON.parse(text); }
       catch (_) { toast('That file is not valid JSON.'); return; }
       if (!validWorkspaceData(data)) { toast('Not a Notes Gallery workspace file.'); return; }
+      if (data.blocks.length > 500) toast('Importing…');
       const { wsId, name, skipped } = await createWorkspaceFromData(data);
       // Linked straight to the file it was imported from - pressing Save
       // later writes back to this exact file, not somewhere else. Written
@@ -8391,6 +8406,7 @@
     try { data = JSON.parse(text); }
     catch (_) { toast('That file is not valid JSON.'); return; }
     if (!validWorkspaceData(data)) { toast('Not a Notes Gallery workspace file.'); return; }
+    if (data.blocks.length > 500) toast('Importing…');
     const { wsId, name, skipped } = await createWorkspaceFromData(data);
     await DB.saveHandleRec(wsId, handle);   // future saves write back to this file
     await afterImport(wsId, name, true, skipped);
