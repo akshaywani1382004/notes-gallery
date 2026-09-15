@@ -634,10 +634,15 @@
   function virtComputeWanted() {
     const want = virtPinnedIds();
     const rect = viewportWorldRect();
-    const { x0, y0, x1, y1 } = mmCellRange(rect);
+    // A zoomed-out viewport can span far more of mmGrid's small cells than
+    // it would ever find blocks in - the coarse grid keeps the number of
+    // cells actually checked from growing every time you zoom out further.
+    const wantsCoarse = Math.max(rect.w, rect.h) / MM_GRID > VIRT_COARSE_CELLS_ACROSS;
+    const grid = wantsCoarse ? virtCoarseGrid : mmGrid;
+    const { x0, y0, x1, y1 } = wantsCoarse ? virtCoarseCellRange(rect) : mmCellRange(rect);
     const scale = state.view.scale || 1;
     for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++) {
-      const cell = mmGrid.get(cx + ',' + cy); if (!cell) continue;
+      const cell = grid.get(cx + ',' + cy); if (!cell) continue;
       for (const id of cell) {
         if (want.has(id)) continue;
         const b = state.byId.get(id);
@@ -7012,6 +7017,21 @@
   const MM_PATCH_LIMIT = 40;           // more changed blocks than this: a full redraw is simpler
   const mmGrid = new Map();            // "cx,cy" -> Set(blockId)
   const mmCellsOf = new Map();         // blockId -> the cell keys it is registered under
+  // A zoomed-out viewport can span hundreds of mmGrid's small 256-unit
+  // cells, and virtComputeWanted (below) has to check every one of them on
+  // every pan/zoom/move - measured as a real, multi-hundred-millisecond
+  // cost on a big workspace under weak-hardware conditions, dominated by
+  // the sheer number of (mostly empty) cells checked, not by the blocks
+  // actually found. This second, coarser grid is the same idea at a bigger
+  // cell size, maintained alongside mmGrid (not instead of it) purely for
+  // that query - the mini-map keeps using mmGrid alone, unchanged, since it
+  // always shows the whole workspace rather than a zoom-dependent slice of
+  // it. Sized so that even a wide screen at the zoom floor (30%) stays
+  // under ~16 cells across at this resolution.
+  const VIRT_COARSE_GRID = 1024;
+  const VIRT_COARSE_CELLS_ACROSS = 16;   // switch to the coarse grid once mmGrid would need more than this
+  const virtCoarseGrid = new Map();      // "cx,cy" -> Set(blockId), at VIRT_COARSE_GRID resolution
+  const virtCoarseCellsOf = new Map();   // blockId -> the coarse cell keys it is registered under
   const mmSeen = new Map();            // blockId -> the rect it was last placed at
   const mmBlocksById = new Map();      // blockId -> the block, for the patch path's own drawing
   let mmBounds = null;                 // running {minX,minY,maxX,maxY} over every block, kept live
@@ -7024,6 +7044,12 @@
     return {
       x0: Math.floor(rect.x / MM_GRID), y0: Math.floor(rect.y / MM_GRID),
       x1: Math.floor((rect.x + rect.w) / MM_GRID), y1: Math.floor((rect.y + rect.h) / MM_GRID),
+    };
+  }
+  function virtCoarseCellRange(rect) {
+    return {
+      x0: Math.floor(rect.x / VIRT_COARSE_GRID), y0: Math.floor(rect.y / VIRT_COARSE_GRID),
+      x1: Math.floor((rect.x + rect.w) / VIRT_COARSE_GRID), y1: Math.floor((rect.y + rect.h) / VIRT_COARSE_GRID),
     };
   }
   function mmUnionRects(a, b) {
@@ -7059,6 +7085,13 @@
     for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++) cells.push(cx + ',' + cy);
     mmCellsOf.set(b.id, cells);
     for (const k of cells) { let s = mmGrid.get(k); if (!s) { s = new Set(); mmGrid.set(k, s); } s.add(b.id); }
+    const oldCoarse = virtCoarseCellsOf.get(b.id);
+    if (oldCoarse) for (const k of oldCoarse) { const s = virtCoarseGrid.get(k); if (s) { s.delete(b.id); if (!s.size) virtCoarseGrid.delete(k); } }
+    const cr = virtCoarseCellRange(rect);
+    const coarseCells = [];
+    for (let cy = cr.y0; cy <= cr.y1; cy++) for (let cx = cr.x0; cx <= cr.x1; cx++) coarseCells.push(cx + ',' + cy);
+    virtCoarseCellsOf.set(b.id, coarseCells);
+    for (const k of coarseCells) { let s = virtCoarseGrid.get(k); if (!s) { s = new Set(); virtCoarseGrid.set(k, s); } s.add(b.id); }
     const oldRect = mmSeen.get(b.id);
     mmSeen.set(b.id, rect); mmBlocksById.set(b.id, b);
     mmInvalidateRect(oldRect ? mmUnionRects(oldRect, rect) : rect);
@@ -7070,6 +7103,9 @@
     const cells = mmCellsOf.get(id);
     if (cells) for (const k of cells) { const s = mmGrid.get(k); if (s) { s.delete(id); if (!s.size) mmGrid.delete(k); } }
     mmCellsOf.delete(id); mmBlocksById.delete(id);
+    const coarseCells = virtCoarseCellsOf.get(id);
+    if (coarseCells) for (const k of coarseCells) { const s = virtCoarseGrid.get(k); if (s) { s.delete(id); if (!s.size) virtCoarseGrid.delete(k); } }
+    virtCoarseCellsOf.delete(id);
     const rect = mmSeen.get(id);
     mmSeen.delete(id);
     mmInvalidateRect(rect);
@@ -7080,6 +7116,7 @@
   // don't know exactly what changed" trigger below go through this.
   function mmResetIndex() {
     mmGrid.clear(); mmCellsOf.clear(); mmSeen.clear(); mmBlocksById.clear();
+    virtCoarseGrid.clear(); virtCoarseCellsOf.clear();
     mmBounds = null; mmBoundsStale = false; mmDirtyRect = null;
     for (const b of state.blocks) mmPlace(b);
   }
