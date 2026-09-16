@@ -371,11 +371,16 @@ input, textarea { font-size: 15px; }
    resized — a word is many strokes, so per-stroke handles would be useless. */
 #sel-frame { position: absolute; left: 0; top: 0; z-index: 7; pointer-events: none; will-change: transform;
   border: 1px dashed color-mix(in srgb, var(--accent) 75%, transparent); border-radius: 4px; }
-#sel-frame .sel-grip { position: absolute; right: -7px; bottom: -7px; width: 14px; height: 14px;
+/* Ink (alone, grouped, or mixed with other kinds) already shows its own
+   outline per element - this frame's rectangle would only double it, so its
+   border stays invisible for those selections; the grip beneath it still
+   works, unaffected by border-color. */
+#sel-frame.ink-sel { border-color: transparent; }
+#sel-frame .sel-grip { position: absolute; right: -6px; bottom: -6px; width: 11px; height: 11px;
   background: var(--accent); border: 2px solid var(--panel); border-radius: 4px;
   box-shadow: var(--shadow); pointer-events: auto; cursor: nwse-resize; touch-action: none; }
 @media (hover: none) and (pointer: coarse) {
-  #sel-frame .sel-grip { width: 22px; height: 22px; right: -11px; bottom: -11px; }
+  #sel-frame .sel-grip { width: 18px; height: 18px; right: -9px; bottom: -9px; }
 }
 #app.reading #sel-frame { display: none; }
 
@@ -651,7 +656,7 @@ input, textarea { font-size: 15px; }
 .block-actions, .lr-actions {
   display: flex; gap: 4px; opacity: 0; transition: opacity .14s ease;
 }
-.block-actions { position: absolute; top: 10px; right: 10px; transform: scale(var(--inv, 1)); transform-origin: top right; }
+.block-actions { position: absolute; top: 10px; right: 10px; transform: scale(var(--inv-btn, 1)); transform-origin: top right; }
 /* Edit marks appear only when a block is actually selected — hovering must
    not litter the page with pencils. */
 .block.selected .block-actions, .list-row.selected .lr-actions { opacity: 1; }
@@ -688,19 +693,19 @@ input, textarea { font-size: 15px; }
 .block.block-text.glow.selected .text-content { text-shadow: 0 0 14px var(--glow-col), 0 0 26px var(--glow-col); }
 /* rotate + resize handles (shown on hover / selection) */
 .tnode-rotate, .tnode-resize {
-  position: absolute; width: 14px; height: 14px; border-radius: 999px;
+  position: absolute; width: 11px; height: 11px; border-radius: 999px;
   background: var(--accent); border: 2px solid var(--panel); box-shadow: var(--shadow);
   opacity: 0; transition: opacity .12s; z-index: 3;
 }
-.tnode-rotate { top: -26px; left: 50%; transform: translateX(-50%) scale(var(--inv, 1)); cursor: grab; }
-.tnode-rotate::before { content: ""; position: absolute; left: 50%; top: 12px; width: 1.5px; height: 12px; background: var(--accent); transform: translateX(-50%); }
-.tnode-resize { right: -8px; bottom: -8px; border-radius: 4px; cursor: nwse-resize; transform: scale(var(--inv, 1)); }
+.tnode-rotate { top: -22px; left: 50%; transform: translateX(-50%) scale(var(--inv, 1)); cursor: grab; }
+.tnode-rotate::before { content: ""; position: absolute; left: 50%; top: 10px; width: 1.5px; height: 10px; background: var(--accent); transform: translateX(-50%); }
+.tnode-resize { right: -6px; bottom: -6px; border-radius: 4px; cursor: nwse-resize; transform: scale(var(--inv, 1)); }
 /* box-resize edge handles (text nodes) — pill-shaped, on each side */
 .tnode-edge { position: absolute; background: var(--accent); border: 2px solid var(--panel); box-shadow: var(--shadow); opacity: 0; transition: opacity .12s; z-index: 3; border-radius: 999px; }
-.tnode-edge.e { right: -6px; top: 50%; transform: translateY(-50%) scale(var(--inv, 1)); width: 8px; height: 22px; cursor: ew-resize; }
-.tnode-edge.w { left: -6px; top: 50%; transform: translateY(-50%) scale(var(--inv, 1)); width: 8px; height: 22px; cursor: ew-resize; }
-.tnode-edge.n { top: -6px; left: 50%; transform: translateX(-50%) scale(var(--inv, 1)); width: 22px; height: 8px; cursor: ns-resize; }
-.tnode-edge.s { bottom: -6px; left: 50%; transform: translateX(-50%) scale(var(--inv, 1)); width: 22px; height: 8px; cursor: ns-resize; }
+.tnode-edge.e { right: -5px; top: 50%; transform: translateY(-50%) scale(var(--inv, 1)); width: 7px; height: 18px; cursor: ew-resize; }
+.tnode-edge.w { left: -5px; top: 50%; transform: translateY(-50%) scale(var(--inv, 1)); width: 7px; height: 18px; cursor: ew-resize; }
+.tnode-edge.n { top: -5px; left: 50%; transform: translateX(-50%) scale(var(--inv, 1)); width: 18px; height: 7px; cursor: ns-resize; }
+.tnode-edge.s { bottom: -5px; left: 50%; transform: translateX(-50%) scale(var(--inv, 1)); width: 18px; height: 7px; cursor: ns-resize; }
 .block.block-text:hover .tnode-rotate, .block.block-text.selected .tnode-rotate,
 .block.block-text:hover .tnode-resize, .block.block-text.selected .tnode-resize,
 .block.block-text:hover .tnode-edge, .block.block-text.selected .tnode-edge { opacity: 1; }
@@ -1308,10 +1313,10 @@ input, textarea { font-size: 15px; }
 @media (hover: none) {
   .ws-card-actions { opacity: 1; }
   .blk-btn, .lr-btn { width: 34px; height: 34px; }
-  .tnode-rotate, .tnode-resize { width: 26px; height: 26px; }
-  .tnode-rotate { top: -36px; }
-  .tnode-edge.e, .tnode-edge.w { width: 14px; }
-  .tnode-edge.n, .tnode-edge.s { height: 14px; }
+  .tnode-rotate, .tnode-resize { width: 22px; height: 22px; }
+  .tnode-rotate { top: -30px; }
+  .tnode-edge.e, .tnode-edge.w { width: 12px; }
+  .tnode-edge.n, .tnode-edge.s { height: 12px; }
   .btn.icon { min-width: 42px; padding: 10px; }
   .ctxmenu button, .menu button, .add-menu button { padding: 12px 12px; }
   .swatch { width: 30px; height: 30px; }

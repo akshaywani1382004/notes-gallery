@@ -410,7 +410,7 @@
     const s = PEN_STYLES[style] || PEN_STYLES.pen;
     return s.taper > 0 ? inkTaperD(pts, width, s.taper) : inkPathD(pts);
   }
-  let minimapOn = true;
+  let minimapOn = false;
   try { const v = localStorage.getItem('ng-minimap'); if (v != null) minimapOn = v === '1'; } catch (_) {}
   let snapOn = false;
   try { snapOn = localStorage.getItem('ng-snap') === '1'; } catch (_) {}
@@ -464,7 +464,7 @@
     // pinch - and while no handles are mounted (nothing reads it) it is not
     // written at all; mountChrome catches up.
     if (pinch || !chromeMounted()) invPending = true;
-    else { world.style.setProperty('--inv', 1 / (scale || 1)); invPending = false; }
+    else { world.style.setProperty('--inv', 1 / (scale || 1)); world.style.setProperty('--inv-btn', 1 / Math.max(scale || 1, 1)); invPending = false; }
     const paper = stage.dataset.paper || 'dots';
     stage.style.backgroundSize = paper === 'lines'
       ? `100% ${30 * scale}px`
@@ -481,7 +481,7 @@
   }
   let invPending = false;
   function flushInv() {
-    if (invPending && !pinch && chromeMounted()) { invPending = false; world.style.setProperty('--inv', 1 / (state.view.scale || 1)); }
+    if (invPending && !pinch && chromeMounted()) { invPending = false; world.style.setProperty('--inv', 1 / (state.view.scale || 1)); world.style.setProperty('--inv-btn', 1 / Math.max(state.view.scale || 1, 1)); }
   }
   // is any block's chrome on the page right now?
   const chromeMounted = () => state.selectedIds.size > 0 || hoverChromeId != null;
@@ -490,6 +490,7 @@
     if (!invPending || pinch) return;
     invPending = false;
     world.style.setProperty('--inv', 1 / (state.view.scale || 1));
+    world.style.setProperty('--inv-btn', 1 / Math.max(state.view.scale || 1, 1));
   }
   let mmRAF = null;
   let mmAutoSuppressed = false;   // test-only: drive the mini-map by hand, with no race against its own cycle
@@ -914,7 +915,11 @@
    * on the block you have picked (or, with a mouse, the one under the cursor).
    * Keeping them out of the page until then matters: they carry
    * `transform: scale(var(--inv))`, so every one of them is restyled on every
-   * zoom step. Mounted on demand this is O(selected), not O(blocks).        */
+   * zoom step. Mounted on demand this is O(selected), not O(blocks).
+   * The edit/open buttons use --inv-btn instead of --inv: at 100% zoom and
+   * above they hold a constant on-screen size exactly like the handles, but
+   * below 100% they are let go (--inv-btn is clamped to 1 there) so they
+   * shrink along with the workspace instead of staying pinned to full size. */
   function chromeHtml(b) {
     const kind = b.kind || 'block';
     if (kind === 'ink' || kind === 'check') return '';
@@ -2401,6 +2406,13 @@
     const sc = state.view.scale || 1;
     const pad = 6;                                  // breathing room, in screen px
     f.hidden = false;
+    // Drawn strokes already show their own shape-hugging outline (the glow on
+    // .block-ink.selected, or per-stroke dashed bbox past the many-sel cutoff)
+    // and every other kind shows its own per-element outline too - so this
+    // frame's rectangle would just double up on top of them. Keep the frame
+    // (and its grip, still the only way to scale a multi-stroke selection)
+    // but drop its own visible border whenever ink is part of the selection.
+    f.classList.toggle('ink-sel', selectionHasInk());
     // position by transform (composite-only); the size is written only when it changes
     f.style.transform = `translate(${Math.round(box.x * sc + state.view.tx - pad)}px, ${Math.round(box.y * sc + state.view.ty - pad)}px)`;
     const w = Math.round(box.w * sc + pad * 2) + 'px', h = Math.round(box.h * sc + pad * 2) + 'px';
@@ -5567,6 +5579,10 @@
       } else {
         const ang = Math.atan2(e.clientY - gizmo.cy, e.clientX - gizmo.cx);
         let deg = Math.round(gizmo.startRot + (ang - gizmo.startAngle) * 180 / Math.PI);
+        // snap near the 4 cardinal angles (checked before wrapping into
+        // -180..180, so the wrap point itself - 180/-180 - snaps too)
+        const nearest90 = Math.round(deg / 90) * 90;
+        if (Math.abs(deg - nearest90) <= 4) deg = nearest90;
         deg = (((deg + 180) % 360) + 360) % 360 - 180;
         b.rot = deg;
         if (textBlock && textBlock.id === b.id) { $('#t-rot').value = deg; $('#t-rot-val').value = deg; }
@@ -5805,7 +5821,10 @@
         if (NG.Overlay) NG.Overlay.draw();
       }
       if (d.shift && !d.moved) {
+        const wasEditing = anyEditorOpen();
+        if (wasEditing) closeDrawerIfOpen();
         toggleSelect(d.primary);                 // shift+click toggles
+        if (wasEditing) reopenEditorForSelection();
       } else if (d.moved) {
         const before = { blocks: [], edges: [], files: [] };
         const after = { blocks: [], edges: [], files: [] };
@@ -5824,7 +5843,12 @@
         await Promise.all(moved.map(bb => DB.saveBlock(bb)));
         return;
       } else {
+        // a plain click on a different block while its editor panel is open
+        // must retarget the panel, not leave it showing the old block
+        const wasEditing = anyEditorOpen();
+        if (wasEditing) closeDrawerIfOpen();
         selectBlock(d.primary);                  // plain click = single select
+        if (wasEditing) reopenEditorForSelection();
       }
       positionSelFrame(); positionSelBar();
       return;
@@ -5842,8 +5866,9 @@
         // a drag that started on a stroke (or, for a finger, on any block)
         // panned the page; a tap still picks it up, so it can be moved,
         // opened, restyled or deleted next
-        if (inkTap) { closeDrawerIfOpen(); setSelection(withGroups([inkTap])); }
-        else if (blockTap) { closeDrawerIfOpen(); selectBlock(blockTap); }
+        const wasEditing = anyEditorOpen();
+        if (inkTap) { closeDrawerIfOpen(); setSelection(withGroups([inkTap])); if (wasEditing) reopenEditorForSelection(); }
+        else if (blockTap) { closeDrawerIfOpen(); selectBlock(blockTap); if (wasEditing) reopenEditorForSelection(); }
         else { closeDrawerIfOpen(); clearSelection(); }
       }
     }
@@ -5901,6 +5926,21 @@
     if (!$('#table-drawer').hidden || editTableId) closeTableEditor();   // also exits drawer-less cell mode
     hideSearchResults();
     $('#menu').hidden = true;
+  }
+  // Same set closeDrawerIfOpen checks - whether an editor is open right now.
+  function anyEditorOpen() {
+    return !$('#drawer').hidden || !$('#text-drawer').hidden || !$('#shape-drawer').hidden ||
+      !$('#image-drawer').hidden || !$('#ink-drawer').hidden || !$('#check-drawer').hidden ||
+      !$('#table-drawer').hidden || !!editTableId;
+  }
+  // Called after the selection has settled (click, shift-click, tap) when an
+  // editor panel was open before the click: keeps the panel pointed at
+  // whatever is selected NOW instead of leaving it showing the block it was
+  // opened for. Multi/empty selection has no single item to show, so the
+  // panel (already closed by the caller) just stays closed.
+  function reopenEditorForSelection() {
+    const ids = [...state.selectedIds];
+    if (ids.length === 1) openAnyEditor(ids[0]);
   }
 
   /* ---------------------------- context menu --------------------------- */
